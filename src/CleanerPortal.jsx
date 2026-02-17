@@ -16,30 +16,120 @@ export default function CleanerPortal() {
   const [uploadingFor, setUploadingFor] = useState(null); // { jobId, type: 'before' | 'after' }
   const [jobPhotos, setJobPhotos] = useState({}); // { jobId: { before: photoData, after: photoData } }
   const [toast, setToast] = useState(null);
+  const [demoMode, setDemoMode] = useState(false);
   const fileInputRef = useRef(null);
 
   const today = new Date().toISOString().split("T")[0];
 
-  // Load today's jobs
+  // Demo jobs for testing
+  const demoJobs = [
+    {
+      id: "demo_job_1",
+      clientId: "demo_client_1",
+      clientName: "Sarah Mitchell",
+      suburb: "Buderim",
+      date: today,
+      startTime: "08:00",
+      endTime: "10:30",
+      duration: 150,
+      teamId: "team_a",
+      status: "scheduled",
+    },
+    {
+      id: "demo_job_2",
+      clientId: "demo_client_2", 
+      clientName: "James Cooper",
+      suburb: "Maroochydore",
+      date: today,
+      startTime: "11:00",
+      endTime: "13:00",
+      duration: 120,
+      teamId: "team_a",
+      status: "scheduled",
+    },
+    {
+      id: "demo_job_3",
+      clientId: "demo_client_3",
+      clientName: "Emma Collins",
+      suburb: "Mooloolaba",
+      date: today,
+      startTime: "14:00",
+      endTime: "16:00",
+      duration: 120,
+      teamId: "team_a",
+      status: "scheduled",
+    },
+    {
+      id: "demo_job_4",
+      clientId: "demo_client_4",
+      clientName: "Tom Wilson",
+      suburb: "Alexandra Headland",
+      date: today,
+      startTime: "08:00",
+      endTime: "10:00",
+      duration: 120,
+      teamId: "team_b",
+      status: "scheduled",
+    },
+    {
+      id: "demo_job_5",
+      clientId: "demo_client_5",
+      clientName: "Priya Sharma",
+      suburb: "Twin Waters",
+      date: today,
+      startTime: "10:30",
+      endTime: "12:30",
+      duration: 120,
+      teamId: "team_b",
+      status: "scheduled",
+    },
+  ];
+
+  const demoClients = [
+    { id: "demo_client_1", name: "Sarah Mitchell", address: "23 Ballinger Crescent, Buderim QLD 4556", notes: "2 dogs, keep gate closed" },
+    { id: "demo_client_2", name: "James Cooper", address: "15 Duporth Avenue, Maroochydore QLD 4558", notes: "Key under front mat" },
+    { id: "demo_client_3", name: "Emma Collins", address: "5 Parkyn Parade, Mooloolaba QLD 4557", notes: "" },
+    { id: "demo_client_4", name: "Tom Wilson", address: "11 Pacific Terrace, Alexandra Headland QLD 4572", notes: "Ring doorbell, don't knock" },
+    { id: "demo_client_5", name: "Priya Sharma", address: "7 Dodonaea Close, Twin Waters QLD 4564", notes: "Alarm code: 1234#" },
+  ];
+
+  // Load today's jobs (or demo jobs)
   useEffect(() => {
-    const allJobs = loadScheduledJobs();
-    const todaysJobs = allJobs.filter(j => j.date === today && !j.isBreak);
-    setJobs(todaysJobs);
+    if (demoMode) {
+      setJobs(demoJobs);
+      setClients(demoClients);
+    } else {
+      const allJobs = loadScheduledJobs();
+      const todaysJobs = allJobs.filter(j => j.date === today && !j.isBreak);
+      setJobs(todaysJobs);
+      setClients(loadScheduleClients());
+    }
     
-    // Load existing photos for today's jobs
+    // Reset photos when mode changes
+    setJobPhotos({});
+  }, [demoMode, today]);
+
+  // Load existing photos for jobs
+  useEffect(() => {
     const loadPhotos = async () => {
       const photosMap = {};
-      for (const job of todaysJobs) {
-        const photos = await getPhotosForJob(job.id);
-        photosMap[job.id] = {
-          before: photos.find(p => p.type === "before"),
-          after: photos.find(p => p.type === "after"),
-        };
+      for (const job of jobs) {
+        try {
+          const photos = await getPhotosForJob(job.id);
+          photosMap[job.id] = {
+            before: photos.find(p => p.type === "before"),
+            after: photos.find(p => p.type === "after"),
+          };
+        } catch (e) {
+          photosMap[job.id] = { before: null, after: null };
+        }
       }
       setJobPhotos(photosMap);
     };
-    loadPhotos();
-  }, [today]);
+    if (jobs.length > 0) {
+      loadPhotos();
+    }
+  }, [jobs]);
 
   const handlePinSubmit = () => {
     if (pinInput === CLEANER_PIN) {
@@ -72,17 +162,20 @@ export default function CleanerPortal() {
       const job = jobs.find(j => j.id === uploadingFor.jobId);
       
       try {
-        await savePhoto({
-          jobId: uploadingFor.jobId,
-          date: today,
-          teamId: selectedTeam,
-          clientId: job?.clientId,
-          clientName: job?.clientName,
-          type: uploadingFor.type,
-          data: base64Data,
-        });
+        // In demo mode, just update local state without saving to IndexedDB
+        if (!demoMode) {
+          await savePhoto({
+            jobId: uploadingFor.jobId,
+            date: today,
+            teamId: selectedTeam,
+            clientId: job?.clientId,
+            clientName: job?.clientName,
+            type: uploadingFor.type,
+            data: base64Data,
+          });
+        }
         
-        // Update local state
+        // Update local state (works for both demo and real mode)
         setJobPhotos(prev => ({
           ...prev,
           [uploadingFor.jobId]: {
@@ -167,6 +260,32 @@ export default function CleanerPortal() {
           >
             Enter
           </button>
+          
+          {/* Demo Mode Toggle */}
+          <div style={{ marginTop: 24, paddingTop: 24, borderTop: `1px solid ${T.border}` }}>
+            <button
+              onClick={() => {
+                setDemoMode(true);
+                setAuthenticated(true);
+              }}
+              style={{
+                width: "100%",
+                padding: "14px",
+                borderRadius: T.radius,
+                border: `2px solid ${T.accent}`,
+                background: T.accentLight,
+                color: "#8B6914",
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              🧪 Try Demo Mode
+            </button>
+            <p style={{ margin: "12px 0 0", fontSize: 12, color: T.textLight }}>
+              Test with sample jobs (no PIN needed)
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -177,7 +296,26 @@ export default function CleanerPortal() {
     return (
       <div style={{ minHeight: "100vh", background: T.bg, padding: 20 }}>
         <div style={{ maxWidth: 500, margin: "0 auto" }}>
-          <div style={{ textAlign: "center", marginBottom: 32, paddingTop: 20 }}>
+          {/* Demo Mode Banner */}
+          {demoMode && (
+            <div style={{ background: T.accentLight, borderRadius: T.radius, padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span>🧪</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#8B6914" }}>Demo Mode</span>
+              </div>
+              <button
+                onClick={() => {
+                  setDemoMode(false);
+                  setAuthenticated(false);
+                }}
+                style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#fff", fontSize: 12, fontWeight: 600, color: T.textMuted, cursor: "pointer" }}
+              >
+                Exit Demo
+              </button>
+            </div>
+          )}
+          
+          <div style={{ textAlign: "center", marginBottom: 32, paddingTop: demoMode ? 0 : 20 }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>🌿</div>
             <h1 style={{ margin: "0 0 8px", fontSize: 24, fontWeight: 900, color: T.text }}>Select Your Team</h1>
             <p style={{ margin: 0, color: T.textMuted, fontSize: 14 }}>{new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</p>
@@ -214,12 +352,14 @@ export default function CleanerPortal() {
             })}
           </div>
           
-          <button
-            onClick={() => setAuthenticated(false)}
-            style={{ width: "100%", marginTop: 32, padding: "14px", borderRadius: T.radius, border: `1.5px solid ${T.border}`, background: "#fff", color: T.textMuted, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
-          >
-            ← Back to PIN
-          </button>
+          {!demoMode && (
+            <button
+              onClick={() => setAuthenticated(false)}
+              style={{ width: "100%", marginTop: 32, padding: "14px", borderRadius: T.radius, border: `1.5px solid ${T.border}`, background: "#fff", color: T.textMuted, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+            >
+              ← Back to PIN
+            </button>
+          )}
         </div>
       </div>
     );
@@ -228,8 +368,16 @@ export default function CleanerPortal() {
   // ─── Jobs List Screen ───
   return (
     <div style={{ minHeight: "100vh", background: T.bg, paddingBottom: 40 }}>
+      {/* Demo Mode Banner */}
+      {demoMode && (
+        <div style={{ background: T.accentLight, padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <span>🧪</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#8B6914" }}>Demo Mode - Try uploading photos!</span>
+        </div>
+      )}
+      
       {/* Header */}
-      <div style={{ background: selectedTeamData?.color || T.primary, padding: "20px", color: "#fff", position: "sticky", top: 0, zIndex: 10 }}>
+      <div style={{ background: selectedTeamData?.color || T.primary, padding: "20px", color: "#fff", position: "sticky", top: demoMode ? 0 : 0, zIndex: 10 }}>
         <div style={{ maxWidth: 500, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>{selectedTeamData?.name}</div>
