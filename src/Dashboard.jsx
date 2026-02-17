@@ -3974,6 +3974,7 @@ function EditScheduleClientModal({ client, settings, onSave, onDelete, onClose }
     assignedTeam: client.assignedTeam || settings.teams[0]?.id,
     customDuration: client.customDuration || null,
     notes: client.notes || "",
+    accessNotes: client.accessNotes || "",
     status: client.status || "active",
   });
 
@@ -4091,10 +4092,17 @@ function EditScheduleClientModal({ client, settings, onSave, onDelete, onClose }
           </div>
         </div>
 
+        {/* Access Notes */}
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>🔑 ACCESS DETAILS</label>
+          <textarea value={local.accessNotes} onChange={e => u("accessNotes", e.target.value)} placeholder="e.g. Key under doormat, alarm code 1234, garage code 9999..."
+            rows={2} style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 13, resize: "vertical" }} />
+        </div>
+
         {/* Notes */}
         <div>
-          <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>NOTES</label>
-          <textarea value={local.notes} onChange={e => u("notes", e.target.value)} placeholder="e.g. Has 2 dogs, keep gate closed..."
+          <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>📝 SPECIAL NOTES</label>
+          <textarea value={local.notes} onChange={e => u("notes", e.target.value)} placeholder="e.g. Has 2 dogs, keep gate closed, baby sleeps 1-3pm..."
             rows={2} style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 13, resize: "vertical" }} />
         </div>
 

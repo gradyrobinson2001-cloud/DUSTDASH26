@@ -762,20 +762,29 @@ const DEMO_ADDRESSES = {
 
 const DEMO_NOTES = [
   "2 dogs, keep gate closed",
-  "Key under front mat",
-  "Ring doorbell, don't knock",
-  "Alarm code: 1234#",
-  "Cat is friendly",
-  "Park in driveway",
-  "Use side entrance",
-  "Has a cleaner-friendly vacuum",
-  "Prefers eco products only",
-  "Leave invoice on kitchen counter",
-  "Baby sleeps 1-3pm, be quiet",
+  "Cat is friendly, don't let outside",
+  "Baby sleeps 1-3pm, please be quiet",
+  "Prefers eco products only - allergies",
   "Water plants on windowsill please",
+  "Has own vacuum, use theirs",
   "",
   "",
   "",
+  "",
+  "",
+];
+
+const DEMO_ACCESS_NOTES = [
+  "Key under front doormat",
+  "Lockbox on side gate - code 5678",
+  "Ring doorbell, client works from home",
+  "Key in garden gnome by front door",
+  "Garage code 9999, enter through laundry",
+  "Alarm code: 1234#, disarm immediately",
+  "Key with neighbour at #15",
+  "Sliding door unlocked, enter via deck",
+  "Code for keypad: 0000",
+  "Client leaves door unlocked",
   "",
   "",
 ];
@@ -842,6 +851,7 @@ export function generateDemoClients(count = 45) {
       customDuration: null, // Manual override
       status: "active",
       notes: DEMO_NOTES[Math.floor(Math.random() * DEMO_NOTES.length)],
+      accessNotes: DEMO_ACCESS_NOTES[Math.floor(Math.random() * DEMO_ACCESS_NOTES.length)],
       isDemo: true,
       createdAt: new Date().toISOString(),
     });
