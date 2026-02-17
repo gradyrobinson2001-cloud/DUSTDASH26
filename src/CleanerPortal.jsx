@@ -21,7 +21,7 @@ export default function CleanerPortal() {
 
   const today = new Date().toISOString().split("T")[0];
 
-  // Demo jobs for testing
+  // Demo jobs for testing - defined here so we can use them in the button click
   const demoJobs = [
     {
       id: "demo_job_1",
@@ -93,21 +93,34 @@ export default function CleanerPortal() {
     { id: "demo_client_5", name: "Priya Sharma", address: "7 Dodonaea Close, Twin Waters QLD 4564", notes: "Alarm code: 1234#" },
   ];
 
-  // Load today's jobs (or demo jobs)
+  // Function to enter demo mode - sets everything at once to avoid race conditions
+  const enterDemoMode = () => {
+    setJobs(demoJobs);
+    setClients(demoClients);
+    setJobPhotos({});
+    setDemoMode(true);
+    setAuthenticated(true);
+  };
+
+  // Function to exit demo mode
+  const exitDemoMode = () => {
+    setDemoMode(false);
+    setAuthenticated(false);
+    setSelectedTeam(null);
+    setJobs([]);
+    setClients([]);
+    setJobPhotos({});
+  };
+
+  // Load real jobs when not in demo mode
   useEffect(() => {
-    if (demoMode) {
-      setJobs(demoJobs);
-      setClients(demoClients);
-    } else {
+    if (!demoMode && authenticated) {
       const allJobs = loadScheduledJobs();
       const todaysJobs = allJobs.filter(j => j.date === today && !j.isBreak);
       setJobs(todaysJobs);
       setClients(loadScheduleClients());
     }
-    
-    // Reset photos when mode changes
-    setJobPhotos({});
-  }, [demoMode, today]);
+  }, [demoMode, authenticated, today]);
 
   // Load existing photos for jobs
   useEffect(() => {
@@ -264,10 +277,7 @@ export default function CleanerPortal() {
           {/* Demo Mode Toggle */}
           <div style={{ marginTop: 24, paddingTop: 24, borderTop: `1px solid ${T.border}` }}>
             <button
-              onClick={() => {
-                setDemoMode(true);
-                setAuthenticated(true);
-              }}
+              onClick={enterDemoMode}
               style={{
                 width: "100%",
                 padding: "14px",
@@ -304,10 +314,7 @@ export default function CleanerPortal() {
                 <span style={{ fontSize: 13, fontWeight: 700, color: "#8B6914" }}>Demo Mode</span>
               </div>
               <button
-                onClick={() => {
-                  setDemoMode(false);
-                  setAuthenticated(false);
-                }}
+                onClick={exitDemoMode}
                 style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#fff", fontSize: 12, fontWeight: 600, color: T.textMuted, cursor: "pointer" }}
               >
                 Exit Demo
