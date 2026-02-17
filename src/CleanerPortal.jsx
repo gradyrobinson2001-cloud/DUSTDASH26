@@ -222,13 +222,13 @@ export default function CleanerPortal() {
   // ─── PIN Entry Screen ───
   if (!authenticated) {
     return (
-      <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <div style={{ background: "#fff", borderRadius: T.radiusLg, padding: "40px 32px", width: "100%", maxWidth: 360, boxShadow: T.shadowLg, textAlign: "center" }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🌿</div>
-          <h1 style={{ margin: "0 0 8px", fontSize: 24, fontWeight: 900, color: T.text }}>Dust Bunnies</h1>
-          <p style={{ margin: "0 0 32px", color: T.textMuted, fontSize: 14 }}>Cleaner Portal</p>
+      <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, overflow: "auto" }}>
+        <div style={{ background: "#fff", borderRadius: T.radiusLg, padding: "32px 28px", width: "100%", maxWidth: 360, boxShadow: T.shadowLg, textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🌿</div>
+          <h1 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 900, color: T.text }}>Dust Bunnies</h1>
+          <p style={{ margin: "0 0 24px", color: T.textMuted, fontSize: 14 }}>Cleaner Portal</p>
           
-          <div style={{ marginBottom: 20 }}>
+          <div style={{ marginBottom: 16 }}>
             <input
               type="password"
               inputMode="numeric"
@@ -242,8 +242,8 @@ export default function CleanerPortal() {
               onKeyDown={e => e.key === "Enter" && handlePinSubmit()}
               style={{
                 width: "100%",
-                padding: "16px",
-                fontSize: 24,
+                padding: "14px",
+                fontSize: 22,
                 textAlign: "center",
                 letterSpacing: 8,
                 borderRadius: T.radius,
@@ -261,12 +261,12 @@ export default function CleanerPortal() {
             disabled={pinInput.length < 4}
             style={{
               width: "100%",
-              padding: "16px",
+              padding: "14px",
               borderRadius: T.radius,
               border: "none",
               background: pinInput.length >= 4 ? T.primary : T.border,
               color: "#fff",
-              fontSize: 16,
+              fontSize: 15,
               fontWeight: 700,
               cursor: pinInput.length >= 4 ? "pointer" : "not-allowed",
             }}
@@ -275,7 +275,7 @@ export default function CleanerPortal() {
           </button>
           
           {/* Demo Mode Toggle */}
-          <div style={{ marginTop: 24, paddingTop: 24, borderTop: `1px solid ${T.border}` }}>
+          <div style={{ marginTop: 20, paddingTop: 20, borderTop: `1px solid ${T.border}` }}>
             <button
               onClick={enterDemoMode}
               style={{
@@ -292,7 +292,7 @@ export default function CleanerPortal() {
             >
               🧪 Try Demo Mode
             </button>
-            <p style={{ margin: "12px 0 0", fontSize: 12, color: T.textLight }}>
+            <p style={{ margin: "10px 0 0", fontSize: 11, color: T.textLight }}>
               Test with sample jobs (no PIN needed)
             </p>
           </div>
