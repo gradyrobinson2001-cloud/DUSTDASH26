@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { T, SERVICED_AREAS, loadPricing } from "./shared";
 import { isEmail, isPhone, errorStyle } from "./utils/validate";
+import { supabase, supabaseReady } from "./lib/supabase";
 
 // ═══════════════════════════════════════════════════════════
 // CUSTOMER INFO FORM — Suburb-First Flow, Mobile-Ready
@@ -74,13 +75,23 @@ export default function CustomerForm() {
   const roomServices = Object.entries(pricing).filter(([_, v]) => v.category === "room");
   const addonServices = Object.entries(pricing).filter(([_, v]) => v.category === "addon");
 
-  const handleSubmit = () => {
-    // Store in localStorage so the dashboard picks it up
-    const submission = { 
-      ...fd, 
-      submittedAt: new Date().toISOString() 
-    };
-    localStorage.setItem("db_form_submission", JSON.stringify(submission));
+  const handleSubmit = async () => {
+    const submission = { ...fd, submittedAt: new Date().toISOString() };
+
+    if (supabaseReady) {
+      // Post to Supabase enquiries table — shows up in Dashboard Inbox in real-time
+      await supabase.from('enquiries').insert({
+        name:    fd.name,
+        channel: 'form',
+        suburb:  fd.suburb,
+        status:  'info_received',
+        details: submission,
+      });
+    } else {
+      // Fallback: localStorage for dev mode
+      localStorage.setItem("db_form_submission", JSON.stringify(submission));
+    }
+
     setSubmitted(true);
   };
 

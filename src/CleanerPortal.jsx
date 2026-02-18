@@ -1,657 +1,813 @@
-import React, { useState, useEffect, useRef } from "react";
-import { T, CLEANER_PIN, loadScheduleSettings, loadScheduledJobs, saveScheduledJobs, loadScheduleClients, savePhoto, getPhotosForJob } from "./shared";
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import StaffLogin from './auth/StaffLogin';
+import { useScheduledJobs } from './hooks/useScheduledJobs';
+import { useClients } from './hooks/useClients';
+import { usePhotos } from './hooks/usePhotos';
+import { useRota } from './hooks/useRota';
+import { supabase, supabaseReady } from './lib/supabase';
+import { T, loadScheduleSettings } from './shared';
 
 // ═══════════════════════════════════════════════════════════
-// EMPLOYEE PORTAL - Daily runsheet, time tracking & photos
+// STAFF PORTAL — Phase 3 rebuild
+// Auth: StaffLogin (PIN → Edge Function → Supabase session)
+// Data: Supabase Realtime (no more 30s polling)
+// Photos: Supabase Storage (no more IndexedDB)
+// Tabs: Today | Rota | Payslips
 // ═══════════════════════════════════════════════════════════
 
+// ─── Demo data ───────────────────────────────────────────
+const TODAY = new Date().toISOString().split('T')[0];
+
+const DEMO_JOBS = [
+  { id: 'demo_1', client_id: 'dc1', client_name: 'Sarah Mitchell', suburb: 'Buderim',   date: TODAY, start_time: '08:00', end_time: '10:15', duration: 135, team_id: 'team_a', job_status: 'scheduled', bedrooms: 3, bathrooms: 2, living: 1, kitchen: 1, extras: ['oven'] },
+  { id: 'demo_2', client_id: 'dc2', client_name: 'James Cooper',   suburb: 'Maroochydore', date: TODAY, start_time: '10:45', end_time: '12:45', duration: 120, team_id: 'team_a', job_status: 'scheduled', bedrooms: 4, bathrooms: 2, living: 2, kitchen: 1, extras: [] },
+  { id: 'demo_3', client_id: 'dc3', client_name: 'Emma Collins',   suburb: 'Mooloolaba', date: TODAY, start_time: '13:30', end_time: '15:30', duration: 120, team_id: 'team_a', job_status: 'scheduled', bedrooms: 2, bathrooms: 1, living: 1, kitchen: 1, extras: ['windows'] },
+];
+
+const DEMO_CLIENTS = [
+  { id: 'dc1', name: 'Sarah Mitchell', address: '23 Ballinger Crescent, Buderim QLD 4556',      notes: '2 dogs – keep gate closed',           access_notes: 'Key under front doormat, alarm 1234#', frequency: 'weekly' },
+  { id: 'dc2', name: 'James Cooper',   address: '15 Duporth Avenue, Maroochydore QLD 4558',     notes: 'Baby sleeps 1–3pm, please be quiet',  access_notes: 'Ring doorbell, client WFH',           frequency: 'fortnightly' },
+  { id: 'dc3', name: 'Emma Collins',   address: '5 Parkyn Parade, Mooloolaba QLD 4557',         notes: '',                                    access_notes: 'Lockbox side gate – code 5678',       frequency: 'weekly' },
+];
+
+// ─── Helpers ─────────────────────────────────────────────
+function fmtSecs(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h > 0 ? `${h}h ${m}m ${sec}s` : `${m}m ${sec}s`;
+}
+function fmtMins(m) {
+  const h = Math.floor(m / 60), rem = m % 60;
+  return h > 0 ? `${h}hr${rem > 0 ? ` ${rem}min` : ''}` : `${m}min`;
+}
+function weekDays(anchorDate) {
+  const d = new Date(anchorDate);
+  const day = d.getDay(); // 0=Sun
+  const mon = new Date(d); mon.setDate(d.getDate() - ((day + 6) % 7));
+  return Array.from({ length: 7 }, (_, i) => {
+    const dd = new Date(mon); dd.setDate(mon.getDate() + i);
+    return dd.toISOString().split('T')[0];
+  });
+}
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// ─── Component ────────────────────────────────────────────
 export default function CleanerPortal() {
-  const [authenticated, setAuthenticated] = useState(false);
-  const [pinInput, setPinInput] = useState("");
-  const [pinError, setPinError] = useState(false);
-  const [selectedTeam, setSelectedTeam] = useState(null);
-  const [settings, setSettings] = useState(loadScheduleSettings);
-  const [allJobs, setAllJobs] = useState([]);
-  const [clients, setClients] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [expandedJob, setExpandedJob] = useState(null);
-  const [jobPhotos, setJobPhotos] = useState({});
-  const [photoType, setPhotoType] = useState("before");
-  const [toast, setToast] = useState(null);
-  const [demoMode, setDemoMode] = useState(false);
+  const [profile,      setProfile]      = useState(null); // {id, full_name, team_id, role}
+  const [demoMode,     setDemoMode]     = useState(false);
+  const [activeTab,    setActiveTab]    = useState('today'); // 'today' | 'rota' | 'payslips'
+  const [selectedDate, setSelectedDate] = useState(TODAY);
+  const [expandedJob,  setExpandedJob]  = useState(null);
+  const [photoType,    setPhotoType]    = useState('before');
+  const [toast,        setToast]        = useState(null);
   const [activeTimers, setActiveTimers] = useState({});
-  const [showWeeklyHours, setShowWeeklyHours] = useState(false);
-  const fileInputRef = useRef(null);
-  const cameraInputRef = useRef(null);
-  const timerIntervalRef = useRef({});
+  const [localPhotos,  setLocalPhotos]  = useState({}); // jobId → { before: [], after: [] }
+  const [payslips,     setPayslips]     = useState([]);
+  const [settings,     setSettings]     = useState(() => loadScheduleSettings());
 
-  const today = new Date().toISOString().split("T")[0];
+  const timerRefs = useRef({});
+  const cameraRef = useRef(null);
+  const fileRef   = useRef(null);
+  const uploadJobRef = useRef(null); // tracks which job + type the file input is for
 
-  // Demo data
-  const demoJobs = [
-    {
-      id: "demo_job_1", clientId: "demo_client_1", clientName: "Sarah Mitchell", suburb: "Buderim",
-      date: today, startTime: "08:00", endTime: "10:15", duration: 135, teamId: "team_a", status: "scheduled",
-      bedrooms: 3, bathrooms: 2, living: 1, kitchen: 1, extras: ["oven"],
-    },
-    {
-      id: "demo_job_2", clientId: "demo_client_2", clientName: "James Cooper", suburb: "Maroochydore",
-      date: today, startTime: "10:45", endTime: "12:45", duration: 120, teamId: "team_a", status: "scheduled",
-      bedrooms: 4, bathrooms: 2, living: 2, kitchen: 1, extras: [],
-    },
-    {
-      id: "demo_job_3", clientId: "demo_client_3", clientName: "Emma Collins", suburb: "Mooloolaba",
-      date: today, startTime: "13:30", endTime: "15:30", duration: 120, teamId: "team_a", status: "scheduled",
-      bedrooms: 2, bathrooms: 1, living: 1, kitchen: 1, extras: ["windows"],
-    },
-    {
-      id: "demo_job_4", clientId: "demo_client_4", clientName: "Tom Wilson", suburb: "Alexandra Headland",
-      date: today, startTime: "08:00", endTime: "10:30", duration: 150, teamId: "team_b", status: "scheduled",
-      bedrooms: 4, bathrooms: 3, living: 2, kitchen: 1, extras: ["oven", "windows"],
-    },
-    {
-      id: "demo_job_5", clientId: "demo_client_5", clientName: "Priya Sharma", suburb: "Twin Waters",
-      date: today, startTime: "11:00", endTime: "13:00", duration: 120, teamId: "team_b", status: "scheduled",
-      bedrooms: 3, bathrooms: 2, living: 1, kitchen: 1, extras: [],
-    },
-  ];
+  const teamId = demoMode ? 'team_a' : profile?.team_id;
 
-  const demoClients = [
-    { id: "demo_client_1", name: "Sarah Mitchell", address: "23 Ballinger Crescent, Buderim QLD 4556", notes: "2 dogs - keep gate closed", accessNotes: "Key under front doormat, alarm code 1234#", frequency: "weekly" },
-    { id: "demo_client_2", name: "James Cooper", address: "15 Duporth Avenue, Maroochydore QLD 4558", notes: "Baby sleeps 1-3pm, please be quiet", accessNotes: "Ring doorbell, client works from home", frequency: "fortnightly" },
-    { id: "demo_client_3", name: "Emma Collins", address: "5 Parkyn Parade, Mooloolaba QLD 4557", notes: "", accessNotes: "Lockbox on side gate - code 5678", frequency: "weekly" },
-    { id: "demo_client_4", name: "Tom Wilson", address: "11 Pacific Terrace, Alexandra Headland QLD 4572", notes: "Cat is friendly, don't let out", accessNotes: "Garage code 9999, enter through laundry", frequency: "fortnightly" },
-    { id: "demo_client_5", name: "Priya Sharma", address: "7 Dodonaea Close, Twin Waters QLD 4564", notes: "Use eco products only - allergies", accessNotes: "Key in garden gnome by front door", frequency: "monthly" },
-  ];
+  // ── Hooks ──────────────────────────────────────────────
+  const { scheduledJobs, updateJob } = useScheduledJobs(teamId ? { teamId } : {});
+  const { clients }                   = useClients();
+  const { photos: supaPhotos, uploadPhoto, getSignedUrl } = usePhotos();
 
-  const enterDemoMode = () => {
-    setAllJobs(demoJobs);
-    setClients(demoClients);
-    setJobPhotos({});
-    setDemoMode(true);
-    setAuthenticated(true);
-  };
+  // Week for rota tab
+  const weekDates = weekDays(selectedDate);
+  const weekStart = weekDates[0];
+  const { getRotaForTeam } = useRota(weekStart);
+  const rota = getRotaForTeam(teamId);
 
-  const exitDemoMode = () => {
-    setDemoMode(false);
-    setAuthenticated(false);
-    setSelectedTeam(null);
-    setAllJobs([]);
-    setClients([]);
-    setJobPhotos({});
-    setActiveTimers({});
-  };
-
-  // Load real data
-  useEffect(() => {
-    if (!demoMode && authenticated) {
-      const jobs = loadScheduledJobs();
-      setAllJobs(jobs);
-      setClients(loadScheduleClients());
-    }
-  }, [demoMode, authenticated]);
-
-  // Refresh data periodically (sync with owner's changes)
-  useEffect(() => {
-    if (!demoMode && authenticated) {
-      const interval = setInterval(() => {
-        const jobs = loadScheduledJobs();
-        setAllJobs(jobs);
-        setClients(loadScheduleClients());
-        setSettings(loadScheduleSettings());
-      }, 30000);
-      return () => clearInterval(interval);
-    }
-  }, [demoMode, authenticated]);
-
-  // Load photos for visible jobs
-  useEffect(() => {
-    const loadPhotos = async () => {
-      const dayJobs = allJobs.filter(j => j.date === selectedDate && j.teamId === selectedTeam && !j.isBreak);
-      const photosMap = {};
-      for (const job of dayJobs) {
-        try {
-          const photos = await getPhotosForJob(job.id);
-          photosMap[job.id] = {
-            before: photos.filter(p => p.type === "before"),
-            after: photos.filter(p => p.type === "after"),
-          };
-        } catch (e) {
-          photosMap[job.id] = { before: [], after: [] };
-        }
-      }
-      setJobPhotos(photosMap);
-    };
-    if (selectedTeam && allJobs.length > 0) {
-      loadPhotos();
-    }
-  }, [allJobs, selectedDate, selectedTeam]);
-
-  // Timer management
-  useEffect(() => {
-    const dayJobs = allJobs.filter(j => j.date === selectedDate && j.teamId === selectedTeam);
-    
-    dayJobs.forEach(job => {
-      if (job.jobStatus === "in_progress" && job.arrivedAt && !timerIntervalRef.current[job.id]) {
-        const startTime = new Date(job.arrivedAt).getTime();
-        timerIntervalRef.current[job.id] = setInterval(() => {
-          const elapsed = Math.floor((Date.now() - startTime) / 1000);
-          setActiveTimers(prev => ({ ...prev, [job.id]: elapsed }));
-        }, 1000);
-      } else if (job.jobStatus !== "in_progress" && timerIntervalRef.current[job.id]) {
-        clearInterval(timerIntervalRef.current[job.id]);
-        delete timerIntervalRef.current[job.id];
-      }
-    });
-
-    return () => {
-      Object.values(timerIntervalRef.current).forEach(clearInterval);
-    };
-  }, [allJobs, selectedDate, selectedTeam]);
-
-  const handlePinSubmit = () => {
-    if (pinInput === CLEANER_PIN) {
-      setAuthenticated(true);
-      setPinError(false);
-    } else {
-      setPinError(true);
-      setPinInput("");
-    }
-  };
-
-  const showToast = (msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
-  };
-
-  const updateJobStatus = (jobId, newStatus) => {
-    const now = new Date().toISOString();
-    
-    setAllJobs(prev => {
-      const updated = prev.map(j => {
-        if (j.id === jobId) {
-          const updates = { ...j, jobStatus: newStatus };
-          
-          if (newStatus === "in_progress") {
-            updates.arrivedAt = now;
-            const startTime = Date.now();
-            timerIntervalRef.current[jobId] = setInterval(() => {
-              const elapsed = Math.floor((Date.now() - startTime) / 1000);
-              setActiveTimers(prev => ({ ...prev, [jobId]: elapsed }));
-            }, 1000);
-          } else if (newStatus === "completed") {
-            updates.finishedAt = now;
-            if (j.arrivedAt) {
-              updates.actualDuration = Math.round((new Date(now) - new Date(j.arrivedAt)) / 60000);
-            }
-            if (timerIntervalRef.current[jobId]) {
-              clearInterval(timerIntervalRef.current[jobId]);
-              delete timerIntervalRef.current[jobId];
-            }
-          }
-          
-          return updates;
-        }
-        return j;
-      });
-      
-      if (!demoMode) {
-        saveScheduledJobs(updated);
-      }
-      
-      return updated;
-    });
-
-    showToast(newStatus === "in_progress" ? "⏱️ Timer started!" : "✅ Job completed!");
-  };
-
-  const handlePhotoUpload = async (e, jobId, type) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    for (const file of files) {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64Data = reader.result;
-        const job = allJobs.find(j => j.id === jobId);
-
-        try {
-          if (!demoMode) {
-            await savePhoto({
-              jobId,
-              date: selectedDate,
-              teamId: selectedTeam,
-              clientId: job?.clientId,
-              clientName: job?.clientName,
-              type,
-              data: base64Data,
-            });
-          }
-
-          setJobPhotos(prev => ({
-            ...prev,
-            [jobId]: {
-              ...prev[jobId],
-              [type]: [...(prev[jobId]?.[type] || []), { data: base64Data, type, uploadedAt: new Date().toISOString() }],
-            },
-          }));
-
-          showToast(`✅ ${type === "before" ? "Before" : "After"} photo added!`);
-        } catch (error) {
-          console.error("Failed to save photo:", error);
-          showToast("❌ Failed to upload photo");
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-
-    e.target.value = "";
-  };
-
-  const formatDuration = (seconds) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
-    return `${mins}m ${secs}s`;
-  };
-
-  const formatMinutes = (mins) => {
-    const hrs = Math.floor(mins / 60);
-    const m = mins % 60;
-    if (hrs > 0) return `${hrs}hr ${m > 0 ? `${m}min` : ""}`;
-    return `${mins}min`;
-  };
-
-  const getWeeklyHours = () => {
-    const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay() + 1);
-    startOfWeek.setHours(0, 0, 0, 0);
-    
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
-
-    const weekJobs = allJobs.filter(j => {
-      const jobDate = new Date(j.date);
-      return j.teamId === selectedTeam && jobDate >= startOfWeek && jobDate <= endOfWeek && !j.isBreak;
-    });
-
-    const completedJobs = weekJobs.filter(j => j.jobStatus === "completed");
-    const totalActualMins = completedJobs.reduce((sum, j) => sum + (j.actualDuration || j.duration || 0), 0);
-    const totalScheduledMins = weekJobs.reduce((sum, j) => sum + (j.duration || 0), 0);
-
-    const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    const byDay = days.map((day, i) => {
-      const date = new Date(startOfWeek);
-      date.setDate(startOfWeek.getDate() + i);
-      const dateStr = date.toISOString().split("T")[0];
-      
-      const dayJobs = weekJobs.filter(j => j.date === dateStr);
-      const completed = dayJobs.filter(j => j.jobStatus === "completed");
-      const mins = completed.reduce((sum, j) => sum + (j.actualDuration || j.duration || 0), 0);
-      
-      return { day, date: dateStr, jobs: dayJobs.length, completed: completed.length, hours: Math.round(mins / 60 * 10) / 10 };
-    });
-
-    return {
-      completedJobs: completedJobs.length,
-      totalJobs: weekJobs.length,
-      actualHours: Math.round(totalActualMins / 60 * 10) / 10,
-      scheduledHours: Math.round(totalScheduledMins / 60 * 10) / 10,
-      byDay,
-    };
-  };
+  // ── Active jobs for selected date ──────────────────────
+  const allJobs = demoMode ? DEMO_JOBS : scheduledJobs;
+  const allClients = demoMode ? DEMO_CLIENTS : clients;
 
   const dayJobs = allJobs
-    .filter(j => j.date === selectedDate && j.teamId === selectedTeam && !j.isBreak)
-    .sort((a, b) => a.startTime.localeCompare(b.startTime));
+    .filter(j => {
+      const jDate = j.date;
+      const jTeam = j.team_id || j.teamId;
+      return jDate === selectedDate && jTeam === teamId && !j.is_break && !j.isBreak;
+    })
+    .sort((a, b) => (a.start_time || a.startTime || '').localeCompare(b.start_time || b.startTime || ''));
 
-  const selectedTeamData = settings.teams.find(t => t.id === selectedTeam);
-  const totalScheduledMins = dayJobs.reduce((sum, j) => sum + (j.duration || 0), 0);
-  const completedCount = dayJobs.filter(j => j.jobStatus === "completed").length;
+  // ── Toast helper ───────────────────────────────────────
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  }, []);
 
-  // ─── PIN Entry Screen ───
-  if (!authenticated) {
+  // ── Timer management ───────────────────────────────────
+  useEffect(() => {
+    dayJobs.forEach(job => {
+      const arrivedAt = job.arrived_at || job.arrivedAt;
+      const status    = job.job_status  || job.jobStatus;
+      if (status === 'in_progress' && arrivedAt && !timerRefs.current[job.id]) {
+        const start = new Date(arrivedAt).getTime();
+        timerRefs.current[job.id] = setInterval(() => {
+          setActiveTimers(p => ({ ...p, [job.id]: Math.floor((Date.now() - start) / 1000) }));
+        }, 1000);
+      } else if (status !== 'in_progress' && timerRefs.current[job.id]) {
+        clearInterval(timerRefs.current[job.id]);
+        delete timerRefs.current[job.id];
+      }
+    });
+    return () => Object.values(timerRefs.current).forEach(clearInterval);
+  }, [dayJobs]);
+
+  // ── Load Supabase photos for day jobs ─────────────────
+  useEffect(() => {
+    if (demoMode) return;
+    const jobIds = dayJobs.map(j => j.id);
+    const relevant = supaPhotos.filter(p => jobIds.includes(p.job_id));
+
+    const buildMap = async () => {
+      const map = {};
+      for (const p of relevant) {
+        if (!map[p.job_id]) map[p.job_id] = { before: [], after: [] };
+        const url = await getSignedUrl(p.storage_path);
+        map[p.job_id][p.type].push({ id: p.id, url, storage_path: p.storage_path, uploaded_at: p.uploaded_at });
+      }
+      setLocalPhotos(map);
+    };
+    buildMap();
+  }, [supaPhotos, selectedDate, demoMode]);
+
+  // ── Load payslips ─────────────────────────────────────
+  useEffect(() => {
+    if (!supabaseReady || !profile?.id || demoMode) return;
+    supabase
+      .from('payslips')
+      .select('*, payroll_records(week_start, gross_pay, net_pay, tax_withheld, super_amount, hours_worked)')
+      .eq('staff_id', profile.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setPayslips(data ?? []));
+  }, [profile, demoMode]);
+
+  // ── Job status update ─────────────────────────────────
+  const updateJobStatus = useCallback(async (jobId, newStatus) => {
+    const now = new Date().toISOString();
+    const job = allJobs.find(j => j.id === jobId);
+    if (!job) return;
+
+    const arrivedAt = job.arrived_at || job.arrivedAt;
+    const updates = { job_status: newStatus };
+    if (newStatus === 'in_progress') {
+      updates.arrived_at = now;
+      const start = Date.now();
+      timerRefs.current[jobId] = setInterval(() => {
+        setActiveTimers(p => ({ ...p, [jobId]: Math.floor((Date.now() - start) / 1000) }));
+      }, 1000);
+    } else if (newStatus === 'completed') {
+      updates.finished_at = now;
+      if (arrivedAt) {
+        updates.actual_duration = Math.round((new Date(now) - new Date(arrivedAt)) / 60000);
+      }
+      if (timerRefs.current[jobId]) { clearInterval(timerRefs.current[jobId]); delete timerRefs.current[jobId]; }
+    }
+
+    if (!demoMode) {
+      try { await updateJob(jobId, updates); } catch (e) { showToast('❌ Update failed'); return; }
+    }
+
+    showToast(newStatus === 'in_progress' ? '⏱️ Timer started!' : '✅ Job completed!');
+  }, [allJobs, demoMode, updateJob, showToast]);
+
+  // ── Photo upload ──────────────────────────────────────
+  const handlePhotoFile = useCallback(async (e) => {
+    const files = e.target.files;
+    const jobId = uploadJobRef.current?.jobId;
+    const type  = uploadJobRef.current?.type;
+    if (!files?.length || !jobId) return;
+
+    const job = allJobs.find(j => j.id === jobId);
+
+    for (const file of files) {
+      if (demoMode) {
+        // Demo: use object URL locally
+        const url = URL.createObjectURL(file);
+        setLocalPhotos(prev => ({
+          ...prev,
+          [jobId]: {
+            before: prev[jobId]?.before || [],
+            after:  prev[jobId]?.after  || [],
+            [type]: [...(prev[jobId]?.[type] || []), { url, uploaded_at: new Date().toISOString() }],
+          },
+        }));
+        showToast(`✅ ${type === 'before' ? 'Before' : 'After'} photo added!`);
+        continue;
+      }
+
+      try {
+        await uploadPhoto({
+          jobId,
+          clientId:   job?.client_id || job?.clientId,
+          date:        selectedDate,
+          teamId:      teamId,
+          type,
+          file,
+          uploadedBy: profile?.id,
+        });
+        showToast(`✅ ${type === 'before' ? 'Before' : 'After'} photo uploaded!`);
+      } catch (err) {
+        console.error('Photo upload failed:', err);
+        showToast('❌ Upload failed. Try again.');
+      }
+    }
+    e.target.value = '';
+  }, [allJobs, demoMode, selectedDate, teamId, profile, uploadPhoto, showToast]);
+
+  // ── Weekly hours summary ───────────────────────────────
+  const weeklyStats = (() => {
+    const teamJobs = allJobs.filter(j => {
+      const jTeam = j.team_id || j.teamId;
+      return jTeam === teamId && !j.is_break && !j.isBreak;
+    });
+    return weekDates.map((d, i) => {
+      const dJobs = teamJobs.filter(j => j.date === d);
+      const done  = dJobs.filter(j => (j.job_status || j.jobStatus) === 'completed');
+      const mins  = done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
+      return { label: DAY_LABELS[i], date: d, jobs: dJobs.length, done: done.length, hours: Math.round(mins / 60 * 10) / 10 };
+    });
+  })();
+
+  const todayStats = (() => {
+    const done = dayJobs.filter(j => (j.job_status || j.jobStatus) === 'completed');
+    const total = dayJobs.reduce((s, j) => s + (j.duration || 0), 0);
+    return { done: done.length, total: dayJobs.length, mins: total };
+  })();
+
+  // ── Sign out ───────────────────────────────────────────
+  const handleSignOut = async () => {
+    if (!demoMode && supabaseReady) await supabase.auth.signOut();
+    setProfile(null);
+    setDemoMode(false);
+    setActiveTimers({});
+    setLocalPhotos({});
+  };
+
+  // ── Team display name ──────────────────────────────────
+  const teamSettings = settings?.teams?.find(t => t.id === teamId);
+  const teamColor = teamSettings?.color || T.primary;
+  const teamName  = demoMode ? 'Team A (Demo)' : (teamSettings?.name || profile?.full_name || 'My Team');
+
+  // ══════════════════════════════════════════════════════
+  // ── AUTH SCREEN ────────────────────────────────────────
+  // ══════════════════════════════════════════════════════
+  if (!profile && !demoMode) {
     return (
-      <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <div style={{ background: "#fff", borderRadius: T.radiusLg, padding: "32px 28px", width: "100%", maxWidth: 360, boxShadow: T.shadowLg, textAlign: "center" }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🌿</div>
-          <h1 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 900, color: T.text }}>Dust Bunnies</h1>
-          <p style={{ margin: "0 0 24px", color: T.textMuted, fontSize: 14 }}>Employee Portal</p>
-          
-          <div style={{ marginBottom: 16 }}>
-            <input
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              placeholder="Enter PIN"
-              value={pinInput}
-              onChange={e => { setPinInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setPinError(false); }}
-              onKeyDown={e => e.key === "Enter" && handlePinSubmit()}
-              style={{ width: "100%", padding: "14px", fontSize: 22, textAlign: "center", letterSpacing: 8, borderRadius: T.radius, border: `2px solid ${pinError ? T.danger : T.border}`, outline: "none" }}
-            />
-            {pinError && <p style={{ color: T.danger, fontSize: 13, marginTop: 8 }}>Incorrect PIN</p>}
-          </div>
-          
-          <button
-            onClick={handlePinSubmit}
-            disabled={pinInput.length < 4}
-            style={{ width: "100%", padding: "14px", borderRadius: T.radius, border: "none", background: pinInput.length >= 4 ? T.primary : T.border, color: "#fff", fontSize: 15, fontWeight: 700, cursor: pinInput.length >= 4 ? "pointer" : "not-allowed" }}
-          >
-            Enter
-          </button>
-          
-          <div style={{ marginTop: 20, paddingTop: 20, borderTop: `1px solid ${T.border}` }}>
-            <button
-              onClick={enterDemoMode}
-              style={{ width: "100%", padding: "14px", borderRadius: T.radius, border: `2px solid ${T.accent}`, background: T.accentLight, color: "#8B6914", fontSize: 14, fontWeight: 700, cursor: "pointer" }}
-            >
-              🧪 Try Demo Mode
-            </button>
-            <p style={{ margin: "10px 0 0", fontSize: 11, color: T.textLight }}>Test with sample jobs</p>
-          </div>
-        </div>
-      </div>
+      <StaffLogin
+        onAuthenticated={(prof) => { setProfile(prof); }}
+        onDemoMode={() => {
+          setDemoMode(true);
+          setProfile({ id: 'demo', full_name: 'Team A', team_id: 'team_a', role: 'staff' });
+        }}
+      />
     );
   }
 
-  // ─── Team Selection Screen ───
-  if (!selectedTeam) {
-    return (
-      <div style={{ minHeight: "100vh", background: T.bg, padding: 20 }}>
-        <div style={{ maxWidth: 500, margin: "0 auto" }}>
-          {demoMode && (
-            <div style={{ background: T.accentLight, borderRadius: T.radius, padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span>🧪</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#8B6914" }}>Demo Mode</span>
-              </div>
-              <button onClick={exitDemoMode} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#fff", fontSize: 12, fontWeight: 600, color: T.textMuted, cursor: "pointer" }}>Exit</button>
-            </div>
-          )}
-          
-          <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>🌿</div>
-            <h1 style={{ margin: "0 0 8px", fontSize: 24, fontWeight: 900, color: T.text }}>Select Your Team</h1>
-            <p style={{ margin: 0, color: T.textMuted, fontSize: 14 }}>{new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}</p>
+  // ══════════════════════════════════════════════════════
+  // ── MAIN PORTAL ────────────────────────────────────────
+  // ══════════════════════════════════════════════════════
+  return (
+    <div style={{ minHeight: '100vh', background: T.bg, paddingBottom: 90 }}>
+
+      {/* ── Header ─────────────────────────────────────── */}
+      <div style={{ background: teamColor, padding: '16px 20px', color: '#fff', position: 'sticky', top: 0, zIndex: 30 }}>
+        {demoMode && (
+          <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: '4px 12px', fontSize: 11, fontWeight: 700, textAlign: 'center', marginBottom: 10 }}>
+            🧪 Demo Mode
           </div>
-          
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {settings.teams.map(team => {
-              const teamJobCount = allJobs.filter(j => j.date === today && j.teamId === team.id && !j.isBreak).length;
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>🫧 {teamName}</div>
+            {activeTab === 'today' && (
+              <div style={{ fontSize: 12, opacity: 0.9 }}>{todayStats.done}/{todayStats.total} jobs · {fmtMins(todayStats.mins)}</div>
+            )}
+          </div>
+          <button
+            onClick={handleSignOut}
+            style={{ padding: '8px 14px', borderRadius: 20, border: '2px solid rgba(255,255,255,0.4)', background: 'transparent', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+          >
+            Sign out
+          </button>
+        </div>
+
+        {/* Week strip — shown only on Today tab */}
+        {activeTab === 'today' && (
+          <div style={{ display: 'flex', gap: 4, overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: 2 }}>
+            {weekDates.map((d, i) => {
+              const isToday = d === TODAY;
+              const isSel   = d === selectedDate;
+              const stat    = weeklyStats[i];
+              const allDone = stat.done === stat.jobs && stat.jobs > 0;
               return (
                 <button
-                  key={team.id}
-                  onClick={() => setSelectedTeam(team.id)}
-                  style={{ padding: "24px", borderRadius: T.radius, border: `3px solid ${team.color}`, background: "#fff", cursor: "pointer", textAlign: "left", boxShadow: T.shadow }}
+                  key={d}
+                  onClick={() => setSelectedDate(d)}
+                  style={{
+                    flex: '0 0 auto', minWidth: 46,
+                    padding: '6px 4px',
+                    borderRadius: 10,
+                    border: isSel ? '2px solid #fff' : '2px solid transparent',
+                    background: isSel ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)',
+                    color: '#fff', cursor: 'pointer', textAlign: 'center',
+                  }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                    <div style={{ width: 56, height: 56, borderRadius: T.radius, background: `${team.color}20`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <div style={{ width: 24, height: 24, borderRadius: "50%", background: team.color }} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 20, fontWeight: 800, color: T.text }}>{team.name}</div>
-                      <div style={{ fontSize: 14, color: T.textMuted }}>{teamJobCount} jobs today</div>
-                    </div>
+                  <div style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{DAY_LABELS[i]}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.3 }}>
+                    {allDone ? '✅' : isToday ? '•' : stat.jobs > 0 ? stat.jobs : '–'}
                   </div>
                 </button>
               );
             })}
+            {selectedDate !== TODAY && (
+              <button
+                onClick={() => setSelectedDate(TODAY)}
+                style={{ flex: '0 0 auto', padding: '6px 10px', borderRadius: 10, border: 'none', background: '#fff', color: teamColor, fontSize: 11, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                Today
+              </button>
+            )}
           </div>
-          
-          {!demoMode && (
-            <button onClick={() => setAuthenticated(false)} style={{ width: "100%", marginTop: 32, padding: "14px", borderRadius: T.radius, border: `1.5px solid ${T.border}`, background: "#fff", color: T.textMuted, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-              ← Sign Out
-            </button>
+        )}
+      </div>
+
+      {/* ── Tab Bar ────────────────────────────────────── */}
+      <div style={{ display: 'flex', background: '#fff', borderBottom: `1px solid ${T.border}`, position: 'sticky', top: activeTab === 'today' ? 120 : 76, zIndex: 20 }}>
+        {[
+          { id: 'today',   label: '📋 Today' },
+          { id: 'rota',    label: '📅 Rota' },
+          { id: 'payslips', label: '💵 Payslips' },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              flex: 1, padding: '12px 8px', border: 'none', background: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 700,
+              color: activeTab === tab.id ? teamColor : T.textMuted,
+              borderBottom: activeTab === tab.id ? `2px solid ${teamColor}` : '2px solid transparent',
+              transition: 'all 0.15s',
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══════════════════════════════════════════════════
+          TODAY TAB
+      ══════════════════════════════════════════════════ */}
+      {activeTab === 'today' && (
+        <div style={{ padding: '16px 16px 0' }}>
+          {/* Weekly hours bar */}
+          <div style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', marginBottom: 16, boxShadow: T.shadow }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.textMuted, marginBottom: 8 }}>THIS WEEK</div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {weeklyStats.map(s => (
+                <div
+                  key={s.date}
+                  onClick={() => setSelectedDate(s.date)}
+                  style={{
+                    flex: 1, textAlign: 'center', padding: '6px 2px',
+                    borderRadius: 8, cursor: 'pointer',
+                    background: s.date === selectedDate ? `${teamColor}20` : T.bg,
+                  }}
+                >
+                  <div style={{ fontSize: 9, color: T.textMuted }}>{s.label}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: s.done === s.jobs && s.jobs > 0 ? teamColor : T.text }}>
+                    {s.hours > 0 ? `${s.hours}h` : s.jobs > 0 ? `${s.jobs}j` : '–'}
+                  </div>
+                  <div style={{ fontSize: 9, color: T.textLight }}>{s.done}/{s.jobs}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Job list */}
+          {dayJobs.length === 0 ? (
+            <div style={{ background: '#fff', borderRadius: T.radius, padding: 48, textAlign: 'center', boxShadow: T.shadow }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
+              <div style={{ fontWeight: 700, color: T.text, marginBottom: 4 }}>No jobs scheduled</div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>{selectedDate === TODAY ? 'Enjoy your day off!' : 'Pick a different day above'}</div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {dayJobs.map((job, idx) => {
+                const client     = allClients.find(c => c.id === (job.client_id || job.clientId));
+                const photos     = localPhotos[job.id] || { before: [], after: [] };
+                const isExp      = expandedJob === job.id;
+                const status     = job.job_status || job.jobStatus || 'scheduled';
+                const isRunning  = status === 'in_progress';
+                const isDone     = status === 'completed';
+                const timer      = activeTimers[job.id];
+                const startT     = job.start_time || job.startTime || '';
+                const actualDur  = job.actual_duration || job.actualDuration;
+                const extras     = job.extras || [];
+                const address    = client?.address || `${job.suburb}, QLD`;
+                const accessNote = client?.access_notes || client?.accessNotes;
+                const clientNote = client?.notes;
+                const freq       = client?.frequency;
+
+                return (
+                  <div key={job.id} style={{ background: '#fff', borderRadius: T.radius, overflow: 'hidden', boxShadow: T.shadow }}>
+                    {/* Card header */}
+                    <div style={{ padding: '14px 16px', background: isDone ? T.primaryLight : isRunning ? T.accentLight : '#fff', borderBottom: `1px solid ${T.border}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                        <div>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 3 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: T.textMuted }}>JOB {idx + 1}</span>
+                            {freq && (
+                              <span style={{ padding: '1px 7px', borderRadius: 10, fontSize: 10, fontWeight: 700, background: freq === 'weekly' ? T.blueLight : T.primaryLight, color: freq === 'weekly' ? T.blue : T.primaryDark }}>
+                                {freq}
+                              </span>
+                            )}
+                            {isDone   && <span>✅</span>}
+                            {isRunning && <span>⏱️</span>}
+                          </div>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: T.text }}>{job.client_name || job.clientName}</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: teamColor }}>{startT}</div>
+                          <div style={{ fontSize: 12, color: T.textMuted }}>⏱ {fmtMins(job.duration)}</div>
+                        </div>
+                      </div>
+
+                      {/* Timer */}
+                      {isRunning && timer !== undefined && (
+                        <div style={{ background: T.accent, color: '#fff', borderRadius: T.radiusSm, padding: '8px 12px', textAlign: 'center', marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, opacity: 0.9 }}>TIME ELAPSED</div>
+                          <div style={{ fontSize: 22, fontWeight: 900, fontFamily: 'monospace' }}>{fmtSecs(timer)}</div>
+                        </div>
+                      )}
+
+                      {/* Completed banner */}
+                      {isDone && actualDur && (
+                        <div style={{ background: teamColor, color: '#fff', borderRadius: T.radiusSm, padding: '6px 12px', textAlign: 'center', marginBottom: 10, fontSize: 13, fontWeight: 600 }}>
+                          Done in {fmtMins(actualDur)}
+                          {actualDur < job.duration && <span> · {job.duration - actualDur}min early 🎉</span>}
+                          {actualDur > job.duration && <span> · {actualDur - job.duration}min over</span>}
+                        </div>
+                      )}
+
+                      {/* Address */}
+                      <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 8 }}>📍 {address}</div>
+
+                      {/* Rooms */}
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+                        {(job.bedrooms  || client?.bedrooms)  && <span style={{ fontSize: 13 }}>🛏 {job.bedrooms  || client.bedrooms} bed</span>}
+                        {(job.bathrooms || client?.bathrooms) && <span style={{ fontSize: 13 }}>🚿 {job.bathrooms || client.bathrooms} bath</span>}
+                        {(job.living    || client?.living)    && <span style={{ fontSize: 13 }}>🛋 {job.living    || client.living} living</span>}
+                        {(job.kitchen   || client?.kitchen)   && <span style={{ fontSize: 13 }}>🍳 {job.kitchen   || client.kitchen} kitchen</span>}
+                      </div>
+
+                      {/* Extras */}
+                      {extras.length > 0 && (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {extras.map(ex => (
+                            <span key={ex} style={{ padding: '3px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: T.accentLight, color: '#8B6914' }}>
+                              ✨ {ex === 'oven' ? 'Oven Clean' : ex === 'windows' ? 'Windows' : ex}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Access & notes — always visible */}
+                    {(accessNote || clientNote) && (
+                      <div style={{ padding: '10px 16px', background: '#FFFDF5', borderBottom: `1px solid ${T.border}` }}>
+                        {accessNote && (
+                          <div style={{ display: 'flex', gap: 8, marginBottom: clientNote ? 6 : 0 }}>
+                            <span>🔑</span>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{accessNote}</span>
+                          </div>
+                        )}
+                        {clientNote && (
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <span>📝</span>
+                            <span style={{ fontSize: 13, color: T.textMuted }}>{clientNote}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div style={{ padding: '14px 16px' }}>
+                      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                        {/* Navigate */}
+                        <button
+                          onClick={() => {
+                            const dest = encodeURIComponent(address);
+                            window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}`, '_blank');
+                          }}
+                          style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: 'none', background: T.blue, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          🗺️ Navigate
+                        </button>
+                        {/* Photos toggle */}
+                        <button
+                          onClick={() => setExpandedJob(isExp ? null : job.id)}
+                          style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: isExp ? T.primaryLight : '#fff', color: T.text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          📸 Photos ({photos.before.length + photos.after.length})
+                        </button>
+                      </div>
+
+                      {/* Status button */}
+                      {!isRunning && !isDone && (
+                        <button
+                          onClick={() => updateJobStatus(job.id, 'in_progress')}
+                          style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, border: 'none', background: T.accent, color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer' }}
+                        >
+                          ▶️ Arrived — Start Timer
+                        </button>
+                      )}
+                      {isRunning && (
+                        <button
+                          onClick={() => updateJobStatus(job.id, 'completed')}
+                          style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, border: 'none', background: teamColor, color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer' }}
+                        >
+                          ✅ Finished — Stop Timer
+                        </button>
+                      )}
+                      {isDone && (
+                        <div style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, background: T.primaryLight, color: T.primaryDark, fontSize: 14, fontWeight: 700, textAlign: 'center' }}>
+                          ✅ Job Complete
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Photos panel (expandable) */}
+                    {isExp && (
+                      <div style={{ padding: '0 16px 16px', borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
+                        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                          {['before', 'after'].map(t => (
+                            <button
+                              key={t}
+                              onClick={() => setPhotoType(t)}
+                              style={{
+                                flex: 1, padding: '9px', borderRadius: T.radiusSm,
+                                border: photoType === t ? `2px solid ${teamColor}` : `1.5px solid ${T.border}`,
+                                background: photoType === t ? `${teamColor}15` : '#fff',
+                                color: photoType === t ? T.primaryDark : T.textMuted,
+                                fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                              }}
+                            >
+                              {t === 'before' ? 'Before' : 'After'} ({photos[t].length})
+                            </button>
+                          ))}
+                        </div>
+
+                        {photos[photoType].length > 0 && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+                            {photos[photoType].map((p, i) => (
+                              <div key={i} style={{ aspectRatio: '1', borderRadius: T.radiusSm, overflow: 'hidden', background: T.bg }}>
+                                <img src={p.url || p.data} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          <button
+                            onClick={() => { uploadJobRef.current = { jobId: job.id, type: photoType }; cameraRef.current?.click(); }}
+                            style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: 'none', background: teamColor, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                          >
+                            📷 Camera
+                          </button>
+                          <button
+                            onClick={() => { uploadJobRef.current = { jobId: job.id, type: photoType }; fileRef.current?.click(); }}
+                            style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', color: T.text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                          >
+                            📁 Upload
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════
+          ROTA TAB
+      ══════════════════════════════════════════════════ */}
+      {activeTab === 'rota' && (
+        <div style={{ padding: 16 }}>
+          <RotaView
+            weekDates={weekDates}
+            teamId={teamId}
+            allJobs={allJobs}
+            rota={rota}
+            teamColor={teamColor}
+            onSelectDate={(d) => { setSelectedDate(d); setActiveTab('today'); }}
+          />
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════
+          PAYSLIPS TAB
+      ══════════════════════════════════════════════════ */}
+      {activeTab === 'payslips' && (
+        <div style={{ padding: 16 }}>
+          <PayslipsView payslips={payslips} demoMode={demoMode} teamColor={teamColor} />
+        </div>
+      )}
+
+      {/* Hidden file inputs */}
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoFile} style={{ display: 'none' }} />
+      <input ref={fileRef}   type="file" accept="image/*" multiple            onChange={handlePhotoFile} style={{ display: 'none' }} />
+
+      {/* Toast */}
+      {toast && (
+        <div style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', background: '#1B3A2D', color: '#fff', padding: '13px 22px', borderRadius: 30, fontSize: 14, fontWeight: 600, boxShadow: T.shadowLg, zIndex: 200, whiteSpace: 'nowrap' }}>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// ROTA VIEW COMPONENT
+// ══════════════════════════════════════════════════════════
+function RotaView({ weekDates, teamId, allJobs, rota, teamColor, onSelectDate }) {
+  const isPublished = rota?.is_published;
+  const overrides   = rota?.overrides || {};
+
+  const teamJobs = allJobs.filter(j => {
+    const jTeam = j.team_id || j.teamId;
+    return jTeam === teamId && !j.is_break && !j.isBreak;
+  });
+
+  const weekTotal = weekDates.reduce((sum, d) => {
+    const dayDone = teamJobs.filter(j => j.date === d && (j.job_status || j.jobStatus) === 'completed');
+    return sum + dayDone.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
+  }, 0);
+
+  if (!isPublished) {
+    return (
+      <div style={{ background: '#fff', borderRadius: T.radius, padding: 40, textAlign: 'center', boxShadow: T.shadow }}>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>📅</div>
+        <div style={{ fontWeight: 700, color: T.text, marginBottom: 6 }}>Rota not yet published</div>
+        <div style={{ fontSize: 13, color: T.textMuted }}>Your rota for this week hasn't been published yet. Check back soon.</div>
       </div>
     );
   }
 
-  // ─── Main Jobs Screen ───
   return (
-    <div style={{ minHeight: "100vh", background: T.bg, paddingBottom: 100 }}>
-      {/* Header */}
-      <div style={{ background: selectedTeamData?.color || T.primary, padding: "16px 20px", color: "#fff", position: "sticky", top: 0, zIndex: 20 }}>
-        {demoMode && (
-          <div style={{ background: "rgba(255,255,255,0.2)", padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, marginBottom: 12, textAlign: "center" }}>🧪 Demo Mode</div>
-        )}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>{selectedTeamData?.name}</div>
-            <div style={{ fontSize: 12, opacity: 0.9 }}>{completedCount}/{dayJobs.length} jobs · {formatMinutes(totalScheduledMins)}</div>
-          </div>
-          <button onClick={() => setSelectedTeam(null)} style={{ padding: "8px 14px", borderRadius: 20, border: "2px solid rgba(255,255,255,0.3)", background: "transparent", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Switch</button>
-        </div>
-        
-        {/* Date Selector */}
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() - 1); setSelectedDate(d.toISOString().split("T")[0]); }} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "rgba(255,255,255,0.2)", color: "#fff", fontSize: 14, cursor: "pointer" }}>←</button>
-          <div style={{ flex: 1, textAlign: "center" }}>
-            <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 8, padding: "8px 12px", color: "#fff", fontSize: 14, fontWeight: 600, textAlign: "center", width: "100%" }} />
-          </div>
-          <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() + 1); setSelectedDate(d.toISOString().split("T")[0]); }} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "rgba(255,255,255,0.2)", color: "#fff", fontSize: 14, cursor: "pointer" }}>→</button>
-          {selectedDate !== today && (
-            <button onClick={() => setSelectedDate(today)} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "#fff", color: selectedTeamData?.color, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Today</button>
-          )}
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <div style={{ fontWeight: 800, color: T.text }}>Week of {weekDates[0]}</div>
+        <div style={{ fontSize: 13, color: teamColor, fontWeight: 700 }}>
+          Total: {Math.round(weekTotal / 60 * 10) / 10}h worked
         </div>
       </div>
 
-      {/* Weekly Hours Button */}
-      <div style={{ padding: "12px 20px", background: "#fff", borderBottom: `1px solid ${T.border}` }}>
-        <button onClick={() => setShowWeeklyHours(!showWeeklyHours)} style={{ width: "100%", padding: "12px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: showWeeklyHours ? T.primaryLight : "#fff", color: T.text, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span>📊 Weekly Hours</span>
-          <span style={{ color: T.textMuted }}>{showWeeklyHours ? "▲" : "▼"}</span>
-        </button>
-        
-        {showWeeklyHours && (() => {
-          const weekly = getWeeklyHours();
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {weekDates.map((d, i) => {
+          const dJobs = teamJobs.filter(j => j.date === d);
+          const totalMins = dJobs.reduce((s, j) => s + (j.duration || 0), 0);
+          const done = dJobs.filter(j => (j.job_status || j.jobStatus) === 'completed').length;
+          const travelNote = overrides[`travel_${d}`];
+          const isToday = d === TODAY;
+
           return (
-            <div style={{ marginTop: 12, background: T.bg, borderRadius: T.radiusSm, padding: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                <div style={{ background: "#fff", padding: 12, borderRadius: 8, textAlign: "center" }}>
-                  <div style={{ fontSize: 24, fontWeight: 900, color: T.primary }}>{weekly.actualHours}h</div>
-                  <div style={{ fontSize: 11, color: T.textMuted }}>Worked</div>
-                </div>
-                <div style={{ background: "#fff", padding: 12, borderRadius: 8, textAlign: "center" }}>
-                  <div style={{ fontSize: 24, fontWeight: 900, color: T.text }}>{weekly.scheduledHours}h</div>
-                  <div style={{ fontSize: 11, color: T.textMuted }}>Scheduled</div>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 4 }}>
-                {weekly.byDay.map(d => (
-                  <div key={d.day} onClick={() => setSelectedDate(d.date)} style={{ flex: 1, textAlign: "center", padding: "8px 4px", background: d.date === selectedDate ? T.primaryLight : "#fff", borderRadius: 6, cursor: "pointer" }}>
-                    <div style={{ fontSize: 10, color: T.textMuted, marginBottom: 4 }}>{d.day}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: d.completed === d.jobs && d.jobs > 0 ? T.primary : T.text }}>{d.hours > 0 ? `${d.hours}h` : "-"}</div>
-                    <div style={{ fontSize: 9, color: T.textLight }}>{d.completed}/{d.jobs}</div>
+            <div
+              key={d}
+              onClick={() => dJobs.length > 0 && onSelectDate(d)}
+              style={{
+                background: '#fff', borderRadius: T.radius, overflow: 'hidden',
+                boxShadow: T.shadow,
+                border: isToday ? `2px solid ${teamColor}` : '2px solid transparent',
+                cursor: dJobs.length > 0 ? 'pointer' : 'default',
+              }}
+            >
+              <div style={{ padding: '12px 16px', background: isToday ? `${teamColor}10` : '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: isToday ? teamColor : T.text }}>
+                    {DAY_LABELS[i]} {isToday ? '(Today)' : ''}
                   </div>
-                ))}
+                  <div style={{ fontSize: 11, color: T.textMuted }}>{d}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  {dJobs.length > 0 ? (
+                    <>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{dJobs.length} jobs · {fmtMins(totalMins)}</div>
+                      <div style={{ fontSize: 11, color: teamColor }}>{done}/{dJobs.length} done</div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 12, color: T.textLight }}>Day off</div>
+                  )}
+                </div>
               </div>
+
+              {dJobs.length > 0 && (
+                <div style={{ padding: '0 16px 12px' }}>
+                  {dJobs.map(j => (
+                    <div key={j.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: `1px solid ${T.borderLight}` }}>
+                      <span style={{ fontSize: 13, color: T.text, fontWeight: 600 }}>{j.client_name || j.clientName}</span>
+                      <span style={{ fontSize: 12, color: T.textMuted }}>{j.start_time || j.startTime} · {fmtMins(j.duration)}</span>
+                    </div>
+                  ))}
+                  {travelNote && (
+                    <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>🚗 {travelNote}</div>
+                  )}
+                </div>
+              )}
             </div>
           );
-        })()}
+        })}
       </div>
+    </div>
+  );
+}
 
-      {/* Jobs List */}
-      <div style={{ padding: 20 }}>
-        {dayJobs.length === 0 ? (
-          <div style={{ background: "#fff", borderRadius: T.radius, padding: 40, textAlign: "center" }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
-            <p style={{ margin: 0, color: T.textMuted, fontSize: 16, fontWeight: 600 }}>No jobs scheduled</p>
-            <p style={{ margin: "8px 0 0", color: T.textLight, fontSize: 14 }}>{selectedDate === today ? "Enjoy your day off!" : "Select a different date"}</p>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {dayJobs.map((job, index) => {
-              const client = clients.find(c => c.id === job.clientId);
-              const photos = jobPhotos[job.id] || { before: [], after: [] };
-              const isExpanded = expandedJob === job.id;
-              const isInProgress = job.jobStatus === "in_progress";
-              const isCompleted = job.jobStatus === "completed";
-              const timer = activeTimers[job.id];
+// ══════════════════════════════════════════════════════════
+// PAYSLIPS VIEW COMPONENT
+// ══════════════════════════════════════════════════════════
+function PayslipsView({ payslips, demoMode, teamColor }) {
+  const fmt = (n) => `$${(n || 0).toFixed(2)}`;
 
-              return (
-                <div key={job.id} style={{ background: "#fff", borderRadius: T.radius, overflow: "hidden", boxShadow: T.shadow }}>
-                  {/* Job Header */}
-                  <div style={{ padding: "16px 20px", background: isCompleted ? T.primaryLight : isInProgress ? T.accentLight : "#fff", borderBottom: `1px solid ${T.border}` }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 8 }}>
-                      <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: T.textMuted }}>JOB {index + 1}</span>
-                          {client?.frequency && (
-                            <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: client.frequency === "weekly" ? T.blueLight : client.frequency === "fortnightly" ? T.primaryLight : T.bg, color: client.frequency === "weekly" ? T.blue : client.frequency === "fortnightly" ? T.primary : T.textMuted }}>{client.frequency}</span>
-                          )}
-                          {isCompleted && <span style={{ fontSize: 14 }}>✅</span>}
-                          {isInProgress && <span style={{ fontSize: 14 }}>⏱️</span>}
-                        </div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: T.text }}>{job.clientName}</div>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 16, fontWeight: 700, color: selectedTeamData?.color }}>{job.startTime}</div>
-                        <div style={{ fontSize: 12, color: T.textMuted }}>⏱️ {formatMinutes(job.duration)}</div>
-                      </div>
-                    </div>
-                    
-                    {/* Timer Display */}
-                    {isInProgress && timer !== undefined && (
-                      <div style={{ background: T.accent, color: "#fff", padding: "10px 16px", borderRadius: T.radiusSm, textAlign: "center", marginBottom: 12 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.9, marginBottom: 2 }}>TIME ELAPSED</div>
-                        <div style={{ fontSize: 24, fontWeight: 900, fontFamily: "monospace" }}>{formatDuration(timer)}</div>
-                      </div>
-                    )}
+  if (demoMode) {
+    return (
+      <div style={{ background: '#fff', borderRadius: T.radius, padding: 40, textAlign: 'center', boxShadow: T.shadow }}>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>💵</div>
+        <div style={{ fontWeight: 700, color: T.text, marginBottom: 6 }}>Payslips not available in demo</div>
+        <div style={{ fontSize: 13, color: T.textMuted }}>Sign in with your staff PIN to view your payslips.</div>
+      </div>
+    );
+  }
 
-                    {/* Actual Duration (if completed) */}
-                    {isCompleted && job.actualDuration && (
-                      <div style={{ background: T.primary, color: "#fff", padding: "8px 16px", borderRadius: T.radiusSm, textAlign: "center", marginBottom: 12, fontSize: 13, fontWeight: 600 }}>
-                        Completed in {formatMinutes(job.actualDuration)}
-                        {job.actualDuration < job.duration && <span> · {job.duration - job.actualDuration}min early! 🎉</span>}
-                        {job.actualDuration > job.duration && <span> · {job.actualDuration - job.duration}min over</span>}
-                      </div>
-                    )}
-                    
-                    {/* Address */}
-                    <div style={{ fontSize: 14, color: T.textMuted, marginBottom: 12 }}>📍 {client?.address || job.suburb}</div>
-                    
-                    {/* Room counts */}
-                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-                      {(job.bedrooms || client?.bedrooms) && <span style={{ fontSize: 13, color: T.text }}>🛏️ {job.bedrooms || client?.bedrooms} bed</span>}
-                      {(job.bathrooms || client?.bathrooms) && <span style={{ fontSize: 13, color: T.text }}>🚿 {job.bathrooms || client?.bathrooms} bath</span>}
-                      {(job.living || client?.living) && <span style={{ fontSize: 13, color: T.text }}>🛋️ {job.living || client?.living} living</span>}
-                      {(job.kitchen || client?.kitchen) && <span style={{ fontSize: 13, color: T.text }}>🍳 {job.kitchen || client?.kitchen} kitchen</span>}
-                    </div>
+  if (payslips.length === 0) {
+    return (
+      <div style={{ background: '#fff', borderRadius: T.radius, padding: 40, textAlign: 'center', boxShadow: T.shadow }}>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>💵</div>
+        <div style={{ fontWeight: 700, color: T.text, marginBottom: 6 }}>No payslips yet</div>
+        <div style={{ fontSize: 13, color: T.textMuted }}>Your payslips will appear here once payroll is processed.</div>
+      </div>
+    );
+  }
 
-                    {/* Extras */}
-                    {job.extras && job.extras.length > 0 && (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                        {job.extras.map(extra => (
-                          <span key={extra} style={{ padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: T.accentLight, color: "#8B6914" }}>
-                            ✨ {extra === "oven" ? "Oven Clean" : extra === "windows" ? "Windows" : extra}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Access & Notes */}
-                  {(client?.accessNotes || client?.notes) && (
-                    <div style={{ padding: "12px 20px", background: T.bg, borderBottom: `1px solid ${T.border}` }}>
-                      {client?.accessNotes && (
-                        <div style={{ display: "flex", gap: 8, marginBottom: client?.notes ? 8 : 0 }}>
-                          <span style={{ fontSize: 16 }}>🔑</span>
-                          <span style={{ fontSize: 13, color: T.text, fontWeight: 500 }}>{client.accessNotes}</span>
-                        </div>
-                      )}
-                      {client?.notes && (
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <span style={{ fontSize: 16 }}>📝</span>
-                          <span style={{ fontSize: 13, color: T.textMuted }}>{client.notes}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Action Buttons */}
-                  <div style={{ padding: "16px 20px" }}>
-                    <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-                      <button onClick={() => { const address = encodeURIComponent(client?.address || `${job.suburb}, QLD, Australia`); window.open(`https://www.google.com/maps/dir/?api=1&destination=${address}`, "_blank"); }} style={{ flex: 1, padding: "14px", borderRadius: T.radiusSm, border: "none", background: T.blue, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                        🗺️ Navigate
-                      </button>
-                      <button onClick={() => setExpandedJob(isExpanded ? null : job.id)} style={{ flex: 1, padding: "14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: isExpanded ? T.primaryLight : "#fff", color: T.text, fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                        📸 Photos ({photos.before.length + photos.after.length})
-                      </button>
-                    </div>
-
-                    {/* Status Buttons */}
-                    <div style={{ display: "flex", gap: 10 }}>
-                      {!isInProgress && !isCompleted && (
-                        <button onClick={() => updateJobStatus(job.id, "in_progress")} style={{ flex: 1, padding: "16px", borderRadius: T.radiusSm, border: "none", background: T.accent, color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>
-                          ▶️ Arrived - Start Timer
-                        </button>
-                      )}
-                      {isInProgress && (
-                        <button onClick={() => updateJobStatus(job.id, "completed")} style={{ flex: 1, padding: "16px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer" }}>
-                          ✅ Finished - Stop Timer
-                        </button>
-                      )}
-                      {isCompleted && (
-                        <div style={{ flex: 1, padding: "16px", borderRadius: T.radiusSm, background: T.primaryLight, color: T.primaryDark, fontSize: 15, fontWeight: 700, textAlign: "center" }}>
-                          ✅ Job Completed
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Photos Section (Expandable) */}
-                  {isExpanded && (
-                    <div style={{ padding: "0 20px 20px", borderTop: `1px solid ${T.border}`, marginTop: 0, paddingTop: 20 }}>
-                      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                        <button onClick={() => setPhotoType("before")} style={{ flex: 1, padding: "10px", borderRadius: T.radiusSm, border: photoType === "before" ? `2px solid ${T.primary}` : `1.5px solid ${T.border}`, background: photoType === "before" ? T.primaryLight : "#fff", color: photoType === "before" ? T.primaryDark : T.textMuted, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                          Before ({photos.before.length})
-                        </button>
-                        <button onClick={() => setPhotoType("after")} style={{ flex: 1, padding: "10px", borderRadius: T.radiusSm, border: photoType === "after" ? `2px solid ${T.primary}` : `1.5px solid ${T.border}`, background: photoType === "after" ? T.primaryLight : "#fff", color: photoType === "after" ? T.primaryDark : T.textMuted, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                          After ({photos.after.length})
-                        </button>
-                      </div>
-
-                      {photos[photoType].length > 0 && (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 16 }}>
-                          {photos[photoType].map((photo, i) => (
-                            <div key={i} style={{ aspectRatio: "1", borderRadius: T.radiusSm, overflow: "hidden", background: T.bg }}>
-                              <img src={photo.data} alt={`${photoType} ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <button onClick={() => cameraInputRef.current?.click()} style={{ flex: 1, padding: "14px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                          📷 Take Photo
-                        </button>
-                        <button onClick={() => fileInputRef.current?.click()} style={{ flex: 1, padding: "14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.text, fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                          📁 Upload
-                        </button>
-                      </div>
-
-                      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={(e) => handlePhotoUpload(e, job.id, photoType)} style={{ display: "none" }} />
-                      <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={(e) => handlePhotoUpload(e, job.id, photoType)} style={{ display: "none" }} />
-                    </div>
-                  )}
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {payslips.map(slip => {
+        const rec = slip.payroll_records;
+        const weekStr = slip.week_start ? new Date(slip.week_start).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '–';
+        return (
+          <div key={slip.id} style={{ background: '#fff', borderRadius: T.radius, overflow: 'hidden', boxShadow: T.shadow }}>
+            <div style={{ padding: '14px 16px', background: `${teamColor}10`, borderBottom: `1px solid ${T.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: T.text }}>Week of {weekStr}</div>
+                  <div style={{ fontSize: 11, color: T.textMuted }}>{rec?.hours_worked || 0}h worked</div>
                 </div>
-              );
-            })}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 16, fontWeight: 900, color: teamColor }}>{fmt(rec?.net_pay)}</div>
+                  <div style={{ fontSize: 11, color: T.textMuted }}>net pay</div>
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '12px 16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <Stat label="Gross Pay"    value={fmt(rec?.gross_pay)} />
+                <Stat label="Tax"          value={fmt(rec?.tax_withheld)} />
+                <Stat label="Superannuation" value={fmt(rec?.super_amount)} />
+                <Stat label="Net Pay"      value={fmt(rec?.net_pay)} highlight={teamColor} />
+              </div>
+              {slip.storage_path && (
+                <button
+                  onClick={async () => {
+                    if (!supabaseReady) return;
+                    const { data } = await supabase.storage.from('payslips').createSignedUrl(slip.storage_path, 300);
+                    if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+                  }}
+                  style={{ width: '100%', marginTop: 12, padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${teamColor}`, background: '#fff', color: teamColor, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  📄 View Payslip PDF
+                </button>
+              )}
+            </div>
           </div>
-        )}
-      </div>
+        );
+      })}
+    </div>
+  );
+}
 
-      {/* Toast */}
-      {toast && (
-        <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#1B3A2D", color: "#fff", padding: "14px 24px", borderRadius: 30, fontSize: 14, fontWeight: 600, boxShadow: T.shadowLg, zIndex: 100 }}>
-          {toast}
-        </div>
-      )}
+function Stat({ label, value, highlight }) {
+  return (
+    <div style={{ background: T.bg, borderRadius: 8, padding: '10px 12px' }}>
+      <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 800, color: highlight || T.text }}>{value}</div>
     </div>
   );
 }
