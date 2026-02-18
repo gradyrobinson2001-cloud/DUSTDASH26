@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { T, SERVICED_AREAS, loadPricing } from "./shared";
+import { isEmail, isPhone, errorStyle } from "./utils/validate";
 
 // ═══════════════════════════════════════════════════════════
 // CUSTOMER INFO FORM — Suburb-First Flow, Mobile-Ready
@@ -52,9 +53,21 @@ export default function CustomerForm() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
+  const [step1Touched, setStep1Touched] = useState({ name: false, email: false, phone: false });
+  const touchStep1 = (field) => setStep1Touched(prev => ({ ...prev, [field]: true }));
+
   const isOutOfArea = fd.suburb === "__other";
   const isInArea = fd.suburb && fd.suburb !== "__other";
-  const canProceed1 = fd.name && fd.email && fd.phone;
+
+  // Step 1 field-level validation
+  const step1Errors = {
+    name: step1Touched.name && !fd.name.trim() ? "Name is required" : "",
+    email: step1Touched.email && !fd.email.trim() ? "Email is required"
+         : step1Touched.email && !isEmail(fd.email) ? "Please enter a valid email address" : "",
+    phone: step1Touched.phone && !fd.phone.trim() ? "Phone number is required"
+         : step1Touched.phone && !isPhone(fd.phone) ? "Please enter a valid phone number (at least 8 digits)" : "",
+  };
+  const canProceed1 = fd.name.trim() && isEmail(fd.email) && isPhone(fd.phone);
   const totalSteps = 4;
   const progress = (step / totalSteps) * 100;
 
@@ -251,9 +264,9 @@ export default function CustomerForm() {
             <p style={{ margin: "0 0 24px", fontSize: 13, color: T.textMuted }}>So we know who to send your quote to</p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <Field label="Your Name" value={fd.name} onChange={v => u("name", v)} placeholder="e.g. Sarah Mitchell" />
-              <Field label="Email Address" value={fd.email} onChange={v => u("email", v)} placeholder="e.g. sarah@email.com" type="email" />
-              <Field label="Phone Number" value={fd.phone} onChange={v => u("phone", v)} placeholder="e.g. 0412 345 678" type="tel" />
+              <Field label="Your Name" value={fd.name} onChange={v => u("name", v)} onBlur={() => touchStep1("name")} placeholder="e.g. Sarah Mitchell" error={step1Errors.name} />
+              <Field label="Email Address" value={fd.email} onChange={v => u("email", v)} onBlur={() => touchStep1("email")} placeholder="e.g. sarah@email.com" type="email" error={step1Errors.email} />
+              <Field label="Phone Number" value={fd.phone} onChange={v => u("phone", v)} onBlur={() => touchStep1("phone")} placeholder="e.g. 0412 345 678" type="tel" error={step1Errors.phone} />
             </div>
 
             <div style={{ marginTop: 20, background: T.blueLight, borderRadius: T.radiusSm, padding: "12px 16px" }}>
@@ -380,10 +393,14 @@ export default function CustomerForm() {
           )}
 
           {step === 1 && (
-            <button onClick={() => canProceed1 && setStep(2)} disabled={!canProceed1}
+            <button
+              onClick={() => {
+                setStep1Touched({ name: true, email: true, phone: true });
+                if (canProceed1) setStep(2);
+              }}
               style={{
                 padding: "13px 28px", borderRadius: T.radius, border: "none", fontSize: 14, fontWeight: 700,
-                cursor: canProceed1 ? "pointer" : "not-allowed",
+                cursor: "pointer",
                 background: canProceed1 ? T.primary : T.border,
                 color: canProceed1 ? "#fff" : T.textLight,
               }}>
@@ -434,11 +451,19 @@ const inputStyle = { width: "100%", padding: "12px 16px", borderRadius: 8, borde
 const minusBtn = { width: 34, height: 34, borderRadius: 10, border: "1.5px solid #E2EBE6", background: "#fff", cursor: "pointer", fontSize: 18, fontWeight: 600, color: "#7A8F85", display: "flex", alignItems: "center", justifyContent: "center" };
 const plusBtn = { ...minusBtn, border: "1.5px solid #4A9E7E", background: "#E8F5EE", color: "#4A9E7E" };
 
-function Field({ label, value, onChange, placeholder, type = "text" }) {
+function Field({ label, value, onChange, onBlur, placeholder, type = "text", error }) {
   return (
     <div>
       <label style={labelStyle}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onBlur={onBlur}
+        placeholder={placeholder}
+        style={{ ...inputStyle, borderColor: error ? "#D4645C" : "#E2EBE6" }}
+      />
+      {error && <p style={errorStyle}>{error}</p>}
     </div>
   );
 }

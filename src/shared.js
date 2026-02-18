@@ -17,7 +17,7 @@ export const SERVICED_AREAS = [
 ];
 
 // ─── Cleaner Portal PIN ───
-export const CLEANER_PIN = "1234"; // Change this to your preferred PIN
+export const CLEANER_PIN = import.meta.env.VITE_CLEANER_PIN || "1234";
 
 // ─── Payment tracking ───
 export function loadPayments() {
