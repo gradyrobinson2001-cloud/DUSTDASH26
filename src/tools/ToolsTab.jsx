@@ -1,5 +1,7 @@
-import React from "react";
+import React, { useState, useMemo } from "react";
 import { T } from "../shared";
+import { optimiseRoute, routeSummary } from "../utils/routeOptimiser";
+import { useScheduledJobs } from "../hooks/useScheduledJobs";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY || "";
 
@@ -227,6 +229,175 @@ export default function ToolsTab({
           </div>
         )}
       </div>
+
+      {/* ── Route Optimiser ───────────────────────────────── */}
+      <RouteOptimiser
+        scheduleClients={scheduleClients}
+        scheduledJobs={scheduledJobs}
+        scheduleSettings={scheduleSettings}
+        isMobile={isMobile}
+      />
     </>
   );
 }
+
+// ══════════════════════════════════════════════════════════
+// ROUTE OPTIMISER SECTION
+// ══════════════════════════════════════════════════════════
+function RouteOptimiser({ scheduleClients, scheduledJobs, scheduleSettings, isMobile }) {
+  const TODAY = new Date().toISOString().split("T")[0];
+  const [optimDate,   setOptimDate]   = useState(TODAY);
+  const [optimTeam,   setOptimTeam]   = useState("team_a");
+  const [optimised,   setOptimised]   = useState(null); // null | optimisedJobs[]
+  const [applying,    setApplying]    = useState(false);
+  const [applied,     setApplied]     = useState(false);
+
+  const { updateJob } = useScheduledJobs();
+
+  const teams = scheduleSettings?.teams || [
+    { id: "team_a", name: "Team A", color: T.primary },
+    { id: "team_b", name: "Team B", color: T.blue },
+  ];
+
+  const dayJobs = useMemo(() => scheduledJobs.filter(j => {
+    const jTeam = j.team_id || j.teamId;
+    return j.date === optimDate && jTeam === optimTeam && !j.is_break && !j.isBreak;
+  }), [scheduledJobs, optimDate, optimTeam]);
+
+  const teamColor = teams.find(t => t.id === optimTeam)?.color || T.primary;
+
+  const handleOptimise = () => {
+    setApplied(false);
+    const result = optimiseRoute(dayJobs, scheduleClients);
+    setOptimised(result);
+  };
+
+  const handleApply = async () => {
+    if (!optimised) return;
+    setApplying(true);
+    try {
+      for (let i = 0; i < optimised.length; i++) {
+        await updateJob(optimised[i].id, { sort_order: i });
+      }
+      setApplied(true);
+    } catch (e) {
+      console.error("Apply route failed", e);
+    }
+    setApplying(false);
+  };
+
+  const summary = optimised ? routeSummary(optimised) : null;
+
+  return (
+    <div style={{ marginTop: 24, background: "#fff", borderRadius: T.radius, padding: 24, boxShadow: T.shadow }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+        <span style={{ fontSize: 24 }}>🔀</span>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: T.text }}>Route Optimiser</h3>
+          <p style={{ margin: "2px 0 0", fontSize: 12, color: T.textMuted }}>Nearest-neighbour algorithm — reorder jobs for shortest travel</p>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20, alignItems: "flex-end" }}>
+        <div>
+          <label style={labelSt}>DATE</label>
+          <input type="date" value={optimDate} onChange={e => { setOptimDate(e.target.value); setOptimised(null); setApplied(false); }}
+            style={{ padding: "10px 12px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, fontSize: 14, color: T.text }} />
+        </div>
+        <div>
+          <label style={labelSt}>TEAM</label>
+          <select value={optimTeam} onChange={e => { setOptimTeam(e.target.value); setOptimised(null); setApplied(false); }}
+            style={{ padding: "10px 12px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, fontSize: 14, color: T.text }}>
+            {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+        <button
+          onClick={handleOptimise}
+          disabled={dayJobs.length < 2}
+          style={{ padding: "10px 20px", borderRadius: T.radiusSm, border: "none", background: dayJobs.length < 2 ? T.border : teamColor, color: dayJobs.length < 2 ? T.textLight : "#fff", fontSize: 14, fontWeight: 700, cursor: dayJobs.length < 2 ? "not-allowed" : "pointer" }}
+        >
+          🔀 Optimise
+        </button>
+        {optimised && !applied && (
+          <button
+            onClick={handleApply}
+            disabled={applying}
+            style={{ padding: "10px 20px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontSize: 14, fontWeight: 700, cursor: applying ? "not-allowed" : "pointer", opacity: applying ? 0.7 : 1 }}
+          >
+            {applying ? "Applying…" : "✅ Apply to Calendar"}
+          </button>
+        )}
+        {applied && (
+          <div style={{ padding: "10px 16px", borderRadius: T.radiusSm, background: T.primaryLight, color: T.primaryDark, fontSize: 13, fontWeight: 700 }}>
+            ✅ Sort order applied!
+          </div>
+        )}
+      </div>
+
+      {dayJobs.length === 0 && (
+        <div style={{ textAlign: "center", padding: 24, color: T.textLight, fontSize: 14 }}>
+          No jobs on {optimDate} for {teams.find(t => t.id === optimTeam)?.name}
+        </div>
+      )}
+
+      {dayJobs.length === 1 && (
+        <div style={{ textAlign: "center", padding: 24, color: T.textMuted, fontSize: 14 }}>
+          Only 1 job — nothing to optimise
+        </div>
+      )}
+
+      {/* Results */}
+      {optimised && summary && (
+        <div>
+          {/* Summary */}
+          <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+            <div style={{ padding: "12px 16px", background: `${teamColor}10`, borderRadius: T.radiusSm, textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 900, color: teamColor }}>{summary.totalKm} km</div>
+              <div style={{ fontSize: 11, color: T.textMuted }}>total travel</div>
+            </div>
+            <div style={{ padding: "12px 16px", background: T.bg, borderRadius: T.radiusSm, textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 900, color: T.text }}>~{summary.totalTravelMins} min</div>
+              <div style={{ fontSize: 11, color: T.textMuted }}>drive time (est.)</div>
+            </div>
+            <div style={{ padding: "12px 16px", background: T.bg, borderRadius: T.radiusSm, textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 900, color: T.text }}>{optimised.length}</div>
+              <div style={{ fontSize: 11, color: T.textMuted }}>stops</div>
+            </div>
+          </div>
+
+          {/* Ordered job list */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {optimised.map((job, i) => (
+              <div key={job.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: T.bg, borderRadius: T.radiusSm, border: `1px solid ${T.border}` }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%", background: teamColor, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, flexShrink: 0 }}>
+                  {i + 1}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {job.client_name || job.clientName}
+                  </div>
+                  <div style={{ fontSize: 12, color: T.textMuted }}>{job.suburb} · {job.start_time || job.startTime} · {job.duration}min</div>
+                </div>
+                {job._travelKm !== undefined && (
+                  <div style={{ fontSize: 12, color: T.textMuted, textAlign: "right", flexShrink: 0 }}>
+                    🚗 {job._travelKm}km<br />~{job._travelMins}min
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 12, fontSize: 12, color: T.textLight }}>
+            ℹ️ Travel estimates based on suburb coordinates (straight-line ÷ 30 km/h). Use Google Maps for accurate times.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const labelSt = {
+  fontSize: 11, fontWeight: 700, color: T.textMuted,
+  display: "block", marginBottom: 4, textTransform: "uppercase",
+};
