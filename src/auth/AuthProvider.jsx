@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 
 const AuthContext = createContext(null);
@@ -7,20 +7,39 @@ export function AuthProvider({ children }) {
   const [session,  setSession]  = useState(null);
   const [profile,  setProfile]  = useState(null);
   const [loading,  setLoading]  = useState(true);
+  const loadingDone = useRef(false);
+
+  const doneLoading = () => {
+    if (!loadingDone.current) {
+      loadingDone.current = true;
+      setLoading(false);
+    }
+  };
 
   async function fetchProfile(userId) {
     if (!supabaseReady) return null;
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    if (error) { console.error('[AuthProvider] fetchProfile error:', error); return null; }
-    return data;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      if (error) { console.error('[AuthProvider] fetchProfile error:', error); return null; }
+      return data;
+    } catch (e) {
+      console.error('[AuthProvider] fetchProfile exception:', e);
+      return null;
+    }
   }
 
   useEffect(() => {
-    if (!supabaseReady) { setLoading(false); return; }
+    if (!supabaseReady) { doneLoading(); return; }
+
+    // Safety net — never hang on loading screen more than 5 seconds
+    const timeout = setTimeout(() => {
+      console.warn('[AuthProvider] Loading timed out — forcing done');
+      doneLoading();
+    }, 5000);
 
     // Initial session check
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -29,7 +48,12 @@ export function AuthProvider({ children }) {
         const prof = await fetchProfile(session.user.id);
         setProfile(prof);
       }
-      setLoading(false);
+      clearTimeout(timeout);
+      doneLoading();
+    }).catch((e) => {
+      console.error('[AuthProvider] getSession error:', e);
+      clearTimeout(timeout);
+      doneLoading();
     });
 
     // Listen for auth state changes (login, logout, token refresh)
@@ -43,7 +67,7 @@ export function AuthProvider({ children }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => { clearTimeout(timeout); subscription.unsubscribe(); };
   }, []);
 
   const signOut = async () => {
@@ -71,8 +95,9 @@ export function RequireAdmin({ children }) {
   const { session, profile, loading } = useAuth();
 
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0f1117', color: '#fff', fontSize: 16 }}>
-      Loading…
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0f1117', color: '#fff', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 16 }}>Loading…</div>
+      <a href="/login" style={{ fontSize: 12, color: '#5A8A72', marginTop: 8 }}>Taking too long? Go to login →</a>
     </div>
   );
 
