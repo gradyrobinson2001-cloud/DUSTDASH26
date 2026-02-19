@@ -8,19 +8,20 @@ export function AuthProvider({ children }) {
   const [profile,        setProfile]        = useState(null);
   const [loading,        setLoading]        = useState(true);
   const [debugMsg,       setDebugMsg]       = useState('Waiting for auth…');
-  const initialised = useRef(false);
+  const initialised  = useRef(false);
+  const profileCache = useRef(null); // keep last good profile across token refreshes
 
   async function fetchProfile(userId) {
     if (!supabaseReady) return null;
     try {
-      // Race the DB query against a 5-second timeout so we never hang
+      // Race the DB query against a 10-second timeout so we never hang
       const queryPromise = supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single();
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Profile query timed out after 5s')), 5000)
+        setTimeout(() => reject(new Error('Profile query timed out after 10s')), 10000)
       );
       const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
       if (error) {
@@ -29,6 +30,7 @@ export function AuthProvider({ children }) {
         return null;
       }
       setDebugMsg(`Profile loaded: ${data?.email} role=${data?.role}`);
+      profileCache.current = data;
       return data;
     } catch (e) {
       console.error('[AuthProvider] fetchProfile exception:', e);
@@ -44,17 +46,33 @@ export function AuthProvider({ children }) {
       async (_event, session) => {
         setDebugMsg(`Auth event: ${_event}, user: ${session?.user?.email ?? 'none'}`);
         setSession(session);
+
         if (session?.user) {
+          // On token refresh events, keep the cached profile immediately so the
+          // UI never flashes "Account not set up" while we re-fetch in the background
+          if (_event === 'TOKEN_REFRESHED' && profileCache.current) {
+            setDebugMsg(`Token refreshed — keeping cached profile for ${session.user.email}`);
+            setLoading(false);
+            if (!initialised.current) initialised.current = true;
+            // Re-fetch in background to keep profile data fresh
+            fetchProfile(session.user.id).then(prof => {
+              if (prof) setProfile(prof);
+            });
+            return;
+          }
+
           setDebugMsg(`Fetching profile for ${session.user.id}…`);
           const prof = await fetchProfile(session.user.id);
-          setProfile(prof);
+          // If fetch failed but we have a cached profile, use it rather than
+          // showing the "Account not set up" error screen
+          setProfile(prof ?? profileCache.current);
         } else {
+          // Genuine sign-out — clear everything
+          profileCache.current = null;
           setProfile(null);
         }
-        // Only mark done after BOTH session and profile are resolved
-        if (!initialised.current) {
-          initialised.current = true;
-        }
+
+        if (!initialised.current) initialised.current = true;
         setLoading(false);
       }
     );
