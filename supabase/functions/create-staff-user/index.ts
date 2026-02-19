@@ -14,37 +14,46 @@ serve(async (req) => {
   try {
     // Verify caller is an authenticated admin
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Missing or invalid authorization header' }), {
         status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Create a client with the caller's JWT to verify their role
-    const callerClient = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    const { data: { user: callerUser }, error: callerError } = await callerClient.auth.getUser();
+    // Use service role client — bypasses RLS, can verify any user JWT
+    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // Extract the JWT and verify it
+    const jwt = authHeader.replace('Bearer ', '');
+    const { data: { user: callerUser }, error: callerError } = await adminClient.auth.getUser(jwt);
+
     if (callerError || !callerUser) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized', detail: callerError?.message ?? 'No user found' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Check caller has admin role in profiles
-    const { data: callerProfile } = await callerClient
+    // Check caller has admin role in profiles (service role bypasses RLS)
+    const { data: callerProfile, error: profileCheckError } = await adminClient
       .from('profiles')
       .select('role')
       .eq('id', callerUser.id)
       .single();
 
-    if (callerProfile?.role !== 'admin') {
-      return new Response(JSON.stringify({ error: 'Only admins can create staff accounts' }), {
-        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    if (profileCheckError || callerProfile?.role !== 'admin') {
+      return new Response(
+        JSON.stringify({
+          error: 'Only admins can create staff accounts',
+          detail: profileCheckError?.message ?? `role=${callerProfile?.role}`,
+        }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     // Parse request body
@@ -56,13 +65,7 @@ serve(async (req) => {
       });
     }
 
-    // Use service role client for admin operations
-    const adminClient = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    );
-
-    // Create the auth user and send invite email
+    // Create the auth user
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email,
       email_confirm: true,
@@ -75,11 +78,11 @@ serve(async (req) => {
       });
     }
 
-    // Hash PIN if provided (simple hash — bcrypt not available in Deno edge easily)
+    // Hash PIN if provided
     let pin_hash: string | null = null;
     if (pin) {
       const encoder = new TextEncoder();
-      const data = encoder.encode(pin + Deno.env.get('SUPABASE_JWT_SECRET'));
+      const data = encoder.encode(pin + (Deno.env.get('SUPABASE_JWT_SECRET') ?? ''));
       const hashBuffer = await crypto.subtle.digest('SHA-256', data);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       pin_hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
@@ -119,8 +122,9 @@ serve(async (req) => {
     );
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message || 'Internal server error' }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({ error: (err as Error).message || 'Internal server error' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 });
