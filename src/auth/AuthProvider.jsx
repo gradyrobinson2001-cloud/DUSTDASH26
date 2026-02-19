@@ -4,9 +4,10 @@ import { supabase, supabaseReady } from '../lib/supabase';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [session,  setSession]  = useState(null);
-  const [profile,  setProfile]  = useState(null);
-  const [loading,  setLoading]  = useState(true);
+  const [session,        setSession]        = useState(null);
+  const [profile,        setProfile]        = useState(null);
+  // true until BOTH auth state AND profile fetch are resolved
+  const [loading,        setLoading]        = useState(true);
   const initialised = useRef(false);
 
   async function fetchProfile(userId) {
@@ -28,9 +29,6 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!supabaseReady) { setLoading(false); return; }
 
-    // onAuthStateChange fires immediately with the current session —
-    // use it as the single source of truth. Mark initialised after
-    // the first event so we only show the loading screen once.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         setSession(session);
@@ -40,22 +38,22 @@ export function AuthProvider({ children }) {
         } else {
           setProfile(null);
         }
-        // After first event (initial session check) we're done loading
+        // Only mark done after BOTH session and profile are resolved
         if (!initialised.current) {
           initialised.current = true;
-          setLoading(false);
         }
+        setLoading(false);
       }
     );
 
-    // Hard safety net — never hang more than 6 seconds
+    // Hard safety net — never hang more than 8 seconds
     const timeout = setTimeout(() => {
       if (!initialised.current) {
         console.warn('[AuthProvider] timeout — forcing loading=false');
         initialised.current = true;
-        setLoading(false);
       }
-    }, 6000);
+      setLoading(false);
+    }, 8000);
 
     return () => { clearTimeout(timeout); subscription.unsubscribe(); };
   }, []);
@@ -87,6 +85,9 @@ export function RequireAdmin({ children }) {
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0f1117', color: '#fff', flexDirection: 'column', gap: 12 }}>
       <div style={{ fontSize: 16 }}>Loading…</div>
+      <div style={{ fontSize: 11, color: '#3A5A4A', marginTop: 4 }}>
+        Supabase: {supabaseReady ? '✓ connected' : '✗ not connected'}
+      </div>
       <a href="/login" style={{ fontSize: 12, color: '#5A8A72', marginTop: 8 }}>Taking too long? Go to login →</a>
     </div>
   );
