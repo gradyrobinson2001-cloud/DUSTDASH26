@@ -3,7 +3,7 @@ import { T } from "../shared";
 import { optimiseRoute, routeSummary } from "../utils/routeOptimiser";
 import { useScheduledJobs } from "../hooks/useScheduledJobs";
 
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY || "";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 
 export default function ToolsTab({
   scheduleClients,

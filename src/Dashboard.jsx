@@ -38,6 +38,7 @@ import ClientsTab      from "./clients/ClientsTab";
 import TemplatesTab    from "./settings/TemplatesTab";
 import PricingTab      from "./settings/PricingTab";
 import FormTab         from "./settings/FormTab";
+import StaffTab        from "./settings/StaffTab";
 
 // Modal components
 import EditQuoteModal          from "./modals/EditQuoteModal";
@@ -645,6 +646,7 @@ export default function Dashboard() {
       label: "Admin",
       icon: "⚙️",
       items: [
+        { id: "staff",     label: "Staff Manager", icon: "👤", badge: 0 },
         { id: "templates", label: "Templates",     icon: "💬", badge: 0 },
         { id: "form",      label: "Customer Form", icon: "📋", badge: 0 },
         { id: "pricing",   label: "Pricing",       icon: "⚙️", badge: 0 },
@@ -752,7 +754,28 @@ export default function Dashboard() {
         {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} isMobile={isMobile} />}
         {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} />}
         {page === "rota"     && <RotaTab scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} profile={profile} showToast={showToast} isMobile={isMobile} />}
-        {page === "clients"  && <ClientsTab clients={clients} clientSearch={clientSearch} setClientSearch={setClientSearch} isMobile={isMobile} />}
+        {page === "clients"  && <ClientsTab
+          clients={clients}
+          clientSearch={clientSearch}
+          setClientSearch={setClientSearch}
+          scheduleSettings={scheduleSettings}
+          onAddClient={async (c) => {
+            const newClient = { ...c, is_demo: false, status: c.status || "active" };
+            newClient.estimated_duration = calculateDuration(newClient, scheduleSettings);
+            await addClient(newClient);
+            showToast("✅ Client added — go to Calendar to regenerate schedule");
+          }}
+          onUpdateClient={async (id, u) => { await updateClient(id, u); showToast("✅ Client updated"); }}
+          onDeleteClient={async (id) => {
+            for (const j of scheduledJobs.filter(j => j.clientId === id || j.client_id === id)) {
+              try { await removeJob(j.id); } catch {}
+            }
+            await removeClient(id);
+            showToast("🗑️ Client deleted");
+          }}
+          isMobile={isMobile}
+        />}
+        {page === "staff"    && <StaffTab scheduleSettings={scheduleSettings} showToast={showToast} isMobile={isMobile} />}
         {page === "templates"&& <TemplatesTab templates={templates} copyTemplate={copyTemplate} removeTemplate={removeTemplate} setAddTemplateModal={setAddTemplateModal} isMobile={isMobile} />}
         {page === "form"     && <FormTab showToast={showToast} isMobile={isMobile} />}
         {page === "pricing"  && <PricingTab pricing={pricing} setEditPriceModal={setEditPriceModal} setAddServiceModal={setAddServiceModal} removeService={removeService} isMobile={isMobile} />}
