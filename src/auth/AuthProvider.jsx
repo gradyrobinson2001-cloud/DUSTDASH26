@@ -6,8 +6,8 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [session,        setSession]        = useState(null);
   const [profile,        setProfile]        = useState(null);
-  // true until BOTH auth state AND profile fetch are resolved
   const [loading,        setLoading]        = useState(true);
+  const [debugMsg,       setDebugMsg]       = useState('Waiting for auth…');
   const initialised = useRef(false);
 
   async function fetchProfile(userId) {
@@ -18,10 +18,16 @@ export function AuthProvider({ children }) {
         .select('*')
         .eq('id', userId)
         .single();
-      if (error) { console.error('[AuthProvider] fetchProfile error:', error); return null; }
+      if (error) {
+        console.error('[AuthProvider] fetchProfile error:', error);
+        setDebugMsg(`Profile fetch error: ${error.message} (code: ${error.code})`);
+        return null;
+      }
+      setDebugMsg(`Profile loaded: ${data?.email} role=${data?.role}`);
       return data;
     } catch (e) {
       console.error('[AuthProvider] fetchProfile exception:', e);
+      setDebugMsg(`Profile exception: ${e.message}`);
       return null;
     }
   }
@@ -31,8 +37,10 @@ export function AuthProvider({ children }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
+        setDebugMsg(`Auth event: ${_event}, user: ${session?.user?.email ?? 'none'}`);
         setSession(session);
         if (session?.user) {
+          setDebugMsg(`Fetching profile for ${session.user.id}…`);
           const prof = await fetchProfile(session.user.id);
           setProfile(prof);
         } else {
@@ -66,7 +74,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, signOut }}>
+    <AuthContext.Provider value={{ session, profile, loading, debugMsg, signOut }}>
       {children}
     </AuthContext.Provider>
   );
@@ -80,13 +88,16 @@ export function useAuth() {
 
 // Route guard — wraps admin-only routes
 export function RequireAdmin({ children }) {
-  const { session, profile, loading } = useAuth();
+  const { session, profile, loading, debugMsg } = useAuth();
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0f1117', color: '#fff', flexDirection: 'column', gap: 12 }}>
       <div style={{ fontSize: 16 }}>Loading…</div>
       <div style={{ fontSize: 11, color: '#3A5A4A', marginTop: 4 }}>
         Supabase: {supabaseReady ? '✓ connected' : '✗ not connected'}
+      </div>
+      <div style={{ fontSize: 11, color: '#5A8A72', maxWidth: 400, textAlign: 'center', marginTop: 4 }}>
+        {debugMsg}
       </div>
       <a href="/login" style={{ fontSize: 12, color: '#5A8A72', marginTop: 8 }}>Taking too long? Go to login →</a>
     </div>
