@@ -5,15 +5,15 @@ import { useProfiles } from "../hooks/useProfiles";
 
 // ═══════════════════════════════════════════════════════════
 // STAFF MANAGEMENT TAB — Admin Panel
-// Create staff accounts, edit profiles, reset passwords
-// Send password reset / magic link via Supabase Auth
+// Account creation goes via the create-staff-user Edge Function
+// which uses the Supabase service role key server-side.
+// Password resets / magic links use the anon client directly.
 // ═══════════════════════════════════════════════════════════
 
 export default function StaffTab({ scheduleSettings, showToast, isMobile }) {
   const { profiles, staffMembers, loading, updateProfile } = useProfiles();
-  const [creating,  setCreating]  = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [resetting, setResetting] = useState(null); // staffId | null
+  const [editingId,   setEditingId]   = useState(null);
+  const [resetting,   setResetting]   = useState(null);
   const [showNewForm, setShowNewForm] = useState(false);
 
   const teams = scheduleSettings?.teams || [
@@ -21,12 +21,10 @@ export default function StaffTab({ scheduleSettings, showToast, isMobile }) {
     { id: "team_b", name: "Team B", color: T.blue },
   ];
 
-  const allProfiles = profiles; // includes admin
-  const adminProfiles = allProfiles.filter(p => p.role === "admin");
+  const adminProfiles = profiles.filter(p => p.role === "admin");
 
   const handleResetPassword = async (email, staffId) => {
-    if (!email) { showToast("No email on file for this staff member"); return; }
-    if (!supabaseReady) { showToast("Supabase not connected — cannot send reset email"); return; }
+    if (!email) { showToast("⚠️ No email on file for this staff member"); return; }
     setResetting(staffId);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -34,135 +32,97 @@ export default function StaffTab({ scheduleSettings, showToast, isMobile }) {
       });
       if (error) throw error;
       showToast(`✅ Password reset email sent to ${email}`);
-    } catch (e) {
-      showToast(`❌ Failed: ${e.message}`);
-    }
+    } catch (e) { showToast(`❌ ${e.message}`); }
     setResetting(null);
   };
 
   const handleSendMagicLink = async (email, staffId) => {
-    if (!email) { showToast("No email on file"); return; }
-    if (!supabaseReady) { showToast("Supabase not connected"); return; }
+    if (!email) { showToast("⚠️ No email on file"); return; }
     setResetting(staffId);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { shouldCreateUser: false },
-      });
+      const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
       if (error) throw error;
       showToast(`✅ Magic login link sent to ${email}`);
-    } catch (e) {
-      showToast(`❌ ${e.message}`);
-    }
+    } catch (e) { showToast(`❌ ${e.message}`); }
     setResetting(null);
   };
 
   return (
     <div>
-      {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", flexDirection: isMobile ? "column" : "row", gap: 12, marginBottom: 20 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: T.text }}>👤 Staff Management</h2>
-          <p style={{ margin: "2px 0 0", fontSize: 13, color: T.textMuted }}>
-            {staffMembers.length} staff · {adminProfiles.length} admin
-          </p>
+          <p style={{ margin: "2px 0 0", fontSize: 13, color: T.textMuted }}>{staffMembers.length} staff · {adminProfiles.length} admin</p>
         </div>
-        <button
-          onClick={() => setShowNewForm(v => !v)}
-          style={{ padding: "11px 20px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
-        >
-          + Add Staff Member
+        <button onClick={() => setShowNewForm(v => !v)}
+          style={{ padding: "11px 20px", borderRadius: T.radiusSm, border: "none", background: showNewForm ? "#888" : T.primary, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+          {showNewForm ? "✕ Cancel" : "+ Add Staff Member"}
         </button>
       </div>
 
-      {/* Supabase warning */}
       {!supabaseReady && (
         <div style={{ padding: "12px 16px", background: T.accentLight, borderRadius: T.radiusSm, marginBottom: 16, fontSize: 13, color: "#8B6914" }}>
-          ⚠️ <strong>Supabase not connected.</strong> Staff account creation and password resets require Supabase. Add your environment variables to enable this.
+          ⚠️ <strong>Supabase not connected.</strong> Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env file.
         </div>
       )}
 
-      {/* New staff form */}
       {showNewForm && (
-        <NewStaffForm
-          teams={teams}
-          onClose={() => setShowNewForm(false)}
-          onCreated={(msg) => { showToast(msg); setShowNewForm(false); }}
-          isMobile={isMobile}
-        />
+        <NewStaffForm teams={teams} onClose={() => setShowNewForm(false)}
+          onCreated={(msg) => { showToast(msg); setShowNewForm(false); }} isMobile={isMobile} />
       )}
 
-      {/* Admin accounts section */}
       {adminProfiles.length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <SectionHeader>Admin Accounts</SectionHeader>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {adminProfiles.map(p => (
-              <ProfileCard
-                key={p.id}
-                profile={p}
-                teams={teams}
-                isEditing={editingId === p.id}
+              <ProfileCard key={p.id} profile={p} teams={teams} isEditing={editingId === p.id}
                 onEdit={() => setEditingId(editingId === p.id ? null : p.id)}
                 onSave={async (updates) => { await updateProfile(p.id, updates); setEditingId(null); showToast("✅ Profile updated"); }}
                 onResetPassword={() => handleResetPassword(p.email, p.id)}
                 onMagicLink={() => handleSendMagicLink(p.email, p.id)}
-                resetting={resetting === p.id}
-                isMobile={isMobile}
-                isAdmin
-              />
+                resetting={resetting === p.id} isMobile={isMobile} isAdmin />
             ))}
           </div>
         </div>
       )}
 
-      {/* Staff accounts */}
       <SectionHeader>Staff Accounts</SectionHeader>
-
       {loading && <div style={{ textAlign: "center", padding: 40, color: T.textMuted }}>Loading staff…</div>}
-
       {!loading && staffMembers.length === 0 && (
         <div style={{ background: "#fff", borderRadius: T.radius, padding: 40, textAlign: "center", boxShadow: T.shadow }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>👤</div>
           <div style={{ fontWeight: 700, color: T.text, marginBottom: 6 }}>No staff accounts yet</div>
           <div style={{ fontSize: 13, color: T.textMuted }}>
-            Click "+ Add Staff Member" above to create a new staff account. They'll receive a login email and can access the Staff Portal at <strong>/cleaner</strong>.
+            Click "+ Add Staff Member" above to create a new staff account.
+            They'll receive a setup email and can access the Staff Portal at <strong>/cleaner</strong>.
           </div>
         </div>
       )}
-
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {staffMembers.map(p => (
-          <ProfileCard
-            key={p.id}
-            profile={p}
-            teams={teams}
-            isEditing={editingId === p.id}
+          <ProfileCard key={p.id} profile={p} teams={teams} isEditing={editingId === p.id}
             onEdit={() => setEditingId(editingId === p.id ? null : p.id)}
             onSave={async (updates) => { await updateProfile(p.id, updates); setEditingId(null); showToast("✅ Profile updated"); }}
             onResetPassword={() => handleResetPassword(p.email, p.id)}
             onMagicLink={() => handleSendMagicLink(p.email, p.id)}
-            resetting={resetting === p.id}
-            isMobile={isMobile}
-          />
+            resetting={resetting === p.id} isMobile={isMobile} />
         ))}
       </div>
 
-      {/* Instructions */}
       <div style={{ marginTop: 24, padding: "14px 16px", background: T.blueLight, borderRadius: T.radius, fontSize: 13, color: T.blue }}>
-        <strong>ℹ️ How staff login works:</strong>
+        <strong>ℹ️ How staff access works</strong>
         <ul style={{ margin: "8px 0 0", paddingLeft: 20, lineHeight: 2 }}>
-          <li>Staff go to <strong>{window.location.origin}/cleaner</strong></li>
-          <li>They select their name and enter their 6-digit PIN</li>
-          <li>PIN is set via Supabase Dashboard → Authentication → Users → their profile</li>
-          <li>Use "Send Reset Email" below to let them set a new password for admin access</li>
+          <li>Staff portal: <strong>{window.location.origin}/cleaner</strong></li>
+          <li>Staff log in with their name + PIN (set when you create their account)</li>
+          <li>Use <strong>"Send Password Reset"</strong> if they forget their password</li>
+          <li>Use <strong>"Send Magic Link"</strong> for instant passwordless access</li>
         </ul>
       </div>
     </div>
   );
 }
 
-// ── Section header ────────────────────────────────────────
 function SectionHeader({ children }) {
   return <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 }}>{children}</div>;
 }
@@ -172,25 +132,18 @@ function SectionHeader({ children }) {
 // ══════════════════════════════════════════════════════════
 function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPassword, onMagicLink, resetting, isMobile, isAdmin }) {
   const [local, setLocal] = useState({
-    full_name:       p.full_name || "",
-    team_id:         p.team_id || "",
-    hourly_rate:     p.hourly_rate || 0,
-    employment_type: p.employment_type || "casual",
-    is_active:       p.is_active ?? true,
-    pin_hint:        "", // never pre-filled for security
+    full_name: p.full_name || "", team_id: p.team_id || "",
+    hourly_rate: p.hourly_rate || 0, employment_type: p.employment_type || "casual", is_active: p.is_active ?? true,
   });
-
   const u = (k, v) => setLocal(prev => ({ ...prev, [k]: v }));
   const team = teams.find(t => t.id === p.team_id);
 
   return (
     <div style={{ background: "#fff", borderRadius: T.radius, overflow: "hidden", boxShadow: T.shadow, border: `1px solid ${isEditing ? T.primary : T.border}` }}>
-      {/* Summary */}
       <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ width: 42, height: 42, borderRadius: 11, background: isAdmin ? T.accentLight : `linear-gradient(135deg, ${team?.color || T.primary}, ${T.blue})`, display: "flex", alignItems: "center", justifyContent: "center", color: isAdmin ? "#8B6914" : "#fff", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>
+        <div style={{ width: 42, height: 42, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, background: isAdmin ? T.accentLight : `linear-gradient(135deg, ${team?.color || T.primary}, ${T.blue})`, color: isAdmin ? "#8B6914" : "#fff" }}>
           {(p.full_name || "?").split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()}
         </div>
-
         <div style={{ flex: 1, minWidth: 120 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, fontSize: 15, color: T.text }}>{p.full_name || "(No name)"}</span>
@@ -203,19 +156,15 @@ function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPass
             {p.email || "No email"}
             {team && <span style={{ marginLeft: 8, color: team.color, fontWeight: 600 }}>· {team.name}</span>}
             {p.employment_type && <span style={{ marginLeft: 8 }}>· {p.employment_type.charAt(0).toUpperCase() + p.employment_type.slice(1)}</span>}
-            {p.hourly_rate > 0 && <span style={{ marginLeft: 8 }}>· ${p.hourly_rate}/hr</span>}
+            {p.hourly_rate > 0 && <span style={{ marginLeft: 8 }}>· ${Number(p.hourly_rate).toFixed(2)}/hr</span>}
           </div>
         </div>
-
-        <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
-          <button onClick={onEdit}
-            style={{ padding: "7px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${isEditing ? T.primary : T.border}`, background: isEditing ? T.primaryLight : "#fff", color: isEditing ? T.primaryDark : T.text, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            {isEditing ? "Cancel" : "✏️ Edit"}
-          </button>
-        </div>
+        <button onClick={onEdit}
+          style={{ padding: "7px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${isEditing ? T.primary : T.border}`, background: isEditing ? T.primaryLight : "#fff", color: isEditing ? T.primaryDark : T.text, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          {isEditing ? "Cancel" : "✏️ Edit"}
+        </button>
       </div>
 
-      {/* Edit form */}
       {isEditing && (
         <div style={{ padding: "16px 18px", borderTop: `1px solid ${T.border}`, background: T.bg }}>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 14 }}>
@@ -224,8 +173,7 @@ function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPass
               <input value={local.full_name} onChange={e => u("full_name", e.target.value)}
                 style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14, boxSizing: "border-box" }} />
             </div>
-
-            {!isAdmin && (
+            {!isAdmin && <>
               <div>
                 <SFLabel>TEAM</SFLabel>
                 <select value={local.team_id} onChange={e => u("team_id", e.target.value)}
@@ -234,28 +182,22 @@ function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPass
                   {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
               </div>
-            )}
-
-            {!isAdmin && (
-              <>
-                <div>
-                  <SFLabel>EMPLOYMENT TYPE</SFLabel>
-                  <select value={local.employment_type} onChange={e => u("employment_type", e.target.value)}
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
-                    <option value="casual">Casual</option>
-                    <option value="part_time">Part Time</option>
-                    <option value="full_time">Full Time</option>
-                  </select>
-                </div>
-                <div>
-                  <SFLabel>HOURLY RATE ($/hr)</SFLabel>
-                  <input type="number" min="0" step="0.50" value={local.hourly_rate} onChange={e => u("hourly_rate", parseFloat(e.target.value) || 0)}
-                    style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14, boxSizing: "border-box" }} />
-                </div>
-              </>
-            )}
+              <div>
+                <SFLabel>EMPLOYMENT TYPE</SFLabel>
+                <select value={local.employment_type} onChange={e => u("employment_type", e.target.value)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
+                  <option value="casual">Casual</option>
+                  <option value="part_time">Part Time</option>
+                  <option value="full_time">Full Time</option>
+                </select>
+              </div>
+              <div>
+                <SFLabel>HOURLY RATE ($/hr)</SFLabel>
+                <input type="number" min="0" step="0.50" value={local.hourly_rate} onChange={e => u("hourly_rate", parseFloat(e.target.value) || 0)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14, boxSizing: "border-box" }} />
+              </div>
+            </>}
           </div>
-
           {!isAdmin && (
             <div style={{ marginBottom: 14 }}>
               <SFLabel>ACTIVE STATUS</SFLabel>
@@ -269,8 +211,7 @@ function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPass
               </div>
             </div>
           )}
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => onSave(local)}
               style={{ padding: "10px 20px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
               ✅ Save Changes
@@ -283,22 +224,15 @@ function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPass
         </div>
       )}
 
-      {/* Auth actions */}
       {p.email && (
-        <div style={{ padding: "10px 18px", borderTop: `1px solid ${T.borderLight}`, background: "#FAFCFB", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: 11, color: T.textMuted, marginRight: 4 }}>Auth:</span>
-          <button
-            onClick={onResetPassword}
-            disabled={resetting}
-            style={{ padding: "6px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.text, fontSize: 12, fontWeight: 600, cursor: resetting ? "not-allowed" : "pointer", opacity: resetting ? 0.6 : 1 }}
-          >
+        <div style={{ padding: "10px 18px", borderTop: `1px solid ${T.border}`, background: "#FAFCFB", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: T.textMuted, marginRight: 4 }}>Auth actions:</span>
+          <button onClick={onResetPassword} disabled={!!resetting}
+            style={{ padding: "6px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.text, fontSize: 12, fontWeight: 600, cursor: resetting ? "not-allowed" : "pointer", opacity: resetting ? 0.6 : 1 }}>
             {resetting ? "Sending…" : "📧 Send Password Reset"}
           </button>
-          <button
-            onClick={onMagicLink}
-            disabled={resetting}
-            style={{ padding: "6px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.blue, fontSize: 12, fontWeight: 600, cursor: resetting ? "not-allowed" : "pointer", opacity: resetting ? 0.6 : 1 }}
-          >
+          <button onClick={onMagicLink} disabled={!!resetting}
+            style={{ padding: "6px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.blue, fontSize: 12, fontWeight: 600, cursor: resetting ? "not-allowed" : "pointer", opacity: resetting ? 0.6 : 1 }}>
             ✨ Send Magic Link
           </button>
         </div>
@@ -308,79 +242,77 @@ function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPass
 }
 
 // ══════════════════════════════════════════════════════════
-// NEW STAFF FORM — creates Supabase Auth user + profile
+// NEW STAFF FORM — calls the create-staff-user Edge Function
 // ══════════════════════════════════════════════════════════
 function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
   const [form, setForm] = useState({
-    full_name:       "",
-    email:           "",
-    team_id:         teams[0]?.id || "",
-    employment_type: "casual",
-    hourly_rate:     0,
-    role:            "staff",
+    full_name: "", email: "", pin: "",
+    team_id: teams[0]?.id || "", employment_type: "casual", hourly_rate: "", role: "staff",
   });
   const [creating, setCreating] = useState(false);
   const [error,    setError]    = useState("");
-
   const u = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   const handleCreate = async () => {
-    if (!form.email.trim() || !form.full_name.trim()) { setError("Name and email are required"); return; }
-    if (!supabaseReady) {
-      // Without service role, we can't create users server-side from the frontend.
-      // Guide the owner to do it via Supabase dashboard instead.
-      setError("Account creation requires the Supabase service role key (server-side). Please create the account manually in your Supabase Dashboard → Authentication → Users, then return here to set their team and rate.");
-      return;
-    }
+    setError("");
+    if (!form.full_name.trim()) { setError("Full name is required"); return; }
+    if (!form.email.trim())     { setError("Email address is required"); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) { setError("Please enter a valid email address"); return; }
+    if (form.pin && !/^\d{4,8}$/.test(form.pin)) { setError("PIN must be 4–8 digits (numbers only)"); return; }
+    if (!supabaseReady) { setError("Supabase is not connected. Check your environment variables."); return; }
 
     setCreating(true);
-    setError("");
-
     try {
-      // Try admin createUser — only works if service role is available
-      // In practice this will be done via our own Edge Function
-      // For now: use signUp which creates a user and sends a confirmation email
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: form.email.trim(),
-        password: `TempPwd${Math.random().toString(36).slice(2, 10)}!`, // temporary — they'll reset it
-        options: {
-          data: {
-            full_name: form.full_name.trim(),
-            role: form.role,
-          },
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setError("You must be signed in as an admin to create accounts.");
+        setCreating(false);
+        return;
+      }
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const res = await fetch(`${supabaseUrl}/functions/v1/create-staff-user`, {
+        method: "POST",
+        headers: {
+          "Content-Type":  "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+          "apikey":        import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
-      });
-
-      if (signUpError) throw signUpError;
-
-      // If user created, update the profile record that the trigger creates
-      if (data?.user) {
-        await supabase.from("profiles").upsert({
-          id:              data.user.id,
+        body: JSON.stringify({
           full_name:       form.full_name.trim(),
-          email:           form.email.trim(),
-          role:            form.role,
+          email:           form.email.trim().toLowerCase(),
+          pin:             form.pin || undefined,
           team_id:         form.team_id || null,
           employment_type: form.employment_type,
-          hourly_rate:     form.hourly_rate,
-          is_active:       true,
-        }, { onConflict: "id" });
+          hourly_rate:     parseFloat(form.hourly_rate) || 0,
+          role:            form.role,
+        }),
+      });
 
-        // Send password reset so they can set their own password
-        await supabase.auth.resetPasswordForEmail(form.email.trim(), {
-          redirectTo: `${window.location.origin}/reset-password`,
-        });
-
-        onCreated(`✅ ${form.full_name} created! Password setup email sent to ${form.email}`);
+      const result = await res.json();
+      if (!res.ok || result.error) {
+        if (res.status === 404 || String(result.error).includes("not found")) {
+          setError("DEPLOY_NEEDED");
+        } else {
+          setError(result.error || `Server error (${res.status})`);
+        }
+        setCreating(false);
+        return;
       }
+
+      onCreated(`✅ ${form.full_name} created! A setup email has been sent to ${form.email}.`);
     } catch (e) {
-      setError(e.message || "Failed to create account");
+      if (e.message.includes("Failed to fetch") || e.message.includes("NetworkError")) {
+        setError("DEPLOY_NEEDED");
+      } else {
+        setError(e.message || "Failed to create account");
+      }
     }
     setCreating(false);
   };
 
   return (
-    <div style={{ background: "#fff", borderRadius: T.radius, border: `2px solid ${T.primary}`, padding: isMobile ? 16 : 24, marginBottom: 16, boxShadow: T.shadowMd }}>
+    <div style={{ background: "#fff", borderRadius: T.radius, border: `2px solid ${T.primary}`, padding: isMobile ? 16 : 24, marginBottom: 16, boxShadow: T.shadow }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div style={{ fontWeight: 800, fontSize: 16, color: T.text }}>➕ New Staff Account</div>
         <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: T.textMuted }}>✕</button>
@@ -398,9 +330,16 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
             style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14, boxSizing: "border-box" }} />
         </div>
         <div>
+          <SFLabel>STAFF PORTAL PIN (4–8 digits)</SFLabel>
+          <input type="password" inputMode="numeric" value={form.pin} onChange={e => u("pin", e.target.value.replace(/\D/g, ""))} placeholder="e.g. 1234" maxLength={8}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14, boxSizing: "border-box" }} />
+          <div style={{ fontSize: 11, color: T.textMuted, marginTop: 3 }}>Used to log in to the /cleaner portal. Leave blank to set later.</div>
+        </div>
+        <div>
           <SFLabel>TEAM</SFLabel>
           <select value={form.team_id} onChange={e => u("team_id", e.target.value)}
             style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
+            <option value="">No team</option>
             {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </div>
@@ -423,19 +362,31 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
         </div>
         <div>
           <SFLabel>HOURLY RATE ($/hr)</SFLabel>
-          <input type="number" min="0" step="0.50" value={form.hourly_rate} onChange={e => u("hourly_rate", parseFloat(e.target.value) || 0)}
+          <input type="number" min="0" step="0.50" value={form.hourly_rate} onChange={e => u("hourly_rate", e.target.value)} placeholder="e.g. 28.00"
             style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14, boxSizing: "border-box" }} />
         </div>
       </div>
 
-      {error && (
+      {error === "DEPLOY_NEEDED" ? (
+        <div style={{ padding: "12px 14px", background: "#FFF8E7", border: "1px solid #F5A623", borderRadius: T.radiusSm, fontSize: 13, color: "#7A5200", marginBottom: 14 }}>
+          <strong>⚡ One-time setup needed: Deploy the Edge Function</strong>
+          <p style={{ margin: "6px 0 4px" }}>Account creation requires a secure server-side function. Run these 4 commands in Terminal (takes ~2 minutes):</p>
+          <div style={{ background: "#1a1a1a", color: "#a8ff78", borderRadius: 6, padding: "10px 14px", fontFamily: "monospace", fontSize: 12, lineHeight: 1.9 }}>
+            npm install -g supabase<br/>
+            supabase login<br/>
+            supabase link --project-ref qvycgbvpczatxgvxtmnf<br/>
+            supabase functions deploy create-staff-user
+          </div>
+          <p style={{ margin: "6px 0 0", fontSize: 12 }}>After deploying, click "Create Account" again — it'll work immediately.</p>
+        </div>
+      ) : error ? (
         <div style={{ padding: "10px 14px", background: T.dangerLight, borderRadius: T.radiusSm, color: T.danger, fontSize: 13, marginBottom: 14 }}>
           ⚠️ {error}
         </div>
-      )}
+      ) : null}
 
       <div style={{ padding: "10px 14px", background: T.blueLight, borderRadius: T.radiusSm, marginBottom: 14, fontSize: 12, color: T.blue }}>
-        📧 A password setup email will be automatically sent to the staff member after their account is created.
+        📧 A password setup email will be sent automatically so the staff member can set their own password.
       </div>
 
       <div style={{ display: "flex", gap: 10 }}>
@@ -443,9 +394,9 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
           style={{ padding: "10px 16px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.textMuted, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
           Cancel
         </button>
-        <button onClick={handleCreate} disabled={creating || !form.email || !form.full_name}
-          style={{ flex: 1, padding: "10px", borderRadius: T.radiusSm, border: "none", background: (!form.email || !form.full_name) ? T.border : T.primary, color: "#fff", fontSize: 14, fontWeight: 800, cursor: (creating || !form.email || !form.full_name) ? "not-allowed" : "pointer", opacity: creating ? 0.7 : 1 }}>
-          {creating ? "Creating…" : "✅ Create Account & Send Email"}
+        <button onClick={handleCreate} disabled={creating || !form.email.trim() || !form.full_name.trim()}
+          style={{ flex: 1, padding: "10px", borderRadius: T.radiusSm, border: "none", background: (!form.email.trim() || !form.full_name.trim()) ? T.border : T.primary, color: "#fff", fontSize: 14, fontWeight: 800, cursor: (creating || !form.email.trim() || !form.full_name.trim()) ? "not-allowed" : "pointer", opacity: creating ? 0.7 : 1 }}>
+          {creating ? "Creating account…" : "✅ Create Account & Send Email"}
         </button>
       </div>
     </div>
