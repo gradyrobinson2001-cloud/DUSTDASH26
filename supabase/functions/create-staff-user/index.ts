@@ -12,34 +12,39 @@ serve(async (req) => {
   }
 
   try {
-    // Verify caller is an authenticated admin
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ error: 'Missing or invalid authorization header' }), {
+    const supabaseUrl    = Deno.env.get('SUPABASE_URL')!;
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const anonKey        = Deno.env.get('SUPABASE_ANON_KEY')!;
+
+    // ── 1. Verify caller has a valid session ─────────────────────────
+    const authHeader = req.headers.get('Authorization') ?? '';
+    if (!authHeader.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
         status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    const callerJwt = authHeader.slice(7);
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
-    // Use service role client — bypasses RLS, can verify any user JWT
-    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
+    // Use anon-key client with the caller's JWT to verify identity
+    // (this is the correct pattern — getUser() validates the JWT server-side)
+    const callerClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${callerJwt}` } },
+      auth:   { autoRefreshToken: false, persistSession: false },
     });
 
-    // Extract the JWT and verify it
-    const jwt = authHeader.replace('Bearer ', '');
-    const { data: { user: callerUser }, error: callerError } = await adminClient.auth.getUser(jwt);
-
-    if (callerError || !callerUser) {
+    const { data: { user: callerUser }, error: userErr } = await callerClient.auth.getUser();
+    if (userErr || !callerUser) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized', detail: callerError?.message ?? 'No user found' }),
+        JSON.stringify({ error: 'Unauthorized', detail: userErr?.message ?? 'no session' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Check caller has admin role in profiles (service role bypasses RLS)
+    // ── 2. Confirm admin role via service-role client (bypasses RLS) ─
+    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
     const { data: callerProfile, error: profileCheckError } = await adminClient
       .from('profiles')
       .select('role')
@@ -49,72 +54,63 @@ serve(async (req) => {
     if (profileCheckError || callerProfile?.role !== 'admin') {
       return new Response(
         JSON.stringify({
-          error: 'Only admins can create staff accounts',
+          error:  'Forbidden — admin only',
           detail: profileCheckError?.message ?? `role=${callerProfile?.role}`,
         }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Parse request body
+    // ── 3. Parse & validate body ──────────────────────────────────────
     const { email, full_name, pin, team_id, employment_type, hourly_rate, role } = await req.json();
-
     if (!email || !full_name) {
       return new Response(JSON.stringify({ error: 'email and full_name are required' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Create the auth user
+    // ── 4. Create the auth user ───────────────────────────────────────
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email,
       email_confirm: true,
       user_metadata: { full_name },
     });
-
     if (createError) {
       return new Response(JSON.stringify({ error: createError.message }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Hash PIN if provided
+    // ── 5. Hash PIN if provided ───────────────────────────────────────
     let pin_hash: string | null = null;
     if (pin) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(pin + (Deno.env.get('SUPABASE_JWT_SECRET') ?? ''));
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      pin_hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      const raw = new TextEncoder().encode(String(pin) + (Deno.env.get('SUPABASE_JWT_SECRET') ?? ''));
+      const buf = await crypto.subtle.digest('SHA-256', raw);
+      pin_hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    // Upsert the profile row
-    const { error: profileError } = await adminClient
-      .from('profiles')
-      .upsert({
-        id: newUser.user!.id,
-        email,
-        full_name,
-        role: role || 'staff',
-        team_id: team_id || null,
-        employment_type: employment_type || 'casual',
-        hourly_rate: hourly_rate || 0,
-        pin_hash,
-        is_active: true,
-      });
+    // ── 6. Upsert profile row ─────────────────────────────────────────
+    const { error: profileError } = await adminClient.from('profiles').upsert({
+      id:              newUser.user!.id,
+      email,
+      full_name,
+      role:            role || 'staff',
+      team_id:         team_id || null,
+      employment_type: employment_type || 'casual',
+      hourly_rate:     Number(hourly_rate) || 0,
+      pin_hash,
+      is_active:       true,
+    });
 
     if (profileError) {
-      // Clean up auth user if profile insert failed
       await adminClient.auth.admin.deleteUser(newUser.user!.id);
       return new Response(JSON.stringify({ error: profileError.message }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Send password setup invite email
-    await adminClient.auth.admin.inviteUserByEmail(email, {
-      data: { full_name },
-    });
+    // ── 7. Send password-setup invite email ───────────────────────────
+    await adminClient.auth.admin.inviteUserByEmail(email, { data: { full_name } });
 
     return new Response(
       JSON.stringify({ success: true, user_id: newUser.user!.id }),
@@ -123,7 +119,7 @@ serve(async (req) => {
 
   } catch (err) {
     return new Response(
-      JSON.stringify({ error: (err as Error).message || 'Internal server error' }),
+      JSON.stringify({ error: err instanceof Error ? err.message : 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
