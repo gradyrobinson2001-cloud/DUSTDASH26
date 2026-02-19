@@ -7,14 +7,7 @@ export function AuthProvider({ children }) {
   const [session,  setSession]  = useState(null);
   const [profile,  setProfile]  = useState(null);
   const [loading,  setLoading]  = useState(true);
-  const loadingDone = useRef(false);
-
-  const doneLoading = () => {
-    if (!loadingDone.current) {
-      loadingDone.current = true;
-      setLoading(false);
-    }
-  };
+  const initialised = useRef(false);
 
   async function fetchProfile(userId) {
     if (!supabaseReady) return null;
@@ -33,39 +26,36 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    if (!supabaseReady) { doneLoading(); return; }
+    if (!supabaseReady) { setLoading(false); return; }
 
-    // Safety net — never hang on loading screen more than 5 seconds
+    // onAuthStateChange fires immediately with the current session —
+    // use it as the single source of truth. Mark initialised after
+    // the first event so we only show the loading screen once.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        setSession(session);
+        if (session?.user) {
+          const prof = await fetchProfile(session.user.id);
+          setProfile(prof);
+        } else {
+          setProfile(null);
+        }
+        // After first event (initial session check) we're done loading
+        if (!initialised.current) {
+          initialised.current = true;
+          setLoading(false);
+        }
+      }
+    );
+
+    // Hard safety net — never hang more than 6 seconds
     const timeout = setTimeout(() => {
-      console.warn('[AuthProvider] Loading timed out — forcing done');
-      doneLoading();
-    }, 5000);
-
-    // Initial session check
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      if (session?.user) {
-        const prof = await fetchProfile(session.user.id);
-        setProfile(prof);
+      if (!initialised.current) {
+        console.warn('[AuthProvider] timeout — forcing loading=false');
+        initialised.current = true;
+        setLoading(false);
       }
-      clearTimeout(timeout);
-      doneLoading();
-    }).catch((e) => {
-      console.error('[AuthProvider] getSession error:', e);
-      clearTimeout(timeout);
-      doneLoading();
-    });
-
-    // Listen for auth state changes (login, logout, token refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setSession(session);
-      if (session?.user) {
-        const prof = await fetchProfile(session.user.id);
-        setProfile(prof);
-      } else {
-        setProfile(null);
-      }
-    });
+    }, 6000);
 
     return () => { clearTimeout(timeout); subscription.unsubscribe(); };
   }, []);
