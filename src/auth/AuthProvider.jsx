@@ -13,11 +13,16 @@ export function AuthProvider({ children }) {
   async function fetchProfile(userId) {
     if (!supabaseReady) return null;
     try {
-      const { data, error } = await supabase
+      // Race the DB query against a 5-second timeout so we never hang
+      const queryPromise = supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Profile query timed out after 5s')), 5000)
+      );
+      const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
       if (error) {
         console.error('[AuthProvider] fetchProfile error:', error);
         setDebugMsg(`Profile fetch error: ${error.message} (code: ${error.code})`);
