@@ -1,13 +1,13 @@
 -- ═══════════════════════════════════════════════════════════════════════
--- DUSTDASH INITIAL SCHEMA
+-- DUSTDASH INITIAL SCHEMA  —  safe to re-run
+-- Drops and recreates every table (except profiles).
 -- Run this in Supabase → SQL Editor
 -- ═══════════════════════════════════════════════════════════════════════
 
--- ─── Extensions ─────────────────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ─── PROFILES ───────────────────────────────────────────────────────────
--- Already exists if you ran the quick-start SQL, but safe to re-run
+-- Keep CREATE IF NOT EXISTS so existing admin row is preserved
 CREATE TABLE IF NOT EXISTS public.profiles (
   id               UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name        TEXT,
@@ -22,12 +22,33 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
--- Disable RLS on profiles so the anon key can read it (admin-only app)
+-- Add any missing columns safely (in case table already existed)
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS pin_hash TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS tfn_last4 TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS employment_type TEXT DEFAULT 'casual';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(8,2) DEFAULT 0;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS team_id TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
 ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY;
 
+-- ─── Drop dependent tables first (reverse order) ───────────────────────
+DROP TABLE IF EXISTS public.payslips          CASCADE;
+DROP TABLE IF EXISTS public.payroll_records   CASCADE;
+DROP TABLE IF EXISTS public.rota              CASCADE;
+DROP TABLE IF EXISTS public.photos            CASCADE;
+DROP TABLE IF EXISTS public.scheduled_jobs    CASCADE;
+DROP TABLE IF EXISTS public.schedule_settings CASCADE;
+DROP TABLE IF EXISTS public.templates         CASCADE;
+DROP TABLE IF EXISTS public.pricing           CASCADE;
+DROP TABLE IF EXISTS public.email_history     CASCADE;
+DROP TABLE IF EXISTS public.payments          CASCADE;
+DROP TABLE IF EXISTS public.invoices          CASCADE;
+DROP TABLE IF EXISTS public.quotes            CASCADE;
+DROP TABLE IF EXISTS public.enquiries         CASCADE;
+DROP TABLE IF EXISTS public.clients           CASCADE;
+
 -- ─── CLIENTS ────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.clients (
+CREATE TABLE public.clients (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name             TEXT NOT NULL,
   email            TEXT,
@@ -53,11 +74,10 @@ CREATE TABLE IF NOT EXISTS public.clients (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.clients DISABLE ROW LEVEL SECURITY;
 
 -- ─── ENQUIRIES ──────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.enquiries (
+CREATE TABLE public.enquiries (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name             TEXT NOT NULL,
   channel          TEXT DEFAULT 'messenger',
@@ -71,12 +91,11 @@ CREATE TABLE IF NOT EXISTS public.enquiries (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.enquiries DISABLE ROW LEVEL SECURITY;
 
 -- ─── QUOTES ─────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.quotes (
-  id               TEXT PRIMARY KEY,  -- Q001, Q002 etc
+CREATE TABLE public.quotes (
+  id               TEXT PRIMARY KEY,
   enquiry_id       TEXT,
   name             TEXT,
   channel          TEXT,
@@ -87,11 +106,10 @@ CREATE TABLE IF NOT EXISTS public.quotes (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.quotes DISABLE ROW LEVEL SECURITY;
 
 -- ─── INVOICES ───────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.invoices (
+CREATE TABLE public.invoices (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   invoice_number   TEXT UNIQUE,
   client_id        TEXT,
@@ -108,11 +126,10 @@ CREATE TABLE IF NOT EXISTS public.invoices (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.invoices DISABLE ROW LEVEL SECURITY;
 
 -- ─── PAYMENTS ───────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.payments (
+CREATE TABLE public.payments (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   client_id        TEXT,
   client_name      TEXT,
@@ -124,11 +141,10 @@ CREATE TABLE IF NOT EXISTS public.payments (
   recorded_at      TIMESTAMPTZ DEFAULT NOW(),
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.payments DISABLE ROW LEVEL SECURITY;
 
 -- ─── EMAIL HISTORY ──────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.email_history (
+CREATE TABLE public.email_history (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   client_id        TEXT,
   client_name      TEXT,
@@ -139,21 +155,18 @@ CREATE TABLE IF NOT EXISTS public.email_history (
   status           TEXT DEFAULT 'sent',
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.email_history DISABLE ROW LEVEL SECURITY;
 
 -- ─── PRICING ────────────────────────────────────────────────────────────
--- Single-row config table (id=1 always)
-CREATE TABLE IF NOT EXISTS public.pricing (
+CREATE TABLE public.pricing (
   id               INTEGER PRIMARY KEY DEFAULT 1,
   data             JSONB NOT NULL DEFAULT '{}',
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.pricing DISABLE ROW LEVEL SECURITY;
 
 -- ─── TEMPLATES ──────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.templates (
+CREATE TABLE public.templates (
   id               TEXT PRIMARY KEY,
   name             TEXT NOT NULL,
   content          TEXT NOT NULL,
@@ -161,21 +174,18 @@ CREATE TABLE IF NOT EXISTS public.templates (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.templates DISABLE ROW LEVEL SECURITY;
 
 -- ─── SCHEDULE SETTINGS ──────────────────────────────────────────────────
--- Single-row config table (id=1 always)
-CREATE TABLE IF NOT EXISTS public.schedule_settings (
+CREATE TABLE public.schedule_settings (
   id               INTEGER PRIMARY KEY DEFAULT 1,
   data             JSONB NOT NULL DEFAULT '{}',
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.schedule_settings DISABLE ROW LEVEL SECURITY;
 
 -- ─── SCHEDULED JOBS ─────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.scheduled_jobs (
+CREATE TABLE public.scheduled_jobs (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   date             DATE NOT NULL,
   client_id        TEXT,
@@ -192,11 +202,10 @@ CREATE TABLE IF NOT EXISTS public.scheduled_jobs (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.scheduled_jobs DISABLE ROW LEVEL SECURITY;
 
 -- ─── PHOTOS ─────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.photos (
+CREATE TABLE public.photos (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   job_id           TEXT,
   client_id        TEXT,
@@ -208,11 +217,10 @@ CREATE TABLE IF NOT EXISTS public.photos (
   uploaded_at      TIMESTAMPTZ DEFAULT NOW(),
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.photos DISABLE ROW LEVEL SECURITY;
 
 -- ─── PAYROLL RECORDS ────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.payroll_records (
+CREATE TABLE public.payroll_records (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   staff_id         UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   week_start       DATE NOT NULL,
@@ -225,11 +233,10 @@ CREATE TABLE IF NOT EXISTS public.payroll_records (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(staff_id, week_start)
 );
-
 ALTER TABLE public.payroll_records DISABLE ROW LEVEL SECURITY;
 
 -- ─── PAYSLIPS ───────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.payslips (
+CREATE TABLE public.payslips (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   staff_id         UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   week_start       DATE NOT NULL,
@@ -237,11 +244,10 @@ CREATE TABLE IF NOT EXISTS public.payslips (
   sent_at          TIMESTAMPTZ,
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
-
 ALTER TABLE public.payslips DISABLE ROW LEVEL SECURITY;
 
 -- ─── ROTA ───────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.rota (
+CREATE TABLE public.rota (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   week_start       DATE NOT NULL,
   team_id          TEXT NOT NULL,
@@ -253,7 +259,6 @@ CREATE TABLE IF NOT EXISTS public.rota (
   updated_at       TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(week_start, team_id)
 );
-
 ALTER TABLE public.rota DISABLE ROW LEVEL SECURITY;
 
 -- ─── Storage bucket for job photos ──────────────────────────────────────
@@ -263,13 +268,14 @@ ON CONFLICT (id) DO NOTHING;
 
 -- ─── Seed default templates ──────────────────────────────────────────────
 INSERT INTO public.templates (id, name, content, is_default, created_at) VALUES
-  ('welcome',          'Welcome Reply',      'Hey! 👋 Thanks so much for reaching out to Dust Bunnies! We''d love to help get your home sparkling. Could you fill in our quick form so we can put together a personalised quote for you? [FORM LINK] 🌿', true, NOW()),
-  ('quote_ready',      'Quote Ready',        'Hey {NAME}! 🌿 Great news — your personalised quote is ready! We''ve put together pricing for your {FREQUENCY} clean based on the details you shared. Take a look and let us know if you''d like to go ahead! 💚', true, NOW()),
-  ('follow_up',        'Follow Up',          'Hey {NAME}! 👋 Just checking in — did you get a chance to look at the quote we sent through? Happy to answer any questions or make adjustments. No pressure at all! 🌿', true, NOW()),
-  ('out_of_area',      'Out of Area',        'Hey! Thanks so much for getting in touch 💚 Unfortunately we don''t currently service your area, but we''re expanding soon! We''ll keep your details on file and reach out when we do. Wishing you all the best! 🌿', true, NOW()),
-  ('booking_confirmed','Booking Confirmed',  'Yay! 🎉 You''re all booked in! We''re so excited to welcome you to the Dust Bunnies family. Your first clean is scheduled for [DATE]. See you then! 💚🌿', true, NOW())
+  ('welcome',           'Welcome Reply',     E'Hey! \U0001F44B Thanks so much for reaching out to Dust Bunnies! We''d love to help get your home sparkling. Could you fill in our quick form so we can put together a personalised quote for you? [FORM LINK] \U0001F33F', true, NOW()),
+  ('quote_ready',       'Quote Ready',       E'Hey {NAME}! \U0001F33F Great news \u2014 your personalised quote is ready! We''ve put together pricing for your {FREQUENCY} clean based on the details you shared. Take a look and let us know if you''d like to go ahead! \U0001F49A', true, NOW()),
+  ('follow_up',         'Follow Up',         E'Hey {NAME}! \U0001F44B Just checking in \u2014 did you get a chance to look at the quote we sent through? Happy to answer any questions or make adjustments. No pressure at all! \U0001F33F', true, NOW()),
+  ('out_of_area',       'Out of Area',       E'Hey! Thanks so much for getting in touch \U0001F49A Unfortunately we don''t currently service your area, but we''re expanding soon! We''ll keep your details on file and reach out when we do. Wishing you all the best! \U0001F33F', true, NOW()),
+  ('booking_confirmed', 'Booking Confirmed', E'Yay! \U0001F389 You''re all booked in! We''re so excited to welcome you to the Dust Bunnies family. Your first clean is scheduled for [DATE]. See you then! \U0001F49A\U0001F33F', true, NOW())
 ON CONFLICT (id) DO NOTHING;
 
--- ─── Done! ───────────────────────────────────────────────────────────────
--- All tables created with RLS disabled (admin-only dashboard).
--- Your existing profiles row is preserved.
+-- ═══════════════════════════════════════════════════════════════════════
+-- Done! All 14 tables created, RLS disabled, templates seeded.
+-- Your admin profile row in 'profiles' is untouched.
+-- ═══════════════════════════════════════════════════════════════════════
