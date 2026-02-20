@@ -5,13 +5,21 @@ import { supabase, supabaseReady } from '../lib/supabase';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
+  // Try to restore cached profile from localStorage for instant load
+  const cachedProfile = (() => {
+    try {
+      const raw = localStorage.getItem('dustdash_profile');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  })();
+
   const [session,        setSession]        = useState(null);
-  const [profile,        setProfile]        = useState(null);
+  const [profile,        setProfile]        = useState(cachedProfile);
   const [loading,        setLoading]        = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
   const [debugMsg,       setDebugMsg]       = useState('Waiting for auth…');
   const initialised  = useRef(false);
-  const profileCache = useRef(null); // keep last good profile across token refreshes
+  const profileCache = useRef(cachedProfile); // keep last good profile across token refreshes
 
   async function fetchProfile(userId) {
     if (!supabaseReady) return null;
@@ -32,6 +40,7 @@ export function AuthProvider({ children }) {
       }
       setDebugMsg(`Profile loaded: ${data?.email} role=${data?.role}`);
       profileCache.current = data;
+      try { localStorage.setItem('dustdash_profile', JSON.stringify(data)); } catch {}
       return data;
     } catch (e) {
       console.error('[AuthProvider] fetchProfile exception:', e);
@@ -48,27 +57,29 @@ export function AuthProvider({ children }) {
         setDebugMsg(`Auth event: ${_event}, user: ${session?.user?.email ?? 'none'}`);
 
         if (session?.user) {
-          // On token refresh events, keep the cached profile and refresh in background
-          if (_event === 'TOKEN_REFRESHED' && profileCache.current) {
-            setDebugMsg(`Token refreshed — keeping cached profile for ${session.user.email}`);
+          // If we already have a cached profile for this user, use it immediately
+          // and refresh in the background — no loading screen shown
+          if (profileCache.current && profileCache.current.id === session.user.id) {
+            setDebugMsg(`Using cached profile for ${session.user.email} (event: ${_event})`);
             setSession(session);
             setProfile(profileCache.current);
             setLoading(false);
+            setProfileLoading(false);
             if (!initialised.current) initialised.current = true;
+            // Silently refresh profile in background
             fetchProfile(session.user.id).then(prof => {
               if (prof) setProfile(prof);
             });
             return;
           }
 
-          // Set profileLoading BEFORE setting session to avoid a render frame
-          // where session exists but profile is null and no loading flag is set
+          // First time loading — no cache yet, show loading spinner
           setProfileLoading(true);
           setSession(session);
 
           setDebugMsg(`Fetching profile for ${session.user.id}…`);
           const prof = await fetchProfile(session.user.id);
-          setProfile(prof ?? profileCache.current);
+          setProfile(prof ?? null);
           setProfileLoading(false);
         } else {
           // Genuine sign-out — clear everything
@@ -101,6 +112,8 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut();
     setSession(null);
     setProfile(null);
+    profileCache.current = null;
+    try { localStorage.removeItem('dustdash_profile'); } catch {}
   };
 
   return (
@@ -159,7 +172,7 @@ export function RequireAdmin({ children }) {
         </div>
         <div style={{ fontSize: 13, color: '#5A8A72' }}>After running that SQL, refresh this page.</div>
         <button
-          onClick={() => { supabase.auth.signOut(); window.location.href = '/login'; }}
+          onClick={() => { supabase.auth.signOut(); localStorage.removeItem('dustdash_profile'); window.location.href = '/login'; }}
           style={{ padding: '10px 24px', borderRadius: 8, background: 'transparent', border: '1px solid #3A5A4A', color: '#8FBFA8', cursor: 'pointer', fontSize: 13 }}
         >
           ← Sign out
