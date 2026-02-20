@@ -8,6 +8,7 @@ const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
 
 export default function ToolsTab({
   scheduleClients,
+  allClients = [],
   scheduledJobs,
   scheduleSettings,
   mapsLoaded,
@@ -29,6 +30,10 @@ export default function ToolsTab({
   isMobile,
 }) {
   const apiKeyMissing = !isGoogleMapsKeyConfigured(GOOGLE_MAPS_API_KEY) || mapsError === "missing_key";
+  const mapClients = Array.isArray(allClients) ? allClients.filter(c => c?.name) : [];
+  const activeCount = mapClients.filter(c => String(c.status || "active").toLowerCase() === "active").length;
+  const pausedCount = mapClients.filter(c => String(c.status || "").toLowerCase() === "paused").length;
+  const suburbCount = new Set(mapClients.map(c => c.suburb).filter(Boolean)).size;
 
   return (
     <>
@@ -202,7 +207,7 @@ export default function ToolsTab({
         )}
         {toolsMapMode === "clients" && (
           <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: T.radiusSm, background: T.primaryLight, fontSize: 12, color: T.textMuted }}>
-            Showing {scheduleClients.filter(c => c.status === "active").length} active clients across {new Set(scheduleClients.filter(c => c.status === "active").map(c => c.suburb)).size} suburbs.
+            Showing {mapClients.length} total clients ({activeCount} active, {pausedCount} paused) across {suburbCount} suburbs.
           </div>
         )}
 
@@ -275,7 +280,11 @@ export default function ToolsTab({
           <div style={{ display: "flex", gap: 20, marginTop: 16, justifyContent: "center", flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: T.blue }} />
-              <span style={{ fontSize: 12, color: T.textMuted }}>Client location</span>
+              <span style={{ fontSize: 12, color: T.textMuted }}>Active client</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: T.accent }} />
+              <span style={{ fontSize: 12, color: T.textMuted }}>Paused client</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ width: 18, height: 18, borderRadius: "50%", border: `2px solid ${T.primaryDark}`, background: `${T.primary}25` }} />

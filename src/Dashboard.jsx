@@ -702,8 +702,8 @@ export default function Dashboard() {
     clearRouteOverlays();
     clearClientOverlays();
 
-    const activeClients = scheduleClients.filter(c => c.status === "active");
-    if (activeClients.length === 0) {
+    const mapClients = (clients || []).filter(c => c?.name);
+    if (mapClients.length === 0) {
       map.setCenter({ lat: -26.6590, lng: 153.0800 });
       map.setZoom(11);
       return;
@@ -716,18 +716,30 @@ export default function Dashboard() {
     const bounds = new window.google.maps.LatLngBounds();
     const suburbBuckets = {};
 
-    activeClients.forEach((client) => {
+    const markerStackIndexByCoord = {};
+
+    mapClients.forEach((client) => {
       const coords = getClientCoords(client);
       if (!coords || typeof coords.lat !== "number" || typeof coords.lng !== "number") return;
+      const coordKey = `${coords.lat.toFixed(5)},${coords.lng.toFixed(5)}`;
+      const stackIndex = markerStackIndexByCoord[coordKey] || 0;
+      markerStackIndexByCoord[coordKey] = stackIndex + 1;
+      const jitter = stackIndex === 0 ? { lat: 0, lng: 0 } : {
+        lat: Math.sin(stackIndex * 2.399963) * 0.00085,
+        lng: Math.cos(stackIndex * 2.399963) * 0.00085,
+      };
+      const point = { lat: coords.lat + jitter.lat, lng: coords.lng + jitter.lng };
 
-      bounds.extend(coords);
+      bounds.extend(point);
+      const status = String(client.status || "active").toLowerCase();
+      const markerColor = status === "active" ? T.blue : (status === "paused" ? T.accent : T.textLight);
       const marker = new window.google.maps.Marker({
         map,
-        position: coords,
+        position: point,
         title: `${client.name || "Client"}${client.suburb ? ` — ${client.suburb}` : ""}`,
         icon: {
           path: window.google.maps.SymbolPath.CIRCLE,
-          fillColor: T.blue,
+          fillColor: markerColor,
           fillOpacity: 0.92,
           strokeColor: "#ffffff",
           strokeWeight: 1.5,
@@ -747,6 +759,7 @@ export default function Dashboard() {
             <div style="font-size:12px;color:#6F7F74;line-height:1.45;">
               <div>${address}</div>
               <div>Frequency: ${frequency}</div>
+              <div>Status: ${status}</div>
               ${phone ? `<div>Phone: ${phone}</div>` : ""}
               ${email ? `<div>Email: ${email}</div>` : ""}
             </div>
@@ -785,13 +798,13 @@ export default function Dashboard() {
       mapCirclesRef.current.push(circle);
     });
 
-    if (activeClients.length === 1) {
+    if (mapClients.length === 1) {
       map.setCenter(bounds.getCenter());
       map.setZoom(13);
     } else if (!bounds.isEmpty()) {
       map.fitBounds(bounds);
     }
-  }, [clearClientOverlays, clearRouteOverlays, scheduleClients]);
+  }, [clearClientOverlays, clearRouteOverlays, clients]);
 
   const drawRouteOnMap = useCallback(async () => {
     if (!mapRef.current || !routeData || !window.google?.maps) return;
@@ -1037,7 +1050,7 @@ export default function Dashboard() {
         {page === "payroll"  && <PayrollTab showToast={showToast} isMobile={isMobile} />}
         {page === "payments" && <PaymentsTab scheduledJobs={scheduledJobs} setScheduledJobs={setScheduledJobs} scheduleClients={scheduleClients} invoices={invoices} setInvoices={setInvoices} paymentFilter={paymentFilter} setPaymentFilter={setPaymentFilter} setShowInvoiceModal={setShowInvoiceModal} showToast={showToast} isMobile={isMobile} />}
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} showToast={showToast} isMobile={isMobile} refreshPhotos={refreshPhotos} getSignedUrl={getSignedUrl} />}
-        {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} toolsMapMode={toolsMapMode} setToolsMapMode={setToolsMapMode} isMobile={isMobile} />}
+        {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} allClients={clients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} toolsMapMode={toolsMapMode} setToolsMapMode={setToolsMapMode} isMobile={isMobile} />}
         {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} photos={photos} />}
         {page === "rota"     && <RotaTab
           scheduledJobs={scheduledJobs}

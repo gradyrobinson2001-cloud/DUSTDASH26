@@ -279,6 +279,16 @@ export const SUBURB_COORDS = {
   "Mooloolaba": { lat: -26.6817, lng: 153.1192 },
   "Mountain Creek": { lat: -26.6933, lng: 153.0972 },
   "Minyama": { lat: -26.6833, lng: 153.1167 },
+  "Noosa Heads": { lat: -26.3958, lng: 153.0900 },
+  "Caloundra": { lat: -26.8037, lng: 153.1228 },
+  "Kawana Waters": { lat: -26.7328, lng: 153.1279 },
+  "Birtinya": { lat: -26.7446, lng: 153.1199 },
+  "Sippy Downs": { lat: -26.7163, lng: 153.0547 },
+  "Warana": { lat: -26.7308, lng: 153.1232 },
+  "Parrearra": { lat: -26.7221, lng: 153.1269 },
+  "Bokarina": { lat: -26.7371, lng: 153.1261 },
+  "Noosaville": { lat: -26.3998, lng: 153.0669 },
+  "Tewantin": { lat: -26.3913, lng: 153.0345 },
 };
 
 // ─── Get coordinates for a client ───
