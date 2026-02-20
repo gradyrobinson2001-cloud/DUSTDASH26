@@ -25,7 +25,6 @@ serve(async (req) => {
     }
     const callerJwt = authHeader.slice(7);
 
-    // Use service-role client to verify the caller's JWT
     const adminClient = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
@@ -63,17 +62,23 @@ serve(async (req) => {
       });
     }
 
-    // ── 4. Create the auth user (don't confirm email yet — the invite will do that) ─
-    const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
+    // ── 4. Invite user — creates auth user + sends setup email in one step ─
+    const redirectBase = siteUrl || req.headers.get('origin') || supabaseUrl;
+    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
       email,
-      email_confirm: false,
-      user_metadata: { full_name },
-    });
-    if (createError) {
-      return new Response(JSON.stringify({ error: createError.message }), {
+      {
+        data: { full_name },
+        redirectTo: `${redirectBase}/reset-password`,
+      }
+    );
+
+    if (inviteError) {
+      return new Response(JSON.stringify({ error: inviteError.message }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    const userId = inviteData.user!.id;
 
     // ── 5. Hash PIN if provided (bcryptjs — pure JS, no Worker needed) ───
     let pin_hash: string | null = null;
@@ -83,7 +88,7 @@ serve(async (req) => {
 
     // ── 6. Upsert profile row ─────────────────────────────────────────
     const { error: profileError } = await adminClient.from('profiles').upsert({
-      id:              newUser.user!.id,
+      id:              userId,
       email,
       full_name,
       role:            role || 'staff',
@@ -95,26 +100,15 @@ serve(async (req) => {
     });
 
     if (profileError) {
-      await adminClient.auth.admin.deleteUser(newUser.user!.id);
+      // Clean up: remove the auth user if profile creation fails
+      await adminClient.auth.admin.deleteUser(userId, { shouldSoftDelete: false });
       return new Response(JSON.stringify({ error: profileError.message }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // ── 7. Send invite email (confirms email + lets them set password) ─
-    const redirectBase = siteUrl || req.headers.get('origin') || supabaseUrl;
-    const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-      data: { full_name },
-      redirectTo: `${redirectBase}/reset-password`,
-    });
-
-    // Non-critical — account is created even if email fails
-    if (inviteError) {
-      console.warn('[create-staff-user] Could not send invite email:', inviteError.message);
-    }
-
     return new Response(
-      JSON.stringify({ success: true, user_id: newUser.user!.id }),
+      JSON.stringify({ success: true, user_id: userId }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 

@@ -77,8 +77,11 @@ serve(async (req) => {
       });
     }
 
-    // ── 6. Delete auth user ─────────────────────────────────────────
-    const { error: deleteError } = await adminClient.auth.admin.deleteUser(userId);
+    // ── 6. Hard-delete auth user (so the email can be reused) ───────
+    const { error: deleteError } = await adminClient.auth.admin.deleteUser(
+      userId,
+      { shouldSoftDelete: false }
+    );
     if (deleteError) {
       return new Response(JSON.stringify({ error: deleteError.message }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
