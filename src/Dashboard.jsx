@@ -60,9 +60,9 @@ const EMAILJS_SERVICE_ID           = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID          = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_UNIVERSAL_TEMPLATE_ID= import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID;
 const EMAILJS_QUOTE_TEMPLATE_ID    =
+  EMAILJS_UNIVERSAL_TEMPLATE_ID ||
   import.meta.env.VITE_EMAILJS_QUOTE_TEMPLATE_ID ||
-  EMAILJS_TEMPLATE_ID ||
-  EMAILJS_UNIVERSAL_TEMPLATE_ID;
+  EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY           = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 const GOOGLE_MAPS_API_KEY          = getGoogleMapsApiKey();
 
@@ -306,7 +306,40 @@ export default function Dashboard() {
       "Customer"
     ).trim();
     const calc = calcQuote(quote.details, pricing);
+    const esc = (value) => String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+    const quotePublicUrl = `${import.meta.env.VITE_QUOTE_PUBLIC_URL || window.location.origin}/quote/${encodeURIComponent(String(quote?.id || ""))}`;
     const quoteItems = calc.items.map(item => `${item.description} × ${item.qty} — $${item.total.toFixed(2)}`).join("<br>");
+    const quoteItemsHtml = calc.items
+      .map(item => `<tr><td style="padding:8px 0;">${esc(item.description)} × ${item.qty}</td><td style="padding:8px 0;text-align:right;">$${item.total.toFixed(2)}</td></tr>`)
+      .join("");
+    const discountRow = calc.discount > 0
+      ? `<tr><td style="padding:8px 0;color:${T.primaryDark};font-weight:700;">Weekly Discount</td><td style="padding:8px 0;text-align:right;color:${T.primaryDark};font-weight:700;">-$${calc.discount.toFixed(2)}</td></tr>`
+      : "";
+    const quoteHtml = `
+<div style="font-family:Arial,sans-serif;color:${T.text};max-width:640px;">
+  <h2 style="margin:0 0 8px;color:${T.primaryDark};">Your Cleaning Quote</h2>
+  <p style="margin:0 0 14px;color:${T.textMuted};">Hi ${esc(customerName)}, here is your quote for a ${esc(quote?.frequency || "")} clean in ${esc(quote?.suburb || "")}.</p>
+  <table style="width:100%;border-collapse:collapse;border-top:1px solid ${T.border};border-bottom:1px solid ${T.border};margin:0 0 12px;">
+    ${quoteItemsHtml}
+    ${discountRow}
+    <tr><td style="padding:10px 0;font-weight:700;">Total per clean</td><td style="padding:10px 0;text-align:right;font-weight:800;color:${T.primaryDark};">$${calc.total.toFixed(2)}</td></tr>
+  </table>
+  <p style="margin:0;color:${T.textMuted};font-size:13px;">Questions or changes? Reply to this email and we can update your quote.</p>
+</div>`;
+    const quoteText = [
+      `Quote for ${customerName}`,
+      `Frequency: ${quote?.frequency || ""}`,
+      `Suburb: ${quote?.suburb || ""}`,
+      ...calc.items.map(item => `- ${item.description} x ${item.qty}: $${item.total.toFixed(2)}`),
+      calc.discount > 0 ? `Discount: -$${calc.discount.toFixed(2)}` : "",
+      `Total per clean: $${calc.total.toFixed(2)}`,
+      `View quote: ${quotePublicUrl}`,
+    ].filter(Boolean).join("\n");
     setSendingEmail(true);
     try {
       if (!EMAILJS_SERVICE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_QUOTE_TEMPLATE_ID) {
@@ -322,14 +355,23 @@ export default function Dashboard() {
         customer_email: recipientEmail,
         to_name: customerName,
         to_email: recipientEmail,
-        reply_to: recipientEmail,
+        reply_to: import.meta.env.VITE_BUSINESS_EMAIL || recipientEmail,
+        subject: `Your Dust Bunnies quote — $${calc.total.toFixed(2)} per clean`,
+        headline: `Your quote is ready`,
+        message: `Hi ${esc(customerName)},<br><br>${quoteHtml}<br><br>Use the button below to view your full quote online.`,
+        quote_html: quoteHtml,
+        quote_text: quoteText,
         frequency: quote.frequency,
         frequency_lower: quote.frequency?.toLowerCase(),
         suburb: quote.suburb,
         quote_items: quoteItems,
+        subtotal: calc.subtotal.toFixed(2),
         total: calc.total.toFixed(2),
         discount: calc.discount > 0 ? calc.discount.toFixed(2) : "",
         quote_id: quote?.id || "",
+        show_button: "true",
+        button_text: "View Quote",
+        button_link: quotePublicUrl,
       }, EMAILJS_PUBLIC_KEY);
       const now = new Date().toISOString();
       await callSecureQuoteApi("/api/quotes/mark-sent", { quoteId: quote.id, sentAt: now });

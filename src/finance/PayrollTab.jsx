@@ -10,17 +10,24 @@ import { calcPayrollBreakdown, calcHoursFromJobs, fmtCurrency, fmtPercent, getWe
 // PAYROLL TAB — Phase 5
 // Weekly payroll run: calculate → review → process → payslips
 // ATO NAT 1008 Scale 1 tax (2024-25)
-// Super at 11.5% on top of gross
+// Super at 12% on top of gross (from 1 July 2025)
 // ═══════════════════════════════════════════════════════════
 
 const TODAY = new Date().toISOString().split('T')[0];
 const EMAILJS_SERVICE_ID  = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
+const EMAILJS_UNIVERSAL_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID;
 const EMAILJS_PAYROLL_TEMPLATE_ID =
+  EMAILJS_UNIVERSAL_TEMPLATE_ID ||
   import.meta.env.VITE_EMAILJS_PAYROLL_TEMPLATE_ID ||
-  import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID ||
   EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY  = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
+const BUSINESS_NAME       = import.meta.env.VITE_BUSINESS_NAME || 'Dust Bunnies Cleaning';
+const BUSINESS_ABN        = import.meta.env.VITE_BUSINESS_ABN || '';
+const BUSINESS_EMAIL      = import.meta.env.VITE_BUSINESS_EMAIL || '';
+const SUPER_FUND_NAME     = import.meta.env.VITE_SUPER_FUND_NAME || 'Configured by employer';
+const SUPER_FUND_NUMBER   = import.meta.env.VITE_SUPER_FUND_NUMBER || import.meta.env.VITE_SUPER_FUND_USI || '';
+const DEFAULT_SUPER_RATE  = 0.12;
 
 function getMonday(dateStr) {
   const d = new Date(dateStr);
@@ -30,6 +37,160 @@ function getMonday(dateStr) {
 }
 function prevMonday(m) { const d = new Date(m); d.setDate(d.getDate() - 7); return d.toISOString().split('T')[0]; }
 function nextMonday(m) { const d = new Date(m); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0]; }
+function getSunday(mondayStr) { const d = new Date(mondayStr); d.setDate(d.getDate() + 6); return d; }
+function fmtDate(dateValue, options = { day: 'numeric', month: 'short', year: 'numeric' }) {
+  return new Date(dateValue).toLocaleDateString('en-AU', options);
+}
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function buildPayslipData(staff, rec, weekStart) {
+  const periodStart = new Date(weekStart);
+  const periodEnd = getSunday(weekStart);
+  const processedAt = rec?.processed_at || rec?.processedAt || rec?.updated_at || rec?.updatedAt || new Date().toISOString();
+  const paymentDate = new Date(processedAt);
+
+  const hours = num(rec?.hoursWorked ?? rec?.hours_worked);
+  const rate = num(rec?.hourlyRate ?? rec?.hourly_rate);
+  const travel = num(rec?.travelAllowance ?? rec?.travel_allowance);
+  const gross = num(rec?.grossPay ?? rec?.gross_pay);
+  const tax = num(rec?.taxWithheld ?? rec?.tax_withheld);
+  const net = num(rec?.netPay ?? rec?.net_pay);
+  const superAmount = num(rec?.superAmount ?? rec?.super_amount);
+  const superRate = num(rec?.superRate ?? rec?.super_rate) || DEFAULT_SUPER_RATE;
+  const ordinaryAmount = Math.round(hours * rate * 100) / 100;
+
+  return {
+    employeeName: staff?.full_name || 'Staff Member',
+    employmentType: staff?.employment_type || 'casual',
+    weekLabel: getWeekLabel(weekStart),
+    periodStartLabel: fmtDate(periodStart),
+    periodEndLabel: fmtDate(periodEnd),
+    paymentDateLabel: fmtDate(paymentDate),
+    hours,
+    rate,
+    ordinaryAmount,
+    travel,
+    gross,
+    tax,
+    net,
+    superAmount,
+    superRate,
+    superFundName: SUPER_FUND_NAME,
+    superFundNumber: SUPER_FUND_NUMBER,
+    businessName: BUSINESS_NAME,
+    businessAbn: BUSINESS_ABN,
+    businessEmail: BUSINESS_EMAIL,
+  };
+}
+function buildPayslipEmailHtml(slip) {
+  const travelRow = slip.travel > 0
+    ? `<tr><td style="padding:8px 0;">Travel allowance</td><td style="padding:8px 0;text-align:right;">${fmtCurrency(slip.travel)}</td></tr>`
+    : '';
+  const casualNote = slip.employmentType === 'casual'
+    ? `<p style="margin:8px 0 0;color:#6F7F74;font-size:12px;">Note: hourly rate includes casual loading where applicable.</p>`
+    : '';
+
+  return `
+<div style="font-family:Arial,sans-serif;color:#26352D;max-width:640px;">
+  <h2 style="margin:0 0 8px;color:#355240;">${escapeHtml(slip.businessName)} Payslip</h2>
+  <p style="margin:0 0 14px;color:#6F7F74;">Pay period ${escapeHtml(slip.periodStartLabel)} to ${escapeHtml(slip.periodEndLabel)} · Payment date ${escapeHtml(slip.paymentDateLabel)}</p>
+  <table style="width:100%;border-collapse:collapse;margin:0 0 12px;">
+    <tr><td style="padding:8px 0;color:#6F7F74;">Employee</td><td style="padding:8px 0;text-align:right;">${escapeHtml(slip.employeeName)}</td></tr>
+    <tr><td style="padding:8px 0;color:#6F7F74;">Employment type</td><td style="padding:8px 0;text-align:right;text-transform:capitalize;">${escapeHtml(slip.employmentType)}</td></tr>
+    ${slip.businessAbn ? `<tr><td style="padding:8px 0;color:#6F7F74;">Employer ABN</td><td style="padding:8px 0;text-align:right;">${escapeHtml(slip.businessAbn)}</td></tr>` : ''}
+  </table>
+  <table style="width:100%;border-collapse:collapse;border-top:1px solid #DCE4D9;border-bottom:1px solid #DCE4D9;margin:0 0 12px;">
+    <tr><td style="padding:8px 0;">Ordinary hours (${slip.hours.toFixed(2)} × ${fmtCurrency(slip.rate)}/hr)</td><td style="padding:8px 0;text-align:right;">${fmtCurrency(slip.ordinaryAmount)}</td></tr>
+    ${travelRow}
+    <tr><td style="padding:8px 0;">Gross pay</td><td style="padding:8px 0;text-align:right;">${fmtCurrency(slip.gross)}</td></tr>
+    <tr><td style="padding:8px 0;">PAYG tax withheld (ATO)</td><td style="padding:8px 0;text-align:right;">-${fmtCurrency(slip.tax)}</td></tr>
+    <tr><td style="padding:10px 0;font-weight:700;">Net pay</td><td style="padding:10px 0;text-align:right;font-weight:800;color:#355240;">${fmtCurrency(slip.net)}</td></tr>
+  </table>
+  ${casualNote}
+  <table style="width:100%;border-collapse:collapse;">
+    <tr><td style="padding:8px 0;color:#4F7D82;">Super (${(slip.superRate * 100).toFixed(1)}%)</td><td style="padding:8px 0;text-align:right;color:#4F7D82;">${fmtCurrency(slip.superAmount)}</td></tr>
+    <tr><td style="padding:4px 0;color:#6F7F74;font-size:12px;">Fund</td><td style="padding:4px 0;text-align:right;color:#6F7F74;font-size:12px;">${escapeHtml(slip.superFundName)}${slip.superFundNumber ? ` (${escapeHtml(slip.superFundNumber)})` : ''}</td></tr>
+  </table>
+</div>`;
+}
+function buildPayslipEmailText(slip) {
+  return [
+    `${slip.businessName} payslip`,
+    `Employee: ${slip.employeeName}`,
+    `Pay period: ${slip.periodStartLabel} to ${slip.periodEndLabel}`,
+    `Payment date: ${slip.paymentDateLabel}`,
+    `Ordinary hours: ${slip.hours.toFixed(2)} @ ${fmtCurrency(slip.rate)}/hr = ${fmtCurrency(slip.ordinaryAmount)}`,
+    `Travel allowance: ${fmtCurrency(slip.travel)}`,
+    `Gross pay: ${fmtCurrency(slip.gross)}`,
+    `PAYG tax withheld (ATO): ${fmtCurrency(slip.tax)}`,
+    `Net pay: ${fmtCurrency(slip.net)}`,
+    `Super (${(slip.superRate * 100).toFixed(1)}%): ${fmtCurrency(slip.superAmount)} to ${slip.superFundName}${slip.superFundNumber ? ` (${slip.superFundNumber})` : ''}`,
+    slip.businessAbn ? `Employer ABN: ${slip.businessAbn}` : '',
+  ].filter(Boolean).join('\n');
+}
+function buildPayslipPrintHtml(slip) {
+  const travelRow = slip.travel > 0 ? `<tr><td>Travel allowance</td><td style="text-align:right;">${fmtCurrency(slip.travel)}</td></tr>` : '';
+  const abnLine = slip.businessAbn ? `<tr><td>Employer ABN</td><td style="text-align:right;">${escapeHtml(slip.businessAbn)}</td></tr>` : '';
+  const casualNote = slip.employmentType === 'casual'
+    ? `<div style="font-size:12px;color:#6F7F74;margin:0 0 10px;">Note: hourly rate includes casual loading where applicable.</div>`
+    : '';
+  return `<!DOCTYPE html>
+<html>
+<head>
+<title>Payslip — ${escapeHtml(slip.employeeName)}</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 700px; margin: 30px auto; color: #26352D; }
+  h1 { font-size: 24px; margin: 0 0 4px; color: #355240; }
+  .sub { color: #6F7F74; font-size: 14px; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th, td { padding: 10px 12px; border-bottom: 1px solid #DCE4D9; text-align: left; }
+  th { background: #E8EFE4; color: #355240; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .total td { font-weight: 800; font-size: 16px; color: #355240; }
+  .meta td { font-size: 13px; }
+  .footer { font-size: 11px; color: #6F7F74; margin-top: 10px; border-top: 1px solid #DCE4D9; padding-top: 10px; }
+</style>
+</head>
+<body>
+<h1>${escapeHtml(slip.businessName)}</h1>
+<div class="sub">Payslip — ${escapeHtml(slip.weekLabel)}</div>
+<table class="meta">
+  <tr><th colspan="2">Employee Details</th></tr>
+  <tr><td>Employee</td><td style="text-align:right;">${escapeHtml(slip.employeeName)}</td></tr>
+  <tr><td>Employment type</td><td style="text-align:right;text-transform:capitalize;">${escapeHtml(slip.employmentType)}</td></tr>
+  ${abnLine}
+  <tr><td>Pay period</td><td style="text-align:right;">${escapeHtml(slip.periodStartLabel)} to ${escapeHtml(slip.periodEndLabel)}</td></tr>
+  <tr><td>Payment date</td><td style="text-align:right;">${escapeHtml(slip.paymentDateLabel)}</td></tr>
+</table>
+<table>
+  <tr><th>Description</th><th style="text-align:right;">Amount</th></tr>
+  <tr><td>Ordinary hours (${slip.hours.toFixed(2)} × ${fmtCurrency(slip.rate)}/hr)</td><td style="text-align:right;">${fmtCurrency(slip.ordinaryAmount)}</td></tr>
+  ${travelRow}
+  <tr><td>Gross pay</td><td style="text-align:right;">${fmtCurrency(slip.gross)}</td></tr>
+  <tr><td>PAYG tax withheld (ATO)</td><td style="text-align:right;">-${fmtCurrency(slip.tax)}</td></tr>
+  <tr class="total"><td>Net pay</td><td style="text-align:right;">${fmtCurrency(slip.net)}</td></tr>
+</table>
+${casualNote}
+<table>
+  <tr><th colspan="2">Superannuation</th></tr>
+  <tr><td>Contribution (${(slip.superRate * 100).toFixed(1)}%)</td><td style="text-align:right;">${fmtCurrency(slip.superAmount)}</td></tr>
+  <tr><td>Fund</td><td style="text-align:right;">${escapeHtml(slip.superFundName)}${slip.superFundNumber ? ` (${escapeHtml(slip.superFundNumber)})` : ''}</td></tr>
+</table>
+<div class="footer">
+  This payslip includes the minimum details required under Fair Work payslip rules. Contact ${escapeHtml(slip.businessName)}${slip.businessEmail ? ` via ${escapeHtml(slip.businessEmail)}` : ''} for payroll queries.
+</div>
+</body>
+</html>`;
+}
 
 export default function PayrollTab({ showToast, isMobile }) {
   const [weekStart, setWeekStart] = useState(() => getMonday(TODAY));
@@ -64,7 +225,7 @@ export default function PayrollTab({ showToast, isMobile }) {
         travelHours,
         hourlyRate: staff.hourly_rate || 0,
         travelAllowance,
-        superRate: staff.super_rate ?? 0.115,
+        superRate: staff.super_rate ?? DEFAULT_SUPER_RATE,
         employmentType: staff.employment_type || 'casual',
       });
 
@@ -84,7 +245,7 @@ export default function PayrollTab({ showToast, isMobile }) {
           scheduledHours: hoursCalc.scheduledHours,
           completedHours: hoursCalc.completedHours,
           employmentType: staff.employment_type || 'casual',
-          superRate: staff.super_rate ?? 0.115,
+          superRate: staff.super_rate ?? DEFAULT_SUPER_RATE,
           hourlyRate: staff.hourly_rate || 0,
         },
       };
@@ -147,6 +308,10 @@ export default function PayrollTab({ showToast, isMobile }) {
       showToast('EmailJS not configured for payroll');
       return;
     }
+    const slip = buildPayslipData(row.staff, rec, weekStart);
+    const portalUrl = import.meta.env.VITE_STAFF_PORTAL_URL || `${window.location.origin}/cleaner`;
+    const payslipHtml = buildPayslipEmailHtml(slip);
+    const payslipText = buildPayslipEmailText(slip);
     setEmailingId(row.staff.id);
     try {
       await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_PAYROLL_TEMPLATE_ID, {
@@ -154,21 +319,40 @@ export default function PayrollTab({ showToast, isMobile }) {
         to_email:   recipientEmail,
         customer_name: recipientName,
         customer_email: recipientEmail,
-        reply_to: recipientEmail,
-        week_label: getWeekLabel(weekStart),
-        gross_pay:  fmtCurrency(rec.grossPay || rec.gross_pay),
-        tax:        fmtCurrency(rec.taxWithheld || rec.tax_withheld),
-        super_amt:  fmtCurrency(rec.superAmount || rec.super_amount),
-        net_pay:    fmtCurrency(rec.netPay || rec.net_pay),
-        hours:      (rec.hoursWorked || rec.hours_worked || 0).toString(),
+        reply_to: BUSINESS_EMAIL || recipientEmail,
+        subject: `${BUSINESS_NAME} payslip — ${slip.weekLabel}`,
+        headline: `Your payslip (${slip.weekLabel})`,
+        message: `Hi ${escapeHtml(recipientName)},<br><br>Please find your payroll summary below.<br><br>${payslipHtml}<br><br>If you have payroll questions, reply to this email.`,
+        payslip_html: payslipHtml,
+        payslip_text: payslipText,
+        week_label: slip.weekLabel,
+        pay_period: `${slip.periodStartLabel} to ${slip.periodEndLabel}`,
+        payment_date: slip.paymentDateLabel,
+        employer_name: BUSINESS_NAME,
+        employer_abn: BUSINESS_ABN || '',
+        gross_pay:  fmtCurrency(slip.gross),
+        tax:        fmtCurrency(slip.tax),
+        super_amt:  fmtCurrency(slip.superAmount),
+        net_pay:    fmtCurrency(slip.net),
+        hours:      slip.hours.toFixed(2),
+        hourly_rate: fmtCurrency(slip.rate),
+        ordinary_pay: fmtCurrency(slip.ordinaryAmount),
+        travel_allowance: fmtCurrency(slip.travel),
+        super_rate: `${(slip.superRate * 100).toFixed(1)}%`,
+        super_fund_name: slip.superFundName,
+        super_fund_number: slip.superFundNumber || '',
+        show_button: "true",
+        button_text: "Open Staff Portal",
+        button_link: portalUrl,
       }, EMAILJS_PUBLIC_KEY);
       showToast(`✅ Payslip emailed to ${recipientName}`);
     } catch (e) {
       const details = e?.text || e?.message || "Unknown email error";
       console.error('[payroll:email] failed', e);
       showToast(`❌ Payslip email failed: ${details}`);
+    } finally {
+      setEmailingId(null);
     }
-    setEmailingId(null);
   }, [weekStart, showToast]);
 
   return (
@@ -272,7 +456,7 @@ export default function PayrollTab({ showToast, isMobile }) {
                 <div style={{ padding: '10px 14px', background: T.blueLight, borderRadius: T.radiusSm, marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 700, color: T.blue }}>Superannuation</div>
-                    <div style={{ fontSize: 11, color: T.textMuted }}>Employer contribution ({fmtPercent((rec.superRate || rec.super_rate) ?? 0.115)}) — not deducted from employee pay</div>
+                    <div style={{ fontSize: 11, color: T.textMuted }}>Employer contribution ({fmtPercent((rec.superRate || rec.super_rate) ?? DEFAULT_SUPER_RATE)}) — not deducted from employee pay</div>
                   </div>
                   <div style={{ fontSize: 15, fontWeight: 800, color: T.blue }}>{fmtCurrency(rec.superAmount || rec.super_amount)}</div>
                 </div>
@@ -303,7 +487,7 @@ export default function PayrollTab({ showToast, isMobile }) {
 
       {/* ATO disclaimer */}
       <div style={{ marginTop: 20, padding: '12px 16px', background: T.accentLight, borderRadius: T.radiusSm, fontSize: 12, color: '#8B6914' }}>
-        ⚠️ <strong>Tax disclaimer:</strong> Calculations use ATO NAT 1008 Scale 1 (2024-25). Verify with your accountant before processing payments. Super rate is 11.5% (compulsory from 1 July 2024) — check ATO for future years.
+        ⚠️ <strong>Compliance note:</strong> Payslips now include employer, employee, pay period, payment date, gross/net, deductions and super details. Verify tax/award interpretation with your accountant. Default super is 12% (effective from 1 July 2025).
       </div>
 
       {/* Payslip print modal */}
@@ -360,64 +544,11 @@ const navBtn = {
 // PAYSLIP PRINT MODAL
 // ══════════════════════════════════════════════════════════
 function PayslipModal({ staff, rec, weekStart, onClose }) {
-  const gross   = rec.grossPay    || rec.gross_pay    || 0;
-  const tax     = rec.taxWithheld || rec.tax_withheld || 0;
-  const net     = rec.netPay      || rec.net_pay      || 0;
-  const superA  = rec.superAmount || rec.super_amount || 0;
-  const hours   = rec.hoursWorked || rec.hours_worked || 0;
-  const rate    = rec.hourlyRate  || rec.hourly_rate  || 0;
-  const superR  = rec.superRate   || rec.super_rate   || 0.115;
-  const travel  = rec.travelAllowance || rec.travel_allowance || 0;
+  const slip = buildPayslipData(staff, rec, weekStart);
 
   const handlePrint = () => {
     const win = window.open('', '_blank');
-    win.document.write(`
-<!DOCTYPE html>
-<html>
-<head>
-<title>Payslip — ${staff.full_name}</title>
-<style>
-  body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; color: #2C3E36; }
-  h1 { font-size: 22px; margin-bottom: 4px; }
-  .sub { color: #7A8F85; font-size: 14px; margin-bottom: 24px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-  th, td { padding: 10px 12px; border-bottom: 1px solid #E2EBE6; text-align: left; }
-  th { background: #F4F8F6; font-size: 11px; color: #7A8F85; text-transform: uppercase; }
-  .total td { font-weight: 800; font-size: 16px; border-top: 2px solid #4A9E7E; color: #2D7A5E; }
-  .super-row td { color: #5B9EC4; font-size: 13px; }
-  .footer { font-size: 11px; color: #A3B5AD; margin-top: 24px; border-top: 1px solid #E2EBE6; padding-top: 12px; }
-</style>
-</head>
-<body>
-<h1>🌿 Dust Bunnies</h1>
-<div class="sub">Payslip — Week of ${getWeekLabel(weekStart)}</div>
-
-<table>
-  <tr><th>Employee</th><th>Employment</th><th>Rate</th></tr>
-  <tr><td>${staff.full_name}</td><td>${staff.employment_type || 'casual'}</td><td>$${rate}/hr</td></tr>
-</table>
-
-<table>
-  <tr><th>Description</th><th style="text-align:right">Amount</th></tr>
-  <tr><td>Ordinary hours (${hours}h × $${rate})</td><td style="text-align:right">${fmtCurrency(hours * rate)}</td></tr>
-  ${travel > 0 ? `<tr><td>Travel allowance</td><td style="text-align:right">${fmtCurrency(travel)}</td></tr>` : ''}
-  <tr><td>Gross Pay</td><td style="text-align:right">${fmtCurrency(gross)}</td></tr>
-  <tr><td>PAYG Tax Withheld</td><td style="text-align:right">−${fmtCurrency(tax)}</td></tr>
-  <tr class="total"><td>Net Pay</td><td style="text-align:right">${fmtCurrency(net)}</td></tr>
-</table>
-
-<table>
-  <tr><th colspan="2">Superannuation (employer contribution — not from your pay)</th></tr>
-  <tr class="super-row"><td>SGC ${(superR * 100).toFixed(1)}% of gross</td><td style="text-align:right">${fmtCurrency(superA)}</td></tr>
-</table>
-
-<div class="footer">
-  This is a computer-generated payslip. ABN: ___. For queries contact your employer.<br>
-  Processed: ${new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}
-</div>
-</body>
-</html>
-    `);
+    win.document.write(buildPayslipPrintHtml(slip));
     win.document.close();
     win.focus();
     win.print();
@@ -425,28 +556,36 @@ function PayslipModal({ staff, rec, weekStart, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
-      <div style={{ background: '#fff', borderRadius: T.radiusLg, padding: 28, width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div style={{ background: '#fff', borderRadius: T.radiusLg, padding: 28, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div>
             <div style={{ fontSize: 17, fontWeight: 800, color: T.text }}>🌿 Payslip Preview</div>
-            <div style={{ fontSize: 12, color: T.textMuted }}>{staff.full_name} · {getWeekLabel(weekStart)}</div>
+            <div style={{ fontSize: 12, color: T.textMuted }}>{slip.employeeName} · {slip.weekLabel}</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.textMuted }}>✕</button>
         </div>
 
+        <div style={{ background: T.bg, borderRadius: T.radiusSm, padding: '12px 14px', marginBottom: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 12 }}>
+          <div><strong>Employer:</strong> {slip.businessName}</div>
+          <div><strong>ABN:</strong> {slip.businessAbn || 'Add VITE_BUSINESS_ABN'}</div>
+          <div><strong>Pay period:</strong> {slip.periodStartLabel} to {slip.periodEndLabel}</div>
+          <div><strong>Payment date:</strong> {slip.paymentDateLabel}</div>
+        </div>
+
         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16, fontSize: 14 }}>
           <tbody>
-            <PayslipRow label="Ordinary Hours" value={`${hours}h × $${rate}/hr`} />
-            {travel > 0 && <PayslipRow label="Travel Allowance" value={fmtCurrency(travel)} />}
-            <PayslipRow label="Gross Pay" value={fmtCurrency(gross)} bold />
-            <PayslipRow label="PAYG Tax Withheld" value={`−${fmtCurrency(tax)}`} muted />
-            <PayslipRow label="Net Pay" value={fmtCurrency(net)} bold highlight />
+            <PayslipRow label="Ordinary Hours" value={`${slip.hours.toFixed(2)}h × ${fmtCurrency(slip.rate)}/hr`} />
+            <PayslipRow label="Ordinary Pay" value={fmtCurrency(slip.ordinaryAmount)} />
+            {slip.travel > 0 && <PayslipRow label="Travel Allowance" value={fmtCurrency(slip.travel)} />}
+            <PayslipRow label="Gross Pay" value={fmtCurrency(slip.gross)} bold />
+            <PayslipRow label="PAYG Tax Withheld (ATO)" value={`−${fmtCurrency(slip.tax)}`} muted />
+            <PayslipRow label="Net Pay" value={fmtCurrency(slip.net)} bold highlight />
           </tbody>
         </table>
 
         <div style={{ padding: '10px 14px', background: T.blueLight, borderRadius: T.radiusSm, marginBottom: 20, display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-          <span style={{ color: T.blue, fontWeight: 700 }}>Super ({(superR * 100).toFixed(1)}%)</span>
-          <span style={{ color: T.blue, fontWeight: 800 }}>{fmtCurrency(superA)}</span>
+          <span style={{ color: T.blue, fontWeight: 700 }}>Super ({(slip.superRate * 100).toFixed(1)}%) · {slip.superFundName}{slip.superFundNumber ? ` (${slip.superFundNumber})` : ''}</span>
+          <span style={{ color: T.blue, fontWeight: 800 }}>{fmtCurrency(slip.superAmount)}</span>
         </div>
 
         <div style={{ display: 'flex', gap: 10 }}>

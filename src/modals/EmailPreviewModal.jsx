@@ -4,14 +4,24 @@ import { Modal } from "../components/ui";
 
 export default function EmailPreviewModal({ quote, enquiry, pricing, onSend, onClose, sending }) {
   const calc = calcQuote(quote.details, pricing);
-  const customerEmail = enquiry?.details?.email || "No email found";
-  const customerName = quote.name.split(" ")[0];
+  const customerEmail = (
+    enquiry?.details?.email ||
+    enquiry?.email ||
+    quote?.email ||
+    ""
+  ).trim();
+  const customerName = (
+    quote?.name ||
+    enquiry?.name ||
+    enquiry?.details?.name ||
+    "Customer"
+  ).split(" ")[0];
 
   return (
     <Modal title="📧 Preview Email" onClose={onClose} wide>
       <div style={{ background: T.blueLight, borderRadius: T.radiusSm, padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 13, color: T.textMuted }}>Sending to:</span>
-        <span style={{ fontSize: 14, fontWeight: 700, color: T.blue }}>{customerEmail}</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: T.blue }}>{customerEmail || "No email found"}</span>
       </div>
 
       <div style={{ border: `1px solid ${T.border}`, borderRadius: T.radius, overflow: "hidden", marginBottom: 20 }}>
@@ -68,17 +78,17 @@ export default function EmailPreviewModal({ quote, enquiry, pricing, onSend, onC
         <button onClick={onClose} disabled={sending} style={{ flex: 1, padding: "14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", fontWeight: 700, fontSize: 14, cursor: sending ? "not-allowed" : "pointer", color: T.textMuted }}>
           Cancel
         </button>
-        <button onClick={onSend} disabled={sending || !enquiry?.details?.email} style={{
+        <button onClick={onSend} disabled={sending || !customerEmail} style={{
           flex: 2, padding: "14px", borderRadius: T.radiusSm, border: "none",
-          background: (!enquiry?.details?.email || sending) ? T.border : `linear-gradient(135deg, ${T.primary}, ${T.blue})`,
-          fontWeight: 700, fontSize: 14, cursor: (!enquiry?.details?.email || sending) ? "not-allowed" : "pointer", color: "#fff",
-          boxShadow: enquiry?.details?.email && !sending ? "0 4px 12px rgba(74,158,126,0.3)" : "none",
+          background: (!customerEmail || sending) ? T.border : `linear-gradient(135deg, ${T.primary}, ${T.blue})`,
+          fontWeight: 700, fontSize: 14, cursor: (!customerEmail || sending) ? "not-allowed" : "pointer", color: "#fff",
+          boxShadow: customerEmail && !sending ? "0 4px 12px rgba(74,158,126,0.3)" : "none",
         }}>
-          {sending ? "Sending..." : `📧 Send to ${customerEmail}`}
+          {sending ? "Sending..." : `📧 Send to ${customerEmail || "email"}`}
         </button>
       </div>
 
-      {!enquiry?.details?.email && (
+      {!customerEmail && (
         <div style={{ marginTop: 12, padding: "12px 16px", background: "#FDF0EF", borderRadius: T.radiusSm, fontSize: 13, color: T.danger }}>
           ⚠️ No email address found for this customer. Please check the enquiry details.
         </div>

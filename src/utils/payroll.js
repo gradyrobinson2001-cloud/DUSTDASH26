@@ -39,7 +39,7 @@ export function calcWeeklyTax(grossWeekly) {
  * @param {number} params.hourlyRate        — $/hr
  * @param {number} [params.travelRate]      — $/hr for travel (defaults to hourlyRate)
  * @param {number} [params.travelAllowance] — flat travel allowance on top (default 0)
- * @param {number} [params.superRate]       — super rate decimal, default 0.115 (11.5% for 2024-25)
+ * @param {number} [params.superRate]       — super rate decimal, default 0.12 (12% from 1 July 2025)
  * @param {string} [params.employmentType]  — 'casual'|'part_time'|'full_time'
  *
  * @returns {{ grossPay, taxWithheld, superAmount, netPay, effectiveTaxRate }}
@@ -50,7 +50,7 @@ export function calcPayrollBreakdown({
   hourlyRate = 0,
   travelRate,
   travelAllowance = 0,
-  superRate = 0.115,
+  superRate = 0.12,
   employmentType = 'casual',
 }) {
   const effectiveTravelRate = travelRate ?? hourlyRate;
@@ -65,7 +65,7 @@ export function calcPayrollBreakdown({
   const weeklyTaxableGross = grossPay; // single-week payroll
   const taxWithheld = calcWeeklyTax(weeklyTaxableGross);
 
-  // Super: 11.5% on top of gross (employer contribution, not deducted from net)
+  // Super: 12% on top of gross (employer contribution, not deducted from net)
   const superAmount = Math.round(grossPay * superRate * 100) / 100;
 
   // Net pay = gross − tax withheld
