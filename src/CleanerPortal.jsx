@@ -420,7 +420,8 @@ export default function CleanerPortal() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {dayJobs.map((job, idx) => {
-                const client     = allClients.find(c => c.id === (job.client_id || job.clientId));
+                const clientId   = job.client_id || job.clientId;
+                const client     = allClients.find(c => String(c.id) === String(clientId));
                 const photos     = localPhotos[job.id] || { before: [], after: [] };
                 const isExp      = expandedJob === job.id;
                 const status     = job.status || job.job_status || job.jobStatus || 'scheduled';
@@ -430,10 +431,21 @@ export default function CleanerPortal() {
                 const startT     = job.start_time || job.startTime || '';
                 const actualDur  = job.duration;
                 const extras     = job.extras || [];
-                const address    = client?.address || `${job.suburb}, QLD`;
-                const accessNote = client?.access_notes || client?.accessNotes;
-                const clientNote = client?.notes;
-                const freq       = client?.frequency;
+                const address    = client?.address || job?.address || `${job.suburb}, QLD`;
+                const accessNote = client?.access_notes || client?.accessNotes || job?.access_notes || job?.accessNotes;
+                const clientNote = client?.notes || job?.notes;
+                const freq       = client?.frequency || job?.frequency;
+                const email      = client?.email || job?.email;
+                const phone      = client?.phone || job?.phone;
+                const preferredDay = client?.preferred_day || client?.preferredDay;
+                const preferredTime = client?.preferred_time || client?.preferredTime;
+                const bedrooms   = job?.bedrooms ?? client?.bedrooms;
+                const bathrooms  = job?.bathrooms ?? client?.bathrooms;
+                const living     = job?.living ?? client?.living;
+                const kitchen    = job?.kitchen ?? client?.kitchen;
+                const mapsDestination = client?.lat && client?.lng
+                  ? `${client.lat},${client.lng}`
+                  : address;
 
                 return (
                   <div key={job.id} style={{ background: '#fff', borderRadius: T.radius, overflow: 'hidden', boxShadow: T.shadow }}>
@@ -479,12 +491,42 @@ export default function CleanerPortal() {
                       {/* Address */}
                       <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 8 }}>{address}</div>
 
+                      {/* Contact */}
+                      {(email || phone) && (
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                          {phone && (
+                            <a
+                              href={`tel:${phone}`}
+                              style={{ fontSize: 12, color: T.blue, textDecoration: 'none', fontWeight: 700 }}
+                            >
+                              {phone}
+                            </a>
+                          )}
+                          {email && (
+                            <a
+                              href={`mailto:${email}`}
+                              style={{ fontSize: 12, color: T.blue, textDecoration: 'none', fontWeight: 700 }}
+                            >
+                              {email}
+                            </a>
+                          )}
+                        </div>
+                      )}
+
                       {/* Rooms */}
                       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                        {(job.bedrooms  || client?.bedrooms)  && <span style={{ fontSize: 13 }}>{job.bedrooms  || client.bedrooms} bed</span>}
-                        {(job.bathrooms || client?.bathrooms) && <span style={{ fontSize: 13 }}>{job.bathrooms || client.bathrooms} bath</span>}
-                        {(job.living    || client?.living)    && <span style={{ fontSize: 13 }}>{job.living    || client.living} living</span>}
-                        {(job.kitchen   || client?.kitchen)   && <span style={{ fontSize: 13 }}>{job.kitchen   || client.kitchen} kitchen</span>}
+                        {bedrooms !== undefined && bedrooms !== null && <span style={{ fontSize: 13 }}>{bedrooms} bed</span>}
+                        {bathrooms !== undefined && bathrooms !== null && <span style={{ fontSize: 13 }}>{bathrooms} bath</span>}
+                        {living !== undefined && living !== null && <span style={{ fontSize: 13 }}>{living} living</span>}
+                        {kitchen !== undefined && kitchen !== null && <span style={{ fontSize: 13 }}>{kitchen} kitchen</span>}
+                        {freq && <span style={{ fontSize: 13 }}>{freq}</span>}
+                        {preferredDay && <span style={{ fontSize: 13 }}>pref: {preferredDay}</span>}
+                        {preferredTime && <span style={{ fontSize: 13 }}>{preferredTime}</span>}
+                        {!client && (
+                          <span style={{ fontSize: 12, color: T.danger }}>
+                            Client profile missing - using job snapshot only
+                          </span>
+                        )}
                       </div>
 
                       {/* Extras */}
@@ -520,8 +562,10 @@ export default function CleanerPortal() {
                       <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
                         <button
                           onClick={() => {
-                            const dest = encodeURIComponent(address);
-                            window.open(`https://www.google.com/maps/dir/?api=1&destination=${dest}`, '_blank');
+                            const dest = encodeURIComponent(mapsDestination);
+                            const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+                            const opened = window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+                            if (!opened) window.location.href = mapsUrl;
                           }}
                           style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: 'none', background: T.blue, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                         >

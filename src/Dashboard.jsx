@@ -116,6 +116,7 @@ export default function Dashboard() {
   const [selectedRouteDate,  setSelectedRouteDate]  = useState(() => new Date().toISOString().split("T")[0]);
   const [routeData,          setRouteData]           = useState(null);
   const [mapsLoaded,         setMapsLoaded]          = useState(false);
+  const [mapsError,          setMapsError]           = useState("");
   const mapRef         = useRef(null);
   const mapInstanceRef = useRef(null);
 
@@ -199,14 +200,49 @@ export default function Dashboard() {
 
   // Google Maps
   useEffect(() => {
-    if (window.google?.maps) { setMapsLoaded(true); return; }
-    if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === "YOUR_API_KEY_HERE") return;
-    const script = document.createElement("script");
+    if (window.google?.maps) {
+      setMapsLoaded(true);
+      setMapsError("");
+      return;
+    }
+    if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === "YOUR_API_KEY_HERE") {
+      setMapsError("missing_key");
+      return;
+    }
+
+    const onLoad = () => {
+      setMapsLoaded(true);
+      setMapsError("");
+    };
+    const onError = () => {
+      setMapsLoaded(false);
+      setMapsError("load_failed");
+      showToast("⚠️ Google Maps failed to load. Check API key and domain restrictions.");
+    };
+
+    let script = document.getElementById("google-maps-script");
+    if (script) {
+      script.addEventListener("load", onLoad);
+      script.addEventListener("error", onError);
+      return () => {
+        script.removeEventListener("load", onLoad);
+        script.removeEventListener("error", onError);
+      };
+    }
+
+    script = document.createElement("script");
+    script.id = "google-maps-script";
     script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places`;
     script.async = true;
-    script.onload = () => setMapsLoaded(true);
+    script.defer = true;
+    script.onload = onLoad;
+    script.onerror = onError;
     document.head.appendChild(script);
-  }, []);
+    return () => {
+      script.onload = null;
+      script.onerror = null;
+    };
+  }, [showToast]);
 
   useEffect(() => {
     if (page === "tools" && mapsLoaded && mapRef.current && !mapInstanceRef.current) {
@@ -788,7 +824,7 @@ export default function Dashboard() {
         {page === "payroll"  && <PayrollTab showToast={showToast} isMobile={isMobile} />}
         {page === "payments" && <PaymentsTab scheduledJobs={scheduledJobs} setScheduledJobs={setScheduledJobs} scheduleClients={scheduleClients} invoices={invoices} setInvoices={setInvoices} paymentFilter={paymentFilter} setPaymentFilter={setPaymentFilter} setShowInvoiceModal={setShowInvoiceModal} showToast={showToast} isMobile={isMobile} />}
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} showToast={showToast} isMobile={isMobile} />}
-        {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} isMobile={isMobile} />}
+        {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} isMobile={isMobile} />}
         {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} />}
         {page === "rota"     && <RotaTab
           scheduledJobs={scheduledJobs}

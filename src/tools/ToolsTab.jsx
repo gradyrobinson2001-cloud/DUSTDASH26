@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { T } from "../shared";
 import { optimiseRoute, routeSummary } from "../utils/routeOptimiser";
-import { useScheduledJobs } from "../hooks/useScheduledJobs";
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 
@@ -10,6 +9,7 @@ export default function ToolsTab({
   scheduledJobs,
   scheduleSettings,
   mapsLoaded,
+  mapsError,
   mapRef,
   distanceFrom,
   setDistanceFrom,
@@ -24,7 +24,7 @@ export default function ToolsTab({
   routeData,
   isMobile,
 }) {
-  const apiKeyMissing = !GOOGLE_MAPS_API_KEY;
+  const apiKeyMissing = !GOOGLE_MAPS_API_KEY || mapsError === "missing_key";
 
   return (
     <>
@@ -33,8 +33,13 @@ export default function ToolsTab({
           <h1 style={{ margin: 0, fontSize: isMobile ? 22 : 24, fontWeight: 900, color: T.text }}>Tools</h1>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: T.textMuted }}>Distance calculator & route planning</p>
         </div>
-        {!mapsLoaded && !apiKeyMissing && (
+        {!mapsLoaded && !apiKeyMissing && !mapsError && (
           <div style={{ padding: "8px 16px", background: T.accentLight, borderRadius: T.radiusSm, fontSize: 12, color: "#8B6914" }}>Loading Maps...</div>
+        )}
+        {mapsError === "load_failed" && (
+          <div style={{ padding: "8px 16px", background: T.dangerLight, borderRadius: T.radiusSm, fontSize: 12, color: T.danger }}>
+            ⚠️ Google Maps failed to load. Check API key restrictions for this Vercel domain.
+          </div>
         )}
         {apiKeyMissing && (
           <div style={{ padding: "8px 16px", background: T.dangerLight, borderRadius: T.radiusSm, fontSize: 12, color: T.danger }}>⚠️ Add Google Maps API key to enable</div>
@@ -202,6 +207,14 @@ export default function ToolsTab({
                   <div style={{ fontSize: 40, marginBottom: 12 }}>🗺️</div>
                   <p style={{ margin: 0, fontWeight: 700 }}>Google Maps API Key Required</p>
                   <p style={{ margin: "8px 0 0", fontSize: 13 }}>Add your API key to enable the map</p>
+                </>
+              ) : mapsError === "load_failed" ? (
+                <>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+                  <p style={{ margin: 0, fontWeight: 700, color: T.danger }}>Google Maps API Load Failed</p>
+                  <p style={{ margin: "8px 0 0", fontSize: 13 }}>
+                    Check billing, API enablement, and allowed HTTP referrers for this domain.
+                  </p>
                 </>
               ) : (
                 <>
