@@ -345,10 +345,19 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
       }
 
       // Send invite email via EmailJS (bypasses Supabase email rate limits)
-      if (result.invite_link && EMAILJS_SERVICE_ID && EMAILJS_INVITE_TEMPLATE_ID) {
+      console.log("[StaffTab] Edge Function result:", JSON.stringify(result));
+      console.log("[StaffTab] invite_link:", result.invite_link);
+      console.log("[StaffTab] EmailJS config:", { EMAILJS_SERVICE_ID, EMAILJS_INVITE_TEMPLATE_ID, hasKey: !!EMAILJS_PUBLIC_KEY });
+
+      let emailSent = false;
+      if (!result.invite_link) {
+        console.warn("[StaffTab] No invite_link in response — email cannot be sent");
+      } else if (!EMAILJS_SERVICE_ID || !EMAILJS_INVITE_TEMPLATE_ID) {
+        console.warn("[StaffTab] EmailJS not configured — missing service/template ID");
+      } else {
         const firstName = form.full_name.trim().split(" ")[0];
         try {
-          await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_INVITE_TEMPLATE_ID, {
+          const emailResult = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_INVITE_TEMPLATE_ID, {
             to_email:      form.email.trim().toLowerCase(),
             customer_name: firstName,
             subject:       "Welcome to Dust Bunnies! Set up your account",
@@ -359,12 +368,14 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
             button_link:   result.invite_link,
             header_color:  "#1B3A2D",
           }, EMAILJS_PUBLIC_KEY);
+          console.log("[StaffTab] EmailJS response:", emailResult);
+          emailSent = true;
         } catch (emailErr) {
-          console.warn("EmailJS invite failed:", emailErr);
+          console.error("[StaffTab] EmailJS invite failed:", emailErr);
         }
       }
 
-      onCreated(`✅ ${form.full_name} created!${result.invite_link ? " A setup email has been sent to " + form.email + "." : " Account ready (no email sent — configure EmailJS)."}`);
+      onCreated(`✅ ${form.full_name} created!${emailSent ? " A setup email has been sent to " + form.email + "." : " Account created but email was not sent — check console for details."}`);
     } catch (e) {
       if (e.message.includes("Failed to fetch") || e.message.includes("NetworkError")) {
         setError("DEPLOY_NEEDED");
