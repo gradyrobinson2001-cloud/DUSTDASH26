@@ -346,17 +346,21 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
 
       // Send invite email via EmailJS (bypasses Supabase email rate limits)
       if (result.invite_link && EMAILJS_SERVICE_ID && EMAILJS_INVITE_TEMPLATE_ID) {
+        const firstName = form.full_name.trim().split(" ")[0];
         try {
           await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_INVITE_TEMPLATE_ID, {
-            to_email:    form.email.trim().toLowerCase(),
-            to_name:     form.full_name.trim(),
-            subject:     "You've been invited to Dust Bunnies",
-            message:     `Hi ${form.full_name.trim()},\n\nYou've been added as a staff member at Dust Bunnies. Click the link below to set up your password and get started:\n\n${result.invite_link}\n\nThis link will expire in 24 hours.\n\nCheers,\nDust Bunnies Admin`,
-            invite_link: result.invite_link,
+            to_email:      form.email.trim().toLowerCase(),
+            customer_name: firstName,
+            subject:       "Welcome to Dust Bunnies! Set up your account",
+            headline:      "Welcome to the Team!",
+            message:       `Hey <strong>${firstName}</strong>! 👋<br><br>You've been added as a staff member at <strong>Dust Bunnies</strong>.<br><br>Click the button below to set up your password and get started.`,
+            show_button:   "true",
+            button_text:   "Set Up My Account",
+            button_link:   result.invite_link,
+            header_color:  "#1B3A2D",
           }, EMAILJS_PUBLIC_KEY);
         } catch (emailErr) {
           console.warn("EmailJS invite failed:", emailErr);
-          // Account still created — just warn
         }
       }
 
