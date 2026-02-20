@@ -15,7 +15,6 @@ serve(async (req) => {
   try {
     const supabaseUrl    = Deno.env.get('SUPABASE_URL')!;
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const anonKey        = Deno.env.get('SUPABASE_ANON_KEY')!;
 
     // ── 1. Verify caller has a valid session ─────────────────────────
     const authHeader = req.headers.get('Authorization') ?? '';
@@ -26,14 +25,12 @@ serve(async (req) => {
     }
     const callerJwt = authHeader.slice(7);
 
-    // Use anon-key client with the caller's JWT to verify identity
-    // (this is the correct pattern — getUser() validates the JWT server-side)
-    const callerClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${callerJwt}` } },
-      auth:   { autoRefreshToken: false, persistSession: false },
+    // Use service-role client to verify the caller's JWT
+    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    const { data: { user: callerUser }, error: userErr } = await callerClient.auth.getUser();
+    const { data: { user: callerUser }, error: userErr } = await adminClient.auth.getUser(callerJwt);
     if (userErr || !callerUser) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized', detail: userErr?.message ?? 'no session' }),
@@ -41,11 +38,7 @@ serve(async (req) => {
       );
     }
 
-    // ── 2. Confirm admin role via service-role client (bypasses RLS) ─
-    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-
+    // ── 2. Confirm admin role ───────────────────────────────────────
     const { data: callerProfile, error: profileCheckError } = await adminClient
       .from('profiles')
       .select('role')

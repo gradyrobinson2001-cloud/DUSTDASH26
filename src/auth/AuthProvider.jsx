@@ -8,6 +8,7 @@ export function AuthProvider({ children }) {
   const [session,        setSession]        = useState(null);
   const [profile,        setProfile]        = useState(null);
   const [loading,        setLoading]        = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [debugMsg,       setDebugMsg]       = useState('Waiting for auth…');
   const initialised  = useRef(false);
   const profileCache = useRef(null); // keep last good profile across token refreshes
@@ -15,7 +16,6 @@ export function AuthProvider({ children }) {
   async function fetchProfile(userId) {
     if (!supabaseReady) return null;
     try {
-      // Race the DB query against a 10-second timeout so we never hang
       const queryPromise = supabase
         .from('profiles')
         .select('*')
@@ -49,28 +49,28 @@ export function AuthProvider({ children }) {
         setSession(session);
 
         if (session?.user) {
-          // On token refresh events, keep the cached profile immediately so the
-          // UI never flashes "Account not set up" while we re-fetch in the background
+          // On token refresh events, keep the cached profile and refresh in background
           if (_event === 'TOKEN_REFRESHED' && profileCache.current) {
             setDebugMsg(`Token refreshed — keeping cached profile for ${session.user.email}`);
+            setProfile(profileCache.current);
             setLoading(false);
             if (!initialised.current) initialised.current = true;
-            // Re-fetch in background to keep profile data fresh
             fetchProfile(session.user.id).then(prof => {
               if (prof) setProfile(prof);
             });
             return;
           }
 
+          // Mark profile as loading so RequireAdmin shows a spinner, not the error screen
+          setProfileLoading(true);
           setDebugMsg(`Fetching profile for ${session.user.id}…`);
           const prof = await fetchProfile(session.user.id);
-          // If fetch failed but we have a cached profile, use it rather than
-          // showing the "Account not set up" error screen
           setProfile(prof ?? profileCache.current);
+          setProfileLoading(false);
         } else {
-          // Genuine sign-out — clear everything
           profileCache.current = null;
           setProfile(null);
+          setProfileLoading(false);
         }
 
         if (!initialised.current) initialised.current = true;
@@ -85,6 +85,7 @@ export function AuthProvider({ children }) {
         initialised.current = true;
       }
       setLoading(false);
+      setProfileLoading(false);
     }, 8000);
 
     return () => { clearTimeout(timeout); subscription.unsubscribe(); };
@@ -98,7 +99,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, debugMsg, signOut }}>
+    <AuthContext.Provider value={{ session, profile, loading, profileLoading, debugMsg, signOut }}>
       {children}
     </AuthContext.Provider>
   );
@@ -112,9 +113,10 @@ export function useAuth() {
 
 // Route guard — wraps admin-only routes
 export function RequireAdmin({ children }) {
-  const { session, profile, loading, debugMsg } = useAuth();
+  const { session, profile, loading, profileLoading, debugMsg } = useAuth();
 
-  if (loading) return (
+  // Show spinner while auth or profile is still loading
+  if (loading || profileLoading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0f1117', color: '#fff', flexDirection: 'column', gap: 12 }}>
       <div style={{ fontSize: 16 }}>Loading…</div>
       <div style={{ fontSize: 11, color: '#3A5A4A', marginTop: 4 }}>
@@ -130,7 +132,7 @@ export function RequireAdmin({ children }) {
   // If Supabase isn't configured yet, allow through (dev mode)
   if (!supabaseReady) return children;
 
-  // Logged in but no profile row yet — show a helpful message instead of looping
+  // Logged in but no profile row exists — show a helpful message
   if (session && !profile) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0f1117', color: '#fff', flexDirection: 'column', gap: 16, padding: 24, textAlign: 'center' }}>
