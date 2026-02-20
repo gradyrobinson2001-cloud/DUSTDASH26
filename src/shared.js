@@ -3,11 +3,11 @@
 // ═══════════════════════════════════════════════════════════
 
 export const T = {
-  bg: "#F4F8F6", card: "#FFFFFF", primary: "#4A9E7E", primaryLight: "#E8F5EE", primaryDark: "#2D7A5E",
-  blue: "#5B9EC4", blueLight: "#E6F0F7", accent: "#E8C86A", accentLight: "#FFF8E7",
-  text: "#2C3E36", textMuted: "#7A8F85", textLight: "#A3B5AD", border: "#E2EBE6", borderLight: "#EDF3EF",
-  danger: "#D4645C", dangerLight: "#FDF0EF", sidebar: "#1B3A2D",
-  shadow: "0 2px 8px rgba(27,58,45,0.06)", shadowMd: "0 4px 16px rgba(27,58,45,0.08)", shadowLg: "0 12px 40px rgba(27,58,45,0.1)",
+  bg: "#F3F1EA", card: "#FFFCF6", primary: "#5B7F62", primaryLight: "#E8EFE4", primaryDark: "#355240",
+  blue: "#4F7D82", blueLight: "#E7F0EF", accent: "#C8A765", accentLight: "#F8F1E1",
+  text: "#26352D", textMuted: "#6F7F74", textLight: "#98A89D", border: "#DCE4D9", borderLight: "#EAF0E6",
+  danger: "#C56058", dangerLight: "#FBEFED", sidebar: "#1E2F24",
+  shadow: "0 2px 10px rgba(30,47,36,0.06)", shadowMd: "0 8px 20px rgba(30,47,36,0.09)", shadowLg: "0 16px 44px rgba(30,47,36,0.14)",
   radius: 12, radiusSm: 8, radiusLg: 16,
 };
 

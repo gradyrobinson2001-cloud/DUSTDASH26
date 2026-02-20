@@ -59,6 +59,10 @@ import EmailPreviewComponent   from "./modals/EmailPreviewComponent";
 const EMAILJS_SERVICE_ID           = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID          = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_UNIVERSAL_TEMPLATE_ID= import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID;
+const EMAILJS_QUOTE_TEMPLATE_ID    =
+  import.meta.env.VITE_EMAILJS_QUOTE_TEMPLATE_ID ||
+  EMAILJS_TEMPLATE_ID ||
+  EMAILJS_UNIVERSAL_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY           = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 const GOOGLE_MAPS_API_KEY          = getGoogleMapsApiKey();
 
@@ -85,7 +89,7 @@ export default function Dashboard() {
   const [page, setPage]               = useState("inbox");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile]       = useState(window.innerWidth < 768);
-  const [openGroups, setOpenGroups]   = useState(() => new Set(["Work", "Finance", "Route & Maps", "Clients", "Admin"]));
+  const [openGroups, setOpenGroups]   = useState(() => new Set());
   const [toast, setToast]             = useState(null);
   const [filter, setFilter]           = useState("active");
   const [searchTerm, setSearchTerm]   = useState("");
@@ -181,12 +185,6 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => { if (isMobile) setSidebarOpen(false); }, [page, isMobile]);
-
-  // Auto-expand the group that contains the active page
-  useEffect(() => {
-    const activeGroup = navGroups.find(g => g.items.some(i => i.id === page));
-    if (activeGroup) setOpenGroups(prev => new Set([...prev, activeGroup.label]));
-  }, [page]);
 
   // Realtime: listen for new form submissions (Supabase will push via hook subscription)
   // The useEnquiries hook already subscribes to postgres_changes on enquiries table.
@@ -295,33 +293,57 @@ export default function Dashboard() {
   const sendQuoteEmail = async () => {
     if (!emailPreview) return;
     const { quote, enquiry } = emailPreview;
+    const recipientEmail = (
+      enquiry?.details?.email ||
+      enquiry?.email ||
+      quote?.email ||
+      ""
+    ).trim();
+    const customerName = (
+      quote?.name ||
+      enquiry?.name ||
+      enquiry?.details?.name ||
+      "Customer"
+    ).trim();
     const calc = calcQuote(quote.details, pricing);
     const quoteItems = calc.items.map(item => `${item.description} × ${item.qty} — $${item.total.toFixed(2)}`).join("<br>");
     setSendingEmail(true);
     try {
-      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-        customer_name: quote.name.split(" ")[0],
-        customer_email: enquiry?.details?.email || "",
+      if (!EMAILJS_SERVICE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_QUOTE_TEMPLATE_ID) {
+        throw new Error("Email config missing. Add VITE_EMAILJS_SERVICE_ID, VITE_EMAILJS_PUBLIC_KEY and a quote template ID.");
+      }
+      if (!recipientEmail) {
+        throw new Error("Client email is missing on this enquiry.");
+      }
+
+      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_QUOTE_TEMPLATE_ID, {
+        customer_name: customerName.split(" ")[0] || customerName,
+        customer_full_name: customerName,
+        customer_email: recipientEmail,
+        to_name: customerName,
+        to_email: recipientEmail,
+        reply_to: recipientEmail,
         frequency: quote.frequency,
         frequency_lower: quote.frequency?.toLowerCase(),
         suburb: quote.suburb,
         quote_items: quoteItems,
         total: calc.total.toFixed(2),
         discount: calc.discount > 0 ? calc.discount.toFixed(2) : "",
-        to_email: enquiry?.details?.email || "",
+        quote_id: quote?.id || "",
       }, EMAILJS_PUBLIC_KEY);
       const now = new Date().toISOString();
       await callSecureQuoteApi("/api/quotes/mark-sent", { quoteId: quote.id, sentAt: now });
       try {
-        await addEmailHistory({ client_id: enquiry.id, recipient_name: quote.name, recipient_email: enquiry?.details?.email, template_type: "quote" });
+        await addEmailHistory({ client_id: enquiry.id, recipient_name: customerName, recipient_email: recipientEmail, template_type: "quote" });
       } catch (historyErr) {
         console.error("[quote:mark-sent] email sent but failed to save history", historyErr);
       }
       setEmailPreview(null);
-      showToast(`✅ Quote sent to ${enquiry?.details?.email}!`);
+      showToast(`✅ Quote sent to ${recipientEmail}!`);
     } catch (err) {
       console.error("[quote:send-email] failed", err);
-      showToast(`❌ Failed to send email: ${err.message || "Please try again."}`);
+      const details = err?.text || err?.message || "Please try again.";
+      showToast(`❌ Failed to send email: ${details}`);
     }
     finally { setSendingEmail(false); }
   };
@@ -737,10 +759,10 @@ export default function Dashboard() {
   };
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: T.bg }}>
+    <div style={{ display: "flex", minHeight: "100vh", background: `radial-gradient(circle at top right, ${T.primaryLight} 0%, ${T.bg} 45%)` }}>
       {/* Mobile Header */}
       {isMobile && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: 60, background: T.sidebar, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", zIndex: 100 }}>
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: 60, background: `linear-gradient(180deg, ${T.sidebar}, #16251d)`, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", zIndex: 100, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
           <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "none", border: "none", color: "#fff", fontSize: 24, cursor: "pointer", padding: 8 }}>{sidebarOpen ? "✕" : "☰"}</button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20 }}>🌿</span><span style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>Dust Bunnies</span></div>
           <div style={{ width: 40 }} />
@@ -748,17 +770,17 @@ export default function Dashboard() {
       )}
 
       {/* Sidebar */}
-      <div style={{ width: isMobile ? "100%" : 240, maxWidth: isMobile ? 280 : 240, background: T.sidebar, padding: "24px 12px", display: "flex", flexDirection: "column", position: "fixed", top: isMobile ? 60 : 0, left: isMobile ? (sidebarOpen ? 0 : -300) : 0, height: isMobile ? "calc(100vh - 60px)" : "100vh", zIndex: 99, transition: "left 0.3s ease", boxShadow: isMobile && sidebarOpen ? "4px 0 20px rgba(0,0,0,0.3)" : "none", overflowY: "auto" }}>
+      <div style={{ width: isMobile ? "100%" : 248, maxWidth: isMobile ? 292 : 248, background: `linear-gradient(180deg, ${T.sidebar} 0%, #15241c 100%)`, padding: "18px 12px", display: "flex", flexDirection: "column", position: "fixed", top: isMobile ? 60 : 0, left: isMobile ? (sidebarOpen ? 0 : -300) : 0, height: isMobile ? "calc(100vh - 60px)" : "100vh", zIndex: 99, transition: "left 0.3s ease", boxShadow: isMobile && sidebarOpen ? "4px 0 20px rgba(0,0,0,0.3)" : "inset -1px 0 0 rgba(255,255,255,0.05)", overflowY: "auto" }}>
         {!isMobile && (
-          <div style={{ textAlign: "center", marginBottom: 28 }}>
-            <div style={{ fontSize: 28, marginBottom: 4 }}>🌿</div>
+          <div style={{ textAlign: "center", marginBottom: 18, padding: "14px 10px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize: 24, marginBottom: 4 }}>🌿</div>
             <h2 style={{ color: "#fff", fontSize: 16, fontWeight: 800, margin: 0 }}>Dust Bunnies</h2>
-            <p style={{ color: "#8FBFA8", fontSize: 11, margin: "2px 0 0" }}>Admin Dashboard</p>
+            <p style={{ color: "#9CB8A9", fontSize: 11, margin: "2px 0 0" }}>Admin Dashboard</p>
             {profile && <p style={{ color: "#5A8A72", fontSize: 10, margin: "6px 0 0" }}>{profile.full_name || profile.email}</p>}
           </div>
         )}
 
-        <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+        <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
           {navGroups.map((group, gi) => {
             const isOpen    = openGroups.has(group.label);
             const groupBadge = group.items.reduce((sum, i) => sum + (i.badge || 0), 0);
@@ -769,23 +791,23 @@ export default function Dashboard() {
                 {/* Group header button */}
                 <button
                   onClick={() => toggleGroup(group.label)}
-                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "9px 12px", borderRadius: 8, background: hasActive && !isOpen ? "rgba(255,255,255,0.08)" : "transparent", border: "none", cursor: "pointer", color: hasActive ? "#fff" : "#6A9E85", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.8, transition: "all 0.15s" }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 12px", borderRadius: 10, background: hasActive || isOpen ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", cursor: "pointer", color: hasActive || isOpen ? "#EAF4EE" : "#9BB7A8", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.8, transition: "all 0.15s" }}
                 >
                   <span style={{ fontSize: 13 }}>{group.icon}</span>
                   <span style={{ flex: 1, textAlign: "left" }}>{group.label}</span>
                   {!isOpen && groupBadge > 0 && (
                     <span style={{ background: T.accent, color: T.sidebar, padding: "1px 6px", borderRadius: 8, fontSize: 10, fontWeight: 800 }}>{groupBadge}</span>
                   )}
-                  <span style={{ fontSize: 10, color: "#4A7A62", transition: "transform 0.2s", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+                  <span style={{ fontSize: 10, color: "#7FA693", transition: "transform 0.2s", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
                 </button>
 
                 {/* Collapsible items */}
-                <div style={{ overflow: "hidden", maxHeight: isOpen ? "400px" : "0px", transition: "max-height 0.25s ease", paddingLeft: 4 }}>
+                <div style={{ overflow: "hidden", maxHeight: isOpen ? "420px" : "0px", transition: "max-height 0.25s ease", paddingLeft: 6, marginTop: 4 }}>
                   {group.items.map(n => (
                     <button
                       key={n.id}
                       onClick={() => { setPage(n.id); if (isMobile) setSidebarOpen(false); }}
-                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, background: page === n.id ? "rgba(255,255,255,0.14)" : "transparent", border: page === n.id ? "1px solid rgba(255,255,255,0.08)" : "1px solid transparent", cursor: "pointer", color: page === n.id ? "#fff" : "#7AAFA0", fontSize: 13, fontWeight: page === n.id ? 700 : 500, textAlign: "left", width: "100%", transition: "all 0.12s", marginBottom: 1 }}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 9, background: page === n.id ? "rgba(255,255,255,0.16)" : "transparent", border: page === n.id ? "1px solid rgba(255,255,255,0.1)" : "1px solid transparent", cursor: "pointer", color: page === n.id ? "#fff" : "#AEC6BA", fontSize: 13, fontWeight: page === n.id ? 700 : 500, textAlign: "left", width: "100%", transition: "all 0.12s", marginBottom: 2 }}
                     >
                       <span style={{ fontSize: 15 }}>{n.icon}</span>
                       <span style={{ flex: 1 }}>{n.label}</span>
@@ -795,7 +817,7 @@ export default function Dashboard() {
                 </div>
 
                 {gi < navGroups.length - 1 && (
-                  <div style={{ height: 1, background: "rgba(255,255,255,0.05)", margin: "4px 8px" }} />
+                  <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "6px 8px 2px" }} />
                 )}
               </div>
             );
@@ -805,7 +827,7 @@ export default function Dashboard() {
         {/* Sign out */}
         <button
           onClick={signOut}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 8, background: "transparent", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer", color: "#5A7A6A", fontSize: 12, fontWeight: 600, marginTop: 8, width: "100%" }}
+          style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer", color: "#8FB5A1", fontSize: 12, fontWeight: 700, marginTop: 8, width: "100%" }}
         >
           <span>🚪</span><span>Sign Out</span>
         </button>
@@ -817,7 +839,7 @@ export default function Dashboard() {
       )}
 
       {/* Main Content */}
-      <div style={{ flex: 1, marginLeft: isMobile ? 0 : 240, marginTop: isMobile ? 60 : 0, padding: isMobile ? 16 : 28, maxWidth: isMobile ? "100%" : 960, width: "100%", boxSizing: "border-box" }}>
+      <div style={{ flex: 1, marginLeft: isMobile ? 0 : 248, marginTop: isMobile ? 60 : 0, padding: isMobile ? 16 : 30, maxWidth: isMobile ? "100%" : 1080, width: "100%", boxSizing: "border-box" }}>
 
         {page === "inbox"    && <InboxTab enquiries={enquiries} quotes={quotes} filter={filter} setFilter={setFilter} searchTerm={searchTerm} setSearchTerm={setSearchTerm} quotesNeedingFollowUp={quotesNeedingFollowUp} archivedCount={archivedCount} isMobile={isMobile} setPage={setPage} setSelectedEnquiry={setSelectedEnquiry} setSelectedRecipients={setSelectedRecipients} sendInfoForm={sendInfoForm} generateQuote={generateQuote} declineOutOfArea={declineOutOfArea} archiveEnquiry={archiveEnquiry} unarchiveEnquiry={unarchiveEnquiry} removeEnquiry={handleRemoveEnquiry} />}
         {page === "quotes"   && <QuotesTab quotes={quotes} pricing={pricing} isMobile={isMobile} setEditQuoteModal={setEditQuoteModal} setPreviewQuote={setPreviewQuote} approveQuote={approveQuote} markAccepted={markAccepted} />}
@@ -953,7 +975,7 @@ export default function Dashboard() {
 
       <style>{`
         @keyframes slideUp { from { transform: translate(-50%, 20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
-        button:hover:not(:disabled) { opacity: 0.9; }
+        button:hover:not(:disabled) { opacity: 0.95; }
         * { box-sizing: border-box; }
       `}</style>
     </div>

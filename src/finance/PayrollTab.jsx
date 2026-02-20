@@ -16,6 +16,10 @@ import { calcPayrollBreakdown, calcHoursFromJobs, fmtCurrency, fmtPercent, getWe
 const TODAY = new Date().toISOString().split('T')[0];
 const EMAILJS_SERVICE_ID  = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
+const EMAILJS_PAYROLL_TEMPLATE_ID =
+  import.meta.env.VITE_EMAILJS_PAYROLL_TEMPLATE_ID ||
+  import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID ||
+  EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY  = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 
 function getMonday(dateStr) {
@@ -136,13 +140,21 @@ export default function PayrollTab({ showToast, isMobile }) {
 
   const handleEmailPayslip = useCallback(async (row) => {
     const rec = row.existing || row.draft;
-    if (!rec || !row.staff.email) { showToast('No email on file for this staff member'); return; }
-    if (!EMAILJS_SERVICE_ID) { showToast('EmailJS not configured'); return; }
+    const recipientEmail = (row?.staff?.email || "").trim();
+    const recipientName = (row?.staff?.full_name || "Staff").trim();
+    if (!rec || !recipientEmail) { showToast('No email on file for this staff member'); return; }
+    if (!EMAILJS_SERVICE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PAYROLL_TEMPLATE_ID) {
+      showToast('EmailJS not configured for payroll');
+      return;
+    }
     setEmailingId(row.staff.id);
     try {
-      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-        to_name:    row.staff.full_name,
-        to_email:   row.staff.email,
+      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_PAYROLL_TEMPLATE_ID, {
+        to_name:    recipientName,
+        to_email:   recipientEmail,
+        customer_name: recipientName,
+        customer_email: recipientEmail,
+        reply_to: recipientEmail,
         week_label: getWeekLabel(weekStart),
         gross_pay:  fmtCurrency(rec.grossPay || rec.gross_pay),
         tax:        fmtCurrency(rec.taxWithheld || rec.tax_withheld),
@@ -150,9 +162,11 @@ export default function PayrollTab({ showToast, isMobile }) {
         net_pay:    fmtCurrency(rec.netPay || rec.net_pay),
         hours:      (rec.hoursWorked || rec.hours_worked || 0).toString(),
       }, EMAILJS_PUBLIC_KEY);
-      showToast(`✅ Payslip emailed to ${row.staff.full_name}`);
+      showToast(`✅ Payslip emailed to ${recipientName}`);
     } catch (e) {
-      showToast('❌ Email failed');
+      const details = e?.text || e?.message || "Unknown email error";
+      console.error('[payroll:email] failed', e);
+      showToast(`❌ Payslip email failed: ${details}`);
     }
     setEmailingId(null);
   }, [weekStart, showToast]);
