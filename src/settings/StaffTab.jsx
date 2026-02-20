@@ -270,8 +270,15 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
         return;
       }
 
-      const { data: result, error: fnError } = await supabase.functions.invoke('create-staff-user', {
-        body: {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const res = await fetch(`${supabaseUrl}/functions/v1/create-staff-user`, {
+        method: "POST",
+        headers: {
+          "Content-Type":  "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+          "apikey":        import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
           full_name:       form.full_name.trim(),
           email:           form.email.trim().toLowerCase(),
           pin:             form.pin || undefined,
@@ -279,22 +286,18 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
           employment_type: form.employment_type,
           hourly_rate:     parseFloat(form.hourly_rate) || 0,
           role:            form.role,
-        },
+        }),
       });
 
-      if (fnError) {
-        const msg = fnError.message || String(fnError);
-        if (msg.includes("not found") || msg.includes("404") || msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+      let result;
+      try { result = await res.json(); } catch { result = {}; }
+
+      if (!res.ok || result.error) {
+        if (res.status === 404 || String(result.error || "").includes("not found")) {
           setError("DEPLOY_NEEDED");
         } else {
-          setError(msg);
+          setError(result.error || result.detail || `Server error (${res.status})`);
         }
-        setCreating(false);
-        return;
-      }
-
-      if (result?.error) {
-        setError(result.error);
         setCreating(false);
         return;
       }
