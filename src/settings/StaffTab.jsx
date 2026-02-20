@@ -14,6 +14,7 @@ export default function StaffTab({ scheduleSettings, showToast, isMobile }) {
   const { profiles, staffMembers, loading, updateProfile } = useProfiles();
   const [editingId,   setEditingId]   = useState(null);
   const [resetting,   setResetting]   = useState(null);
+  const [deleting,    setDeleting]    = useState(null);
   const [showNewForm, setShowNewForm] = useState(false);
 
   const teams = scheduleSettings?.teams || [
@@ -45,6 +46,33 @@ export default function StaffTab({ scheduleSettings, showToast, isMobile }) {
       showToast(`✅ Magic login link sent to ${email}`);
     } catch (e) { showToast(`❌ ${e.message}`); }
     setResetting(null);
+  };
+
+  const handleDelete = async (staffId, name) => {
+    if (!confirm(`Delete "${name}"? This removes their account and profile permanently.`)) return;
+    setDeleting(staffId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const res = await fetch(`${supabaseUrl}/functions/v1/delete-staff-user`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ userId: staffId }),
+      });
+      let result;
+      try { result = await res.json(); } catch { result = {}; }
+      if (!res.ok || result.error) {
+        showToast(`❌ ${result.error || "Failed to delete"}`);
+      } else {
+        showToast(`✅ ${name} deleted`);
+        setEditingId(null);
+      }
+    } catch (e) { showToast(`❌ ${e.message}`); }
+    setDeleting(null);
   };
 
   return (
@@ -106,7 +134,8 @@ export default function StaffTab({ scheduleSettings, showToast, isMobile }) {
             onSave={async (updates) => { await updateProfile(p.id, updates); setEditingId(null); showToast("✅ Profile updated"); }}
             onResetPassword={() => handleResetPassword(p.email, p.id)}
             onMagicLink={() => handleSendMagicLink(p.email, p.id)}
-            resetting={resetting === p.id} isMobile={isMobile} />
+            onDelete={() => handleDelete(p.id, p.full_name)}
+            resetting={resetting === p.id} deleting={deleting === p.id} isMobile={isMobile} />
         ))}
       </div>
 
@@ -130,7 +159,7 @@ function SectionHeader({ children }) {
 // ══════════════════════════════════════════════════════════
 // PROFILE CARD
 // ══════════════════════════════════════════════════════════
-function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPassword, onMagicLink, resetting, isMobile, isAdmin }) {
+function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPassword, onMagicLink, onDelete, resetting, deleting, isMobile, isAdmin }) {
   const [local, setLocal] = useState({
     full_name: p.full_name || "", team_id: p.team_id || "",
     hourly_rate: p.hourly_rate || 0, employment_type: p.employment_type || "casual", is_active: p.is_active ?? true,
@@ -235,6 +264,12 @@ function ProfileCard({ profile: p, teams, isEditing, onEdit, onSave, onResetPass
             style={{ padding: "6px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.blue, fontSize: 12, fontWeight: 600, cursor: resetting ? "not-allowed" : "pointer", opacity: resetting ? 0.6 : 1 }}>
             ✨ Send Magic Link
           </button>
+          {!isAdmin && onDelete && (
+            <button onClick={onDelete} disabled={!!deleting}
+              style={{ padding: "6px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.danger || "#D4645C"}`, background: "#fff", color: T.danger || "#D4645C", fontSize: 12, fontWeight: 600, cursor: deleting ? "not-allowed" : "pointer", opacity: deleting ? 0.6 : 1, marginLeft: "auto" }}>
+              {deleting ? "Deleting…" : "🗑 Delete"}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -286,6 +321,7 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
           employment_type: form.employment_type,
           hourly_rate:     parseFloat(form.hourly_rate) || 0,
           role:            form.role,
+          siteUrl:         window.location.origin,
         }),
       });
 

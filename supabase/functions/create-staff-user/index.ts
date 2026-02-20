@@ -56,7 +56,7 @@ serve(async (req) => {
     }
 
     // ── 3. Parse & validate body ──────────────────────────────────────
-    const { email, full_name, pin, team_id, employment_type, hourly_rate, role } = await req.json();
+    const { email, full_name, pin, team_id, employment_type, hourly_rate, role, siteUrl } = await req.json();
     if (!email || !full_name) {
       return new Response(JSON.stringify({ error: 'email and full_name are required' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -102,9 +102,10 @@ serve(async (req) => {
     }
 
     // ── 7. Send invite email (confirms email + lets them set password) ─
+    const redirectBase = siteUrl || req.headers.get('origin') || supabaseUrl;
     const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
       data: { full_name },
-      redirectTo: `${req.headers.get('origin') || ''}/reset-password`,
+      redirectTo: `${redirectBase}/reset-password`,
     });
 
     // Non-critical — account is created even if email fails
