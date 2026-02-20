@@ -135,7 +135,9 @@ export function useScheduledJobs({ staffId } = {}) {
     const payload = toDbJob(normalized);
     const { data, error } = await supabase.from('scheduled_jobs').insert(payload).select().single();
     if (error) throw error;
-    return mapDbToJob(data);
+    const inserted = mapDbToJob(data);
+    setScheduledJobs(prev => [inserted, ...prev.filter(x => x.id !== inserted.id)]);
+    return inserted;
   };
 
   const updateJob = async (id, updates) => {
@@ -151,12 +153,16 @@ export function useScheduledJobs({ staffId } = {}) {
     if (Object.keys(payload).length === 0) return;
     const { error } = await supabase.from('scheduled_jobs').update(payload).eq('id', id);
     if (error) throw error;
+    setScheduledJobs(prev => prev.map(j => (
+      j.id === id ? mapDbToJob({ ...j, ...updates }) : j
+    )));
   };
 
   const removeJob = async (id) => {
     if (!supabaseReady) { const updated = scheduledJobs.filter(j => j.id !== id); setScheduledJobs(updated); saveScheduledJobs(updated); return; }
     const { error } = await supabase.from('scheduled_jobs').delete().eq('id', id);
     if (error) throw error;
+    setScheduledJobs(prev => prev.filter(j => j.id !== id));
   };
 
   const bulkUpsertJobs = async (jobs) => {
@@ -192,6 +198,9 @@ export function useScheduledJobs({ staffId } = {}) {
       .gte('date', weekStart)
       .lte('date', endStr);
     if (error) throw error;
+    setScheduledJobs(prev => prev.map(j =>
+      j.date >= weekStart && j.date <= endStr ? { ...j, is_published: true, isPublished: true } : j
+    ));
   };
 
   return { scheduledJobs, setScheduledJobs, loading, error, addJob, updateJob, removeJob, bulkUpsertJobs, publishWeek };

@@ -29,6 +29,7 @@ export function useQuotes() {
     }
     const { data, error } = await supabase.from('quotes').insert(q).select().single();
     if (error) throw error;
+    setQuotes(prev => [data, ...prev.filter(x => x.id !== data.id)]);
     return data;
   };
 
@@ -36,12 +37,14 @@ export function useQuotes() {
     if (!supabaseReady) { setQuotes(prev => prev.map(q => q.id === id ? { ...q, ...updates } : q)); return; }
     const { error } = await supabase.from('quotes').update(updates).eq('id', id);
     if (error) throw error;
+    setQuotes(prev => prev.map(q => q.id === id ? { ...q, ...updates } : q));
   };
 
   const removeQuote = async (id) => {
     if (!supabaseReady) { setQuotes(prev => prev.filter(q => q.id !== id)); return; }
     const { error } = await supabase.from('quotes').delete().eq('id', id);
     if (error) throw error;
+    setQuotes(prev => prev.filter(q => q.id !== id));
   };
 
   return { quotes, setQuotes, loading, error, addQuote, updateQuote, removeQuote };

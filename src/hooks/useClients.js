@@ -29,6 +29,7 @@ export function useClients() {
     if (!supabaseReady) { const updated = [...clients, { ...c, id: `local_${Date.now()}`, created_at: new Date().toISOString() }]; setClients(updated); saveClients(updated); return updated[updated.length-1]; }
     const { data, error } = await supabase.from('clients').insert(c).select().single();
     if (error) throw error;
+    setClients(prev => [data, ...prev.filter(x => x.id !== data.id)]);
     return data;
   };
 
@@ -36,12 +37,14 @@ export function useClients() {
     if (!supabaseReady) { const updated = clients.map(c => c.id === id ? { ...c, ...updates } : c); setClients(updated); saveClients(updated); return; }
     const { error } = await supabase.from('clients').update(updates).eq('id', id);
     if (error) throw error;
+    setClients(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
   };
 
   const removeClient = async (id) => {
     if (!supabaseReady) { const updated = clients.filter(c => c.id !== id); setClients(updated); saveClients(updated); return; }
     const { error } = await supabase.from('clients').delete().eq('id', id);
     if (error) throw error;
+    setClients(prev => prev.filter(c => c.id !== id));
   };
 
   return { clients, setClients, loading, error, addClient, updateClient, removeClient };

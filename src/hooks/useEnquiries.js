@@ -33,6 +33,7 @@ export function useEnquiries() {
     }
     const { data, error } = await supabase.from('enquiries').insert(e).select().single();
     if (error) throw error;
+    setEnquiries(prev => [data, ...prev.filter(x => x.id !== data.id)]);
     return data;
   };
 
@@ -43,6 +44,7 @@ export function useEnquiries() {
     }
     const { error } = await supabase.from('enquiries').update(updates).eq('id', id);
     if (error) throw error;
+    setEnquiries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
   };
 
   const removeEnquiry = async (id) => {
@@ -52,6 +54,7 @@ export function useEnquiries() {
     }
     const { error } = await supabase.from('enquiries').delete().eq('id', id);
     if (error) throw error;
+    setEnquiries(prev => prev.filter(e => e.id !== id));
   };
 
   return { enquiries, setEnquiries, loading, error, addEnquiry, updateEnquiry, removeEnquiry };
