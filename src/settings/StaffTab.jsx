@@ -1,7 +1,13 @@
 import React, { useState } from "react";
+import emailjs from "@emailjs/browser";
 import { T } from "../shared";
 import { supabase, supabaseReady } from "../lib/supabase";
 import { useProfiles } from "../hooks/useProfiles";
+
+const EMAILJS_SERVICE_ID  = import.meta.env.VITE_EMAILJS_SERVICE_ID;
+const EMAILJS_PUBLIC_KEY  = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
+// Use the universal template for staff invite emails
+const EMAILJS_INVITE_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_INVITE_TEMPLATE_ID || import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID;
 
 // ═══════════════════════════════════════════════════════════
 // STAFF MANAGEMENT TAB — Admin Panel
@@ -338,7 +344,23 @@ function NewStaffForm({ teams, onClose, onCreated, isMobile }) {
         return;
       }
 
-      onCreated(`✅ ${form.full_name} created! A setup email has been sent to ${form.email}.`);
+      // Send invite email via EmailJS (bypasses Supabase email rate limits)
+      if (result.invite_link && EMAILJS_SERVICE_ID && EMAILJS_INVITE_TEMPLATE_ID) {
+        try {
+          await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_INVITE_TEMPLATE_ID, {
+            to_email:    form.email.trim().toLowerCase(),
+            to_name:     form.full_name.trim(),
+            subject:     "You've been invited to Dust Bunnies",
+            message:     `Hi ${form.full_name.trim()},\n\nYou've been added as a staff member at Dust Bunnies. Click the link below to set up your password and get started:\n\n${result.invite_link}\n\nThis link will expire in 24 hours.\n\nCheers,\nDust Bunnies Admin`,
+            invite_link: result.invite_link,
+          }, EMAILJS_PUBLIC_KEY);
+        } catch (emailErr) {
+          console.warn("EmailJS invite failed:", emailErr);
+          // Account still created — just warn
+        }
+      }
+
+      onCreated(`✅ ${form.full_name} created!${result.invite_link ? " A setup email has been sent to " + form.email + "." : " Account ready (no email sent — configure EmailJS)."}`);
     } catch (e) {
       if (e.message.includes("Failed to fetch") || e.message.includes("NetworkError")) {
         setError("DEPLOY_NEEDED");

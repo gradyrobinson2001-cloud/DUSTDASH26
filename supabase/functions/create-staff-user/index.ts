@@ -62,23 +62,19 @@ serve(async (req) => {
       });
     }
 
-    // ── 4. Invite user — creates auth user + sends setup email in one step ─
-    const redirectBase = siteUrl || req.headers.get('origin') || supabaseUrl;
-    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+    // ── 4. Create the auth user ─────────────────────────────────────
+    const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email,
-      {
-        data: { full_name },
-        redirectTo: `${redirectBase}/reset-password`,
-      }
-    );
-
-    if (inviteError) {
-      return new Response(JSON.stringify({ error: inviteError.message }), {
+      email_confirm: false,
+      user_metadata: { full_name },
+    });
+    if (createError) {
+      return new Response(JSON.stringify({ error: createError.message }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const userId = inviteData.user!.id;
+    const userId = newUser.user!.id;
 
     // ── 5. Hash PIN if provided (bcryptjs — pure JS, no Worker needed) ───
     let pin_hash: string | null = null;
@@ -100,15 +96,32 @@ serve(async (req) => {
     });
 
     if (profileError) {
-      // Clean up: remove the auth user if profile creation fails
       await adminClient.auth.admin.deleteUser(userId, { shouldSoftDelete: false });
       return new Response(JSON.stringify({ error: profileError.message }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    // ── 7. Generate invite link (returned to frontend — email sent via EmailJS) ─
+    const redirectBase = siteUrl || req.headers.get('origin') || supabaseUrl;
+    const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
+      type: 'invite',
+      email,
+      options: {
+        data: { full_name },
+        redirectTo: `${redirectBase}/reset-password`,
+      },
+    });
+
+    let invite_link: string | null = null;
+    if (linkError) {
+      console.warn('[create-staff-user] Could not generate invite link:', linkError.message);
+    } else if (linkData?.properties?.action_link) {
+      invite_link = linkData.properties.action_link;
+    }
+
     return new Response(
-      JSON.stringify({ success: true, user_id: userId }),
+      JSON.stringify({ success: true, user_id: userId, invite_link }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
