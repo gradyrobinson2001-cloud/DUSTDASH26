@@ -414,9 +414,15 @@ export default function Dashboard() {
   };
 
   const updateJob = async (jobId, updates) => {
-    await updateJobDB(jobId, updates);
-    setEditingJob(null);
-    showToast("✅ Job updated");
+    try {
+      await updateJobDB(jobId, updates);
+      setEditingJob(null);
+      showToast("✅ Job updated");
+    } catch (err) {
+      console.error("[calendar:update-job] failed", { jobId, updates, error: err });
+      showToast(`❌ Failed to update job: ${err.message}`);
+      throw err;
+    }
   };
 
   const deleteJob = async (jobId) => {
@@ -427,8 +433,14 @@ export default function Dashboard() {
   };
 
   const addNewJob = async (job) => {
-    await addJob(job);
-    showToast("✅ Job added");
+    try {
+      await addJob(job);
+      showToast("✅ Job added");
+    } catch (err) {
+      console.error("[calendar:add-job] failed", { job, error: err });
+      showToast(`❌ Failed to add job: ${err.message}`);
+      throw err;
+    }
   };
 
   const updateScheduleClient = async (clientId, updates) => {

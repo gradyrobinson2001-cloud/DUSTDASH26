@@ -6,7 +6,12 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed." });
 
   try {
-    const admin = getAdminClient();
+    let admin;
+    try {
+      admin = getAdminClient();
+    } catch (envErr) {
+      throw new ApiError(500, envErr.message || "Server environment is misconfigured.");
+    }
     await requireAdmin(req, admin);
     const body = await parseJsonBody(req);
     const quoteId = typeof body.quoteId === "string" ? body.quoteId : "";
@@ -38,4 +43,3 @@ export default async function handler(req, res) {
     return sendJson(res, status, { error: message, details });
   }
 }
-

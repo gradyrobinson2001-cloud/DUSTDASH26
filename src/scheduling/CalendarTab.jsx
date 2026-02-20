@@ -98,7 +98,7 @@ export default function CalendarTab({
               {demoMode ? "Demo Mode Active" : "Demo Mode"}
             </div>
             <div style={{ fontSize: 12, color: T.textMuted }}>
-              {demoMode ? `${scheduleClients.filter(c => c.isDemo).length} demo clients loaded` : "Load sample data to test the calendar"}
+              {demoMode ? `${scheduleClients.filter(c => c.isDemo || c.is_demo).length} demo clients loaded` : "Load sample data to test the calendar"}
             </div>
           </div>
         </div>
@@ -261,14 +261,17 @@ export default function CalendarTab({
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: T.text }}>Scheduled Clients</h3>
           <span style={{ fontSize: 13, color: T.textMuted }}>
-            {scheduleClients.filter(c => !c.isDemo).length} real · {scheduleClients.filter(c => c.isDemo).length} demo
+            {scheduleClients.filter(c => !(c.isDemo || c.is_demo)).length} real · {scheduleClients.filter(c => c.isDemo || c.is_demo).length} demo
           </span>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(2, 1fr)", gap: 12 }}>
           {scheduleClients.slice(0, 12).map(client => {
-            const duration = client.customDuration || calculateDuration(client, scheduleSettings);
-            const nextJob = scheduledJobs.find(j => j.clientId === client.id && j.date >= new Date().toISOString().split("T")[0]);
+            const duration = client.customDuration || client.custom_duration || client.estimatedDuration || client.estimated_duration || calculateDuration(client, scheduleSettings);
+            const nextJob = scheduledJobs.find(j =>
+              String(j.clientId || j.client_id) === String(client.id) &&
+              j.date >= new Date().toISOString().split("T")[0]
+            );
 
             return (
               <div
@@ -280,7 +283,7 @@ export default function CalendarTab({
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 14, color: T.text }}>
                       {client.name}
-                      {client.isDemo && <span style={{ marginLeft: 6, fontSize: 10, padding: "2px 6px", background: T.accentLight, color: "#8B6914", borderRadius: 4 }}>DEMO</span>}
+                      {(client.isDemo || client.is_demo) && <span style={{ marginLeft: 6, fontSize: 10, padding: "2px 6px", background: T.accentLight, color: "#8B6914", borderRadius: 4 }}>DEMO</span>}
                     </div>
                     <div style={{ fontSize: 12, color: T.textMuted }}>{client.suburb}</div>
                   </div>

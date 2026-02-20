@@ -99,7 +99,7 @@ export default function CleanerPortal() {
   useEffect(() => {
     dayJobs.forEach(job => {
       const arrivedAt = job.arrived_at || job.arrivedAt;
-      const status    = job.job_status  || job.jobStatus;
+      const status    = job.status || job.job_status || job.jobStatus;
       if (status === 'in_progress' && arrivedAt && !timerRefs.current[job.id]) {
         const start = new Date(arrivedAt).getTime();
         timerRefs.current[job.id] = setInterval(() => {
@@ -149,17 +149,15 @@ export default function CleanerPortal() {
     if (!job) return;
 
     const arrivedAt = job.arrived_at || job.arrivedAt;
-    const updates = { job_status: newStatus };
+    const updates = { status: newStatus };
     if (newStatus === 'in_progress') {
-      updates.arrived_at = now;
       const start = Date.now();
       timerRefs.current[jobId] = setInterval(() => {
         setActiveTimers(p => ({ ...p, [jobId]: Math.floor((Date.now() - start) / 1000) }));
       }, 1000);
     } else if (newStatus === 'completed') {
-      updates.finished_at = now;
       if (arrivedAt) {
-        updates.actual_duration = Math.round((new Date(now) - new Date(arrivedAt)) / 60000);
+        updates.duration = Math.max(15, Math.round((new Date(now) - new Date(arrivedAt)) / 60000));
       }
       if (timerRefs.current[jobId]) { clearInterval(timerRefs.current[jobId]); delete timerRefs.current[jobId]; }
     }
@@ -217,14 +215,14 @@ export default function CleanerPortal() {
   const weeklyStats = (() => {
     return weekDates.map((d, i) => {
       const dJobs = allJobs.filter(j => j.date === d && !j.is_break && !j.isBreak);
-      const done  = dJobs.filter(j => (j.job_status || j.jobStatus) === 'completed');
-      const mins  = done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
+      const done  = dJobs.filter(j => (j.status || j.job_status || j.jobStatus) === 'completed');
+      const mins  = done.reduce((s, j) => s + (j.duration || 0), 0);
       return { label: DAY_LABELS[i], date: d, jobs: dJobs.length, done: done.length, hours: Math.round(mins / 60 * 10) / 10 };
     });
   })();
 
   const todayStats = (() => {
-    const done = dayJobs.filter(j => (j.job_status || j.jobStatus) === 'completed');
+    const done = dayJobs.filter(j => (j.status || j.job_status || j.jobStatus) === 'completed');
     const total = dayJobs.reduce((s, j) => s + (j.duration || 0), 0);
     return { done: done.length, total: dayJobs.length, mins: total };
   })();
@@ -388,12 +386,12 @@ export default function CleanerPortal() {
                 const client     = allClients.find(c => c.id === (job.client_id || job.clientId));
                 const photos     = localPhotos[job.id] || { before: [], after: [] };
                 const isExp      = expandedJob === job.id;
-                const status     = job.job_status || job.jobStatus || 'scheduled';
+                const status     = job.status || job.job_status || job.jobStatus || 'scheduled';
                 const isRunning  = status === 'in_progress';
                 const isDone     = status === 'completed';
                 const timer      = activeTimers[job.id];
                 const startT     = job.start_time || job.startTime || '';
-                const actualDur  = job.actual_duration || job.actualDuration;
+                const actualDur  = job.duration;
                 const extras     = job.extras || [];
                 const address    = client?.address || `${job.suburb}, QLD`;
                 const accessNote = client?.access_notes || client?.accessNotes;

@@ -5,23 +5,43 @@ import { Modal } from "../components/ui";
 export default function EditJobModal({ job, clients, settings, onSave, onDelete, onClose }) {
   const [local, setLocal] = useState({
     date: job.date || "",
-    clientId: job.clientId || "",
-    startTime: job.startTime || "08:00",
+    clientId: job.clientId || job.client_id || "",
+    startTime: job.startTime || job.start_time || "08:00",
     duration: job.duration || 120,
-    status: job.status || "scheduled",
+    status: job.status || job.job_status || job.jobStatus || "scheduled",
   });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  const selectedClient = clients.find(c => c.id === local.clientId);
+  const selectedClient = clients.find(c => String(c.id) === String(local.clientId));
   const u = (k, v) => setLocal({ ...local, [k]: v });
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!local.date || !local.clientId) return;
-    const client = clients.find(c => c.id === local.clientId);
+    const client = clients.find(c => String(c.id) === String(local.clientId));
     const [h, m] = local.startTime.split(":").map(Number);
     const endMins = h * 60 + m + local.duration;
     const endTime = `${String(Math.floor(endMins / 60)).padStart(2, "0")}:${String(endMins % 60).padStart(2, "0")}`;
-    onSave({ date: local.date, clientId: local.clientId, clientName: client?.name || "Unknown", suburb: client?.suburb || "", startTime: local.startTime, endTime, duration: local.duration, status: local.status, isDemo: client?.isDemo || false });
-    onClose();
+    setSaving(true);
+    setError("");
+    try {
+      await Promise.resolve(onSave({
+        date: local.date,
+        clientId: local.clientId,
+        clientName: client?.name || "Unknown",
+        suburb: client?.suburb || "",
+        startTime: local.startTime,
+        endTime,
+        duration: local.duration,
+        status: local.status,
+        isDemo: client?.isDemo || client?.is_demo || false,
+      }));
+      onClose();
+    } catch (e) {
+      setError(e?.message || "Failed to save job");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -36,12 +56,12 @@ export default function EditJobModal({ job, clients, settings, onSave, onDelete,
         <div>
           <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>CLIENT</label>
           <select value={local.clientId} onChange={e => {
-            const client = clients.find(c => c.id === e.target.value);
-            setLocal(prev => ({ ...prev, clientId: e.target.value, duration: client?.customDuration || client?.estimatedDuration || 120 }));
+            const client = clients.find(c => String(c.id) === String(e.target.value));
+            setLocal(prev => ({ ...prev, clientId: e.target.value, duration: client?.customDuration || client?.custom_duration || client?.estimatedDuration || client?.estimated_duration || 120 }));
           }} style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
             <option value="">Select client...</option>
             {clients.filter(c => c.status === "active").map(c => (
-              <option key={c.id} value={c.id}>{c.name} ({c.suburb}){c.isDemo ? " [Demo]" : ""}</option>
+              <option key={c.id} value={c.id}>{c.name} ({c.suburb}){c.isDemo || c.is_demo ? " [Demo]" : ""}</option>
             ))}
           </select>
         </div>
@@ -82,11 +102,12 @@ export default function EditJobModal({ job, clients, settings, onSave, onDelete,
               🗑️ Delete
             </button>
           )}
-          <button onClick={handleSave} disabled={!local.date || !local.clientId}
+          <button onClick={handleSave} disabled={!local.date || !local.clientId || saving}
             style={{ flex: 1, padding: "12px", borderRadius: T.radiusSm, border: "none", background: local.date && local.clientId ? T.primary : T.border, color: "#fff", fontWeight: 700, fontSize: 14, cursor: local.date && local.clientId ? "pointer" : "not-allowed" }}>
-            {job.isNew ? "Add Job" : "Save Changes"}
+            {saving ? "Saving…" : job.isNew ? "Add Job" : "Save Changes"}
           </button>
         </div>
+        {error && <div style={{ marginTop: 8, fontSize: 12, color: T.danger }}>{error}</div>}
       </div>
     </Modal>
   );

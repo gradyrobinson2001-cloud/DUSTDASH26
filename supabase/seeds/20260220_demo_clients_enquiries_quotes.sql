@@ -60,6 +60,8 @@ SELECT
   first_name,
   last_name,
   first_name || ' ' || last_name AS full_name,
+  service_type,
+  frequency,
   suburb,
   CASE suburb
     WHEN 'Maroochydore' THEN (ARRAY['Aerodrome Rd','Duporth Ave','Bradman Ave','Cornmeal Pde','Memorial Ave'])[ ((i - 1) % 5) + 1 ]
@@ -250,4 +252,3 @@ SET
   updated_at = NOW();
 
 COMMIT;
-

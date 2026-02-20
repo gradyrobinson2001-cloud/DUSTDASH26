@@ -2,6 +2,92 @@ import { useState, useEffect } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { loadScheduledJobs, saveScheduledJobs } from '../shared';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const isUuid = (value) => typeof value === 'string' && UUID_RE.test(value);
+
+const mapDbToJob = (row) => {
+  const clientId = row.client_id ?? row.clientId ?? null;
+  const clientName = row.client_name ?? row.clientName ?? '';
+  const startTime = row.start_time ?? row.startTime ?? '';
+  const endTime = row.end_time ?? row.endTime ?? '';
+  const status = row.status ?? row.job_status ?? row.jobStatus ?? 'scheduled';
+  const assignedStaff = Array.isArray(row.assigned_staff) ? row.assigned_staff : [];
+  const isDemo = Boolean(row.is_demo ?? row.isDemo ?? false);
+  const isBreak = Boolean(row.is_break ?? row.isBreak ?? false);
+  const isPublished = Boolean(row.is_published ?? row.isPublished ?? false);
+
+  return {
+    ...row,
+    client_id: clientId,
+    clientId,
+    client_name: clientName,
+    clientName,
+    start_time: startTime,
+    startTime,
+    end_time: endTime,
+    endTime,
+    status,
+    job_status: status,
+    jobStatus: status,
+    assigned_staff: assignedStaff,
+    is_demo: isDemo,
+    isDemo,
+    is_break: isBreak,
+    isBreak,
+    is_published: isPublished,
+    isPublished,
+  };
+};
+
+const toDbJob = (job) => {
+  const out = {};
+
+  if (isUuid(job?.id)) out.id = job.id;
+  if (job?.date) out.date = job.date;
+
+  const clientId = job?.client_id ?? job?.clientId ?? null;
+  if (clientId !== undefined) out.client_id = clientId;
+
+  const clientName = job?.client_name ?? job?.clientName ?? null;
+  if (clientName !== undefined) out.client_name = clientName;
+
+  if (job?.suburb !== undefined) out.suburb = job.suburb;
+
+  const startTime = job?.start_time ?? job?.startTime ?? null;
+  if (startTime !== undefined) out.start_time = startTime;
+
+  const endTime = job?.end_time ?? job?.endTime ?? null;
+  if (endTime !== undefined) out.end_time = endTime;
+
+  if (job?.duration !== undefined) out.duration = job.duration;
+
+  const status = job?.status ?? job?.job_status ?? job?.jobStatus;
+  if (status !== undefined) out.status = status;
+
+  if (job?.notes !== undefined) out.notes = job.notes;
+
+  if (job?.assigned_staff !== undefined || job?.assignedStaff !== undefined) {
+    out.assigned_staff = Array.isArray(job.assigned_staff)
+      ? job.assigned_staff
+      : (Array.isArray(job.assignedStaff) ? job.assignedStaff : []);
+  }
+
+  if (job?.is_published !== undefined || job?.isPublished !== undefined) {
+    out.is_published = Boolean(job.is_published ?? job.isPublished);
+  }
+
+  if (job?.is_demo !== undefined || job?.isDemo !== undefined) {
+    out.is_demo = Boolean(job.is_demo ?? job.isDemo);
+  }
+
+  if (job?.is_break !== undefined || job?.isBreak !== undefined) {
+    out.is_break = Boolean(job.is_break ?? job.isBreak);
+  }
+
+  return out;
+};
+
 export function useScheduledJobs({ staffId } = {}) {
   const [scheduledJobs, setScheduledJobs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -9,7 +95,7 @@ export function useScheduledJobs({ staffId } = {}) {
 
   useEffect(() => {
     if (!supabaseReady) {
-      const all = loadScheduledJobs();
+      const all = (loadScheduledJobs() || []).map(mapDbToJob);
       if (staffId) {
         setScheduledJobs(all.filter(j =>
           (j.assigned_staff || []).includes(staffId) && j.is_published
@@ -29,7 +115,8 @@ export function useScheduledJobs({ staffId } = {}) {
       }
       const { data, error } = await q;
       if (!mounted) return;
-      if (error) setError(error); else setScheduledJobs(data ?? []);
+      if (error) setError(error);
+      else setScheduledJobs((data ?? []).map(mapDbToJob));
       setLoading(false);
     };
     fetch();
@@ -38,15 +125,31 @@ export function useScheduledJobs({ staffId } = {}) {
   }, [staffId]);
 
   const addJob = async (j) => {
-    if (!supabaseReady) { const updated = [...scheduledJobs, { ...j, id: `job_${Date.now()}`, created_at: new Date().toISOString() }]; setScheduledJobs(updated); saveScheduledJobs(updated); return updated[updated.length-1]; }
-    const { data, error } = await supabase.from('scheduled_jobs').insert(j).select().single();
+    const normalized = mapDbToJob(j);
+    if (!supabaseReady) {
+      const updated = [...scheduledJobs, { ...normalized, id: `job_${Date.now()}`, created_at: new Date().toISOString() }];
+      setScheduledJobs(updated);
+      saveScheduledJobs(updated);
+      return updated[updated.length - 1];
+    }
+    const payload = toDbJob(normalized);
+    const { data, error } = await supabase.from('scheduled_jobs').insert(payload).select().single();
     if (error) throw error;
-    return data;
+    return mapDbToJob(data);
   };
 
   const updateJob = async (id, updates) => {
-    if (!supabaseReady) { const updated = scheduledJobs.map(j => j.id === id ? { ...j, ...updates } : j); setScheduledJobs(updated); saveScheduledJobs(updated); return; }
-    const { error } = await supabase.from('scheduled_jobs').update(updates).eq('id', id);
+    if (!supabaseReady) {
+      const normalized = mapDbToJob(updates || {});
+      const updated = scheduledJobs.map(j => j.id === id ? { ...j, ...normalized } : j);
+      setScheduledJobs(updated);
+      saveScheduledJobs(updated);
+      return;
+    }
+    const payload = toDbJob(updates || {});
+    delete payload.id;
+    if (Object.keys(payload).length === 0) return;
+    const { error } = await supabase.from('scheduled_jobs').update(payload).eq('id', id);
     if (error) throw error;
   };
 
@@ -57,8 +160,14 @@ export function useScheduledJobs({ staffId } = {}) {
   };
 
   const bulkUpsertJobs = async (jobs) => {
-    if (!supabaseReady) { setScheduledJobs(jobs); saveScheduledJobs(jobs); return; }
-    const { error } = await supabase.from('scheduled_jobs').upsert(jobs);
+    const normalized = (jobs || []).map(mapDbToJob);
+    if (!supabaseReady) {
+      setScheduledJobs(normalized);
+      saveScheduledJobs(normalized);
+      return;
+    }
+    const payload = normalized.map(toDbJob).filter(j => j.date && j.start_time);
+    const { error } = await supabase.from('scheduled_jobs').upsert(payload);
     if (error) throw error;
   };
 
