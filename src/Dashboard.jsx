@@ -481,7 +481,7 @@ export default function Dashboard() {
   };
 
   const loadDemoData = async () => {
-    const demoClients = generateDemoClients(45);
+    const demoClients = generateDemoClients(70);
     demoClients.forEach(c => {
       c.estimatedDuration = calculateDuration(c, scheduleSettings);
       const suburbLower = c.suburb.toLowerCase();

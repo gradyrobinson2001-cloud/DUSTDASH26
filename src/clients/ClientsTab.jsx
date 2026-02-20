@@ -127,7 +127,7 @@ export default function ClientsTab({
               disabled={loadingDemo}
               style={{ padding: "11px 16px", borderRadius: T.radiusSm, border: `1.5px solid ${T.accent}`, background: T.accentLight, color: "#8B6914", fontWeight: 700, fontSize: 13, cursor: loadingDemo ? "wait" : "pointer", opacity: loadingDemo ? 0.6 : 1 }}
             >
-              {loadingDemo ? "Loading…" : "🧪 Load 45 Demo Clients"}
+              {loadingDemo ? "Loading…" : "🧪 Load 70 Demo Clients"}
             </button>
           )}
           <button

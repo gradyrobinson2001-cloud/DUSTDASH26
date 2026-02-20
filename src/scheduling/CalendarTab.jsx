@@ -152,7 +152,7 @@ export default function CalendarTab({
         <div style={{ display: "flex", gap: 8 }}>
           {!demoMode ? (
             <button onClick={loadDemoData} style={{ padding: "8px 16px", borderRadius: T.radiusSm, border: "none", background: T.blue, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-              Load 45 Demo Clients
+              Load 70 Demo Clients
             </button>
           ) : (
             <button onClick={wipeDemo} style={{ padding: "8px 16px", borderRadius: T.radiusSm, border: "none", background: T.danger, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>

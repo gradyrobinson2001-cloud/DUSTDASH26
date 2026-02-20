@@ -16,8 +16,8 @@ export const SERVICED_AREAS = [
   "Buderim", "Alexandra Headland", "Mooloolaba", "Mountain Creek", "Minyama"
 ];
 
-// ─── 45 Demo Clients Generator ───
-export function generateDemoClients() {
+// ─── Demo Clients Generator (default 70) ───
+export function generateDemoClients(count = 70) {
   const STREETS = {
     "Twin Waters": ["Oceanside Dr","Lakeside Ave","Sailfish Ct","Pelican Way","Marina Blvd","Harbour Dr","Seaspray Cres","Coral Key Dr","Coorella Cct","Edgewater Pl"],
     "Maroochydore": ["Aerodrome Rd","Duporth Ave","Dalton Dr","Cotton Tree Pde","Picnic Point Esp","Bradman Ave","Memorial Ave","Sixth Ave","Cornmeal Pde","Millwell Rd"],
@@ -30,52 +30,77 @@ export function generateDemoClients() {
     "Mountain Creek": ["Karawatha Dr","Mountain Creek Rd","Glenfields Blvd","Brookfield Dr","Parklands Blvd","Creekwood Ct","Lakewood Dr","Rainforest Dr","Forest Park Dr","Greenway Cct"],
     "Minyama": ["Jessica Blvd","Minyama St","Glenyce Ct","Brittany Dr","Windsong Pl","The Anchorage","Doone Ct","Catamaran Ct","Harbour View Tce","Regatta Blvd"],
   };
+  const POSTCODE_BY_SUBURB = {
+    "Twin Waters": "4564",
+    "Maroochydore": "4558",
+    "Kuluin": "4558",
+    "Forest Glen": "4556",
+    "Mons": "4556",
+    "Buderim": "4556",
+    "Alexandra Headland": "4572",
+    "Mooloolaba": "4557",
+    "Mountain Creek": "4557",
+    "Minyama": "4575",
+  };
   const FIRST = ["Sarah","Emily","James","Michael","Jessica","Lauren","Daniel","Andrew","Rebecca","David","Natalie","Chris","Olivia","Ben","Sophie","Tom","Hannah","Matt","Chloe","Luke","Megan","Ryan","Amy","Nathan","Emma","Josh","Nicole","Aaron","Katie","Mark","Lisa","Jack","Rachel","Tim","Zoe","Sam","Brooke","Liam","Jess","Ethan","Holly","Lachlan","Tegan","Dylan","Gemma"];
   const LAST = ["Mitchell","Anderson","Taylor","Campbell","Robinson","Thompson","Wilson","Martin","Clark","Walker","Harris","Scott","Stewart","Kelly","Murphy","Singh","Brown","White","Jones","Johnson","Williams","Davis","Thomas","Moore","Lee","Ward","Turner","Baker","Chen","Patel","O'Brien","Fraser","Hughes","Adams","Morgan","Price","Reid","Marshall","Ross","Nguyen","Cooper","Watson","Graham","Sullivan"];
   const ACCESS = ["Key in lockbox — code 4521","Spare key under pot plant by front door","Garage code: 7890# — enter through laundry","Side gate unlocked, back door code 1234","Ring doorbell, owner works from home","Key under mat, alarm code 5678","Cleaner's key with building manager","Sliding door left unlocked on clean days","Keypad on front door — code 3690","Key in lockbox on side fence — combo 2580","Code for front gate: 8832, key under frog statue","Let yourself in via carport side door (unlocked)","Ring bell twice — husband is deaf in one ear","Access via back deck stairs, key taped inside meter box","Entry through garage — remote in lockbox by mailbox"];
   const NOTES = ["Two friendly golden retrievers — keep gates closed","Cat Miso is indoor only, don't let him out","Baby naps 12–2pm, please keep noise down","Elderly mother lives in granny flat — say hi!","Uses eco-friendly products only — under sink","Please water indoor plants on kitchen bench","No vacuuming master bedroom on Wednesdays (night shift)","Teenagers' rooms need extra attention","Focus on bathrooms — hard water stains","Has 3 cats, please close all external doors","Uses robot vacuum M–F, just mop floors on clean day","Recently renovated kitchen — be careful with stone benchtops","Owner is allergic to bleach — green products only","Leave clean towels folded on bed please","Skip kids' playroom upstairs — they tidy it themselves","Please empty dishwasher if cycle is done","Two parrots in living room — cover cage while vacuuming","Pool area needs a sweep if leaves are bad","Please strip and remake beds fortnightly","Wipe down outdoor furniture if time allows","Home office is off limits — just vacuum floor","New puppy in training — may have accidents to clean","Please take bins out if it's bin night (Tuesday)","Incense burning = someone meditating, come back to that room later","Solar panels crew may be on roof some Thursdays"];
-  const TIMES = ["morning","morning","morning","afternoon","afternoon","anytime","anytime","anytime","morning","morning"];
-  const DAYS  = ["monday","monday","tuesday","tuesday","wednesday","wednesday","thursday","thursday","friday","monday","tuesday","wednesday","thursday","friday"];
-  const FREQS = ["weekly","weekly","weekly","fortnightly","fortnightly","fortnightly","fortnightly","fortnightly","monthly","monthly"];
+  const TIMES = ["morning","afternoon","anytime"];
+  const DAYS  = ["monday","tuesday","wednesday","thursday","friday"];
+  const FREQS = ["weekly","fortnightly","monthly"];
 
-  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-  const shuffle = arr => [...arr].sort(() => Math.random() - 0.5);
+  const rand = (seed) => {
+    let t = seed + 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = (arr, seed) => arr[Math.floor(rand(seed) * arr.length)];
 
   const usedNames = new Set();
+  const usedAddresses = new Set();
   const clients = [];
-  const shuffledFirst = shuffle(FIRST);
-  const shuffledLast  = shuffle(LAST);
+  const total = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 70;
 
-  for (let i = 0; i < 45; i++) {
+  for (let i = 0; i < total; i++) {
     let first, last, fullName;
+    let attempt = 0;
     do {
-      first = shuffledFirst[i % shuffledFirst.length];
-      last  = shuffledLast[i % shuffledLast.length];
-      if (i >= shuffledFirst.length) last = shuffledLast[(i + 7) % shuffledLast.length];
+      first = FIRST[(i + attempt * 3) % FIRST.length];
+      last  = LAST[(i * 7 + attempt * 11) % LAST.length];
       fullName = `${first} ${last}`;
-    } while (usedNames.has(fullName) && usedNames.size < 200);
+      attempt++;
+    } while (usedNames.has(fullName) && attempt < FIRST.length * LAST.length);
     usedNames.add(fullName);
 
     const suburb   = SERVICED_AREAS[i % SERVICED_AREAS.length];
     const streets  = STREETS[suburb];
-    const street   = streets[i % streets.length];
-    const num      = 1 + Math.floor(Math.random() * 120);
-    const beds     = pick([2,3,3,3,4,4,4,5]);
-    const baths    = beds <= 3 ? pick([1,1,2,2]) : pick([2,2,3,3]);
-    const living   = pick([1,1,1,2,2]);
+    const street   = streets[(i * 3 + Math.floor(i / SERVICED_AREAS.length)) % streets.length];
+    let num = 5 + ((i * 17 + suburb.length * 13) % 210);
+    if (num % 2 === 0) num += 1;
+    const postcode = POSTCODE_BY_SUBURB[suburb] || "4556";
+    let address = `${num} ${street}, ${suburb} QLD ${postcode}`;
+    while (usedAddresses.has(address)) {
+      num += 2;
+      address = `${num} ${street}, ${suburb} QLD ${postcode}`;
+    }
+    usedAddresses.add(address);
+    const beds     = pick([2,3,3,3,4,4,4,5], i + 101);
+    const baths    = beds <= 3 ? pick([1,1,2,2], i + 211) : pick([2,2,3,3], i + 307);
+    const living   = pick([1,1,1,2,2], i + 401);
     const kitchen  = 1;
-    const freq     = FREQS[i % FREQS.length];
-    const day      = DAYS[i % DAYS.length];
-    const time     = TIMES[i % TIMES.length];
-    const emailDomain = pick(["gmail.com","outlook.com","icloud.com","hotmail.com","yahoo.com.au"]);
-    const phone    = `04${String(Math.floor(10000000 + Math.random() * 90000000))}`;
+    const freq     = FREQS[(i + 1) % FREQS.length];
+    const day      = DAYS[(i + 2) % DAYS.length];
+    const time     = TIMES[(i + 3) % TIMES.length];
+    const emailDomain = pick(["gmail.com","outlook.com","icloud.com","hotmail.com","yahoo.com.au"], i + 509);
+    const mobileTail = String(10000000 + ((i * 7919 + 12345) % 90000000)).padStart(8, "0");
+    const phone    = `04${mobileTail.slice(0, 2)} ${mobileTail.slice(2, 5)} ${mobileTail.slice(5, 8)}`;
     const email    = `${first.toLowerCase()}.${last.toLowerCase().replace("'","")}@${emailDomain}`;
-    const postcode = suburb === "Buderim" ? "4556" : suburb === "Mooloolaba" || suburb === "Alexandra Headland" ? "4557" : suburb === "Maroochydore" || suburb === "Kuluin" ? "4558" : suburb === "Twin Waters" || suburb === "Minyama" ? "4575" : suburb === "Mountain Creek" ? "4557" : suburb === "Forest Glen" || suburb === "Mons" ? "4556" : "4556";
-    const address  = `${num} ${street}, ${suburb} QLD ${postcode}`;
     const dur      = beds * 25 + baths * 30 + living * 20 + kitchen * 25 + 30;
 
-    const hasAccess = Math.random() < 0.65;
-    const hasNotes  = Math.random() < 0.55;
+    const hasAccess = rand(i + 601) > 0.35;
+    const hasNotes  = rand(i + 701) > 0.45;
 
     clients.push({
       name: fullName,
@@ -91,10 +116,10 @@ export function generateDemoClients() {
       preferred_day: day,
       preferred_time: time,
       estimated_duration: dur,
-      custom_duration: Math.random() < 0.2 ? dur + pick([-15, -10, 10, 15, 20]) : null,
-      status: i < 38 ? "active" : pick(["active","paused","paused"]),
-      notes: hasNotes ? pick(NOTES) : "",
-      access_notes: hasAccess ? pick(ACCESS) : "",
+      custom_duration: rand(i + 811) > 0.8 ? dur + pick([-15, -10, 10, 15, 20], i + 907) : null,
+      status: "active",
+      notes: hasNotes ? pick(NOTES, i + 1009) : "",
+      access_notes: hasAccess ? pick(ACCESS, i + 1117) : "",
       is_demo: true,
     });
   }

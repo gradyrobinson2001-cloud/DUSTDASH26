@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { getInitialEnquiries } from '../shared';
 
@@ -6,6 +6,27 @@ export function useEnquiries() {
   const [enquiries, setEnquiries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
+  const fetchingRef = useRef(false);
+
+  const refreshEnquiries = useCallback(async () => {
+    if (!supabaseReady || !supabase || fetchingRef.current) return;
+    fetchingRef.current = true;
+    try {
+      const { data, error } = await supabase
+        .from('enquiries')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        setError(error);
+        return;
+      }
+      setError(null);
+      setEnquiries(data ?? []);
+    } finally {
+      fetchingRef.current = false;
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!supabaseReady) {
@@ -14,16 +35,43 @@ export function useEnquiries() {
       return;
     }
     let mounted = true;
-    const fetch = async () => {
-      const { data, error } = await supabase.from('enquiries').select('*').order('created_at', { ascending: false });
+
+    const safeRefresh = async () => {
       if (!mounted) return;
-      if (error) setError(error); else setEnquiries(data ?? []);
-      setLoading(false);
+      await refreshEnquiries();
     };
-    fetch();
-    const ch = supabase.channel('enquiries').on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, fetch).subscribe();
-    return () => { mounted = false; supabase.removeChannel(ch); };
-  }, []);
+
+    safeRefresh();
+
+    const ch = supabase
+      .channel('enquiries')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, safeRefresh)
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[enquiries] realtime channel unhealthy, polling will continue');
+        }
+      });
+
+    // Fallback for environments where realtime can be unreliable.
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') safeRefresh();
+    }, 15000);
+
+    const onFocus = () => safeRefresh();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') safeRefresh();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      supabase.removeChannel(ch);
+    };
+  }, [refreshEnquiries]);
 
   const addEnquiry = async (e) => {
     if (!supabaseReady) {
@@ -57,5 +105,5 @@ export function useEnquiries() {
     setEnquiries(prev => prev.filter(e => e.id !== id));
   };
 
-  return { enquiries, setEnquiries, loading, error, addEnquiry, updateEnquiry, removeEnquiry };
+  return { enquiries, setEnquiries, loading, error, refreshEnquiries, addEnquiry, updateEnquiry, removeEnquiry };
 }

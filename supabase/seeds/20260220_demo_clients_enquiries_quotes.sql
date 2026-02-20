@@ -26,16 +26,16 @@ WITH
         'Patel','Reid','Sullivan','Taylor','Wilson'
       ]::TEXT[] AS last_names,
       ARRAY[
-        'Maroochydore','Buderim','Noosa Heads','Caloundra','Mooloolaba',
-        'Kawana Waters','Birtinya','Sippy Downs','Alexandra Headland','Mountain Creek'
+        'Twin Waters','Maroochydore','Kuluin','Forest Glen','Mons',
+        'Buderim','Alexandra Headland','Mooloolaba','Mountain Creek','Minyama'
       ]::TEXT[] AS suburbs,
       ARRAY['gmail.com','outlook.com','icloud.com','hotmail.com','yahoo.com.au']::TEXT[] AS domains,
       ARRAY['standard_clean','bond_clean','deep_clean']::TEXT[] AS service_types,
-      ARRAY['weekly','fortnightly','monthly','one_off']::TEXT[] AS frequencies
+      ARRAY['weekly','fortnightly','monthly']::TEXT[] AS frequencies
   ),
   seed AS (
     SELECT i
-    FROM generate_series(1, 45) AS g(i)
+    FROM generate_series(1, 70) AS g(i)
   ),
   rows AS (
     SELECT
@@ -43,8 +43,8 @@ WITH
       uuid_generate_v5(cfg.ns, 'demo-client-' || s.i) AS client_id,
       uuid_generate_v5(cfg.ns, 'demo-enquiry-' || s.i) AS enquiry_id,
       'DQ' || LPAD(s.i::TEXT, 3, '0') AS quote_id,
-      cfg.first_names[s.i] AS first_name,
-      cfg.last_names[s.i] AS last_name,
+      cfg.first_names[((s.i - 1) % array_length(cfg.first_names, 1)) + 1] AS first_name,
+      cfg.last_names[((s.i - 1) % array_length(cfg.last_names, 1)) + 1] AS last_name,
       cfg.suburbs[((s.i - 1) % array_length(cfg.suburbs, 1)) + 1] AS suburb,
       cfg.domains[((s.i - 1) % array_length(cfg.domains, 1)) + 1] AS domain,
       cfg.service_types[((s.i - 1) % array_length(cfg.service_types, 1)) + 1] AS service_type,
@@ -64,30 +64,31 @@ SELECT
   frequency,
   suburb,
   CASE suburb
-    WHEN 'Maroochydore' THEN (ARRAY['Aerodrome Rd','Duporth Ave','Bradman Ave','Cornmeal Pde','Memorial Ave'])[ ((i - 1) % 5) + 1 ]
-    WHEN 'Buderim' THEN (ARRAY['Burnett St','King St','Lindsay Rd','Gloucester Rd','Dixon Rd'])[ ((i - 1) % 5) + 1 ]
-    WHEN 'Noosa Heads' THEN (ARRAY['Noosa Pde','Hastings St','Noosa Dr','Weyba Rd','Eumundi Noosa Rd'])[ ((i - 1) % 5) + 1 ]
-    WHEN 'Caloundra' THEN (ARRAY['Bulcock St','Arthur St','Omrah Ave','Minchinton St','Canberra Tce'])[ ((i - 1) % 5) + 1 ]
-    WHEN 'Mooloolaba' THEN (ARRAY['Brisbane Rd','Walan St','Venning St','Foote St','Parkyn Pde'])[ ((i - 1) % 5) + 1 ]
-    WHEN 'Kawana Waters' THEN (ARRAY['Point Cartwright Dr','Nicklin Way','Main Dr','Sportsmans Pde','Kawana Way'])[ ((i - 1) % 5) + 1 ]
-    WHEN 'Birtinya' THEN (ARRAY['Lake Kawana Blvd','Birtinya Blvd','Innovation Pkwy','Lakeshore Pl','Reflection Cres'])[ ((i - 1) % 5) + 1 ]
-    WHEN 'Sippy Downs' THEN (ARRAY['University Way','Sippy Downs Dr','Eaton St','Cochrane St','Stringybark Rd'])[ ((i - 1) % 5) + 1 ]
-    WHEN 'Alexandra Headland' THEN (ARRAY['Alexandra Pde','Pacific Tce','Mary St','Okinja Rd','Buderim Ave'])[ ((i - 1) % 5) + 1 ]
-    ELSE (ARRAY['Karawatha Dr','Mountain Creek Rd','Glenfields Blvd','Broadwater Ave','Parklands Blvd'])[ ((i - 1) % 5) + 1 ]
+    WHEN 'Twin Waters' THEN (ARRAY['Oceanside Dr','Lakeside Ave','Sailfish Ct','Pelican Way','Marina Blvd','Harbour Dr','Seaspray Cres'])[ ((i - 1) % 7) + 1 ]
+    WHEN 'Maroochydore' THEN (ARRAY['Aerodrome Rd','Duporth Ave','Dalton Dr','Cotton Tree Pde','Picnic Point Esp','Bradman Ave','Memorial Ave'])[ ((i - 1) % 7) + 1 ]
+    WHEN 'Kuluin' THEN (ARRAY['Kuluin St','Rosebed St','Lumeah Dr','Anne St','Valroy Dr','Sunshine Ct','Hilltop Ave'])[ ((i - 1) % 7) + 1 ]
+    WHEN 'Forest Glen' THEN (ARRAY['Forest Glen Rd','Doolan St','Vise Rd','Anning Rd','Balmoral Rd','Creekside Dr','Ironbark Pl'])[ ((i - 1) % 7) + 1 ]
+    WHEN 'Mons' THEN (ARRAY['Mons Rd','Sunrise Rd','Panorama Dr','Ridgewood Ct','Mountain View Dr','Valley Cres','Hilltop Ct'])[ ((i - 1) % 7) + 1 ]
+    WHEN 'Buderim' THEN (ARRAY['Burnett St','King St','Lindsay Rd','Gloucester Rd','Main St','Crosby Hill Rd','Ballinger Rd'])[ ((i - 1) % 7) + 1 ]
+    WHEN 'Alexandra Headland' THEN (ARRAY['Alexandra Pde','Okinja Rd','Mary St','Pacific Tce','Albatross Ave','Hill St','Beach Rd'])[ ((i - 1) % 7) + 1 ]
+    WHEN 'Mooloolaba' THEN (ARRAY['Smith St','Brisbane Rd','Walan St','Meta St','Foote St','River Esp','Parkyn Pde'])[ ((i - 1) % 7) + 1 ]
+    WHEN 'Mountain Creek' THEN (ARRAY['Karawatha Dr','Mountain Creek Rd','Glenfields Blvd','Brookfield Dr','Parklands Blvd','Creekwood Ct','Lakewood Dr'])[ ((i - 1) % 7) + 1 ]
+    ELSE (ARRAY['Jessica Blvd','Minyama St','Glenyce Ct','Brittany Dr','Windsong Pl','The Anchorage','Doone Ct'])[ ((i - 1) % 7) + 1 ]
   END AS street,
   CASE suburb
+    WHEN 'Twin Waters' THEN '4564'
     WHEN 'Maroochydore' THEN '4558'
+    WHEN 'Kuluin' THEN '4558'
+    WHEN 'Forest Glen' THEN '4556'
+    WHEN 'Mons' THEN '4556'
     WHEN 'Buderim' THEN '4556'
-    WHEN 'Noosa Heads' THEN '4567'
-    WHEN 'Caloundra' THEN '4551'
-    WHEN 'Mooloolaba' THEN '4557'
-    WHEN 'Kawana Waters' THEN '4575'
-    WHEN 'Birtinya' THEN '4575'
-    WHEN 'Sippy Downs' THEN '4556'
     WHEN 'Alexandra Headland' THEN '4572'
+    WHEN 'Mooloolaba' THEN '4557'
+    WHEN 'Mountain Creek' THEN '4557'
+    WHEN 'Minyama' THEN '4575'
     ELSE '4557'
   END AS postcode,
-  (10 + i * 3) AS street_number,
+  (7 + ((i * 17 + 31) % 220)) AS street_number,
   LOWER(regexp_replace(first_name || '.' || last_name, '[^A-Za-z.]', '', 'g')) || '@' || domain AS email,
   (
     SELECT
@@ -98,15 +99,15 @@ SELECT
   CASE WHEN (i % 4) = 0 THEN 3 WHEN (i % 2) = 0 THEN 2 ELSE 1 END AS bathrooms,
   CASE WHEN (i % 5) = 0 THEN 2 ELSE 1 END AS living,
   1 AS kitchen,
-  CASE WHEN frequency = 'one_off' THEN 'paused' ELSE 'active' END AS client_status,
+  'active' AS client_status,
   CASE
-    WHEN i <= 30 THEN 'accepted'
-    WHEN i <= 40 THEN 'quote_sent'
+    WHEN i <= 48 THEN 'accepted'
+    WHEN i <= 62 THEN 'quote_sent'
     ELSE 'quote_ready'
   END AS enquiry_status,
   CASE
-    WHEN i <= 30 THEN 'accepted'
-    WHEN i <= 40 THEN 'sent'
+    WHEN i <= 48 THEN 'accepted'
+    WHEN i <= 62 THEN 'sent'
     ELSE 'pending_approval'
   END AS quote_status,
   NOW() - (((i * 4) % 180) || ' days')::INTERVAL AS created_at
