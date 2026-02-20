@@ -28,6 +28,14 @@ const inferExt = (file) => {
   return 'jpg';
 };
 
+const parseJsonSafe = async (res) => {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+};
+
 export function usePhotos() {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -72,9 +80,7 @@ export function usePhotos() {
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, []);
 
-  const uploadPhoto = async ({ jobId, clientId, date, type, file, uploadedBy }) => {
-    if (!supabaseReady) throw new Error('Supabase not configured');
-    if (!jobId) throw new Error('Job ID is required');
+  const uploadPhotoDirect = async ({ jobId, clientId, date, type, file, uploadedBy }) => {
     const ext = inferExt(file);
     const safeType = (type === 'after' ? 'after' : 'before');
     const safeDate = date || new Date().toISOString().split('T')[0];
@@ -84,7 +90,9 @@ export function usePhotos() {
     const { error: uploadError } = await supabase.storage
       .from('job-photos')
       .upload(path, file, { contentType, upsert: false });
-    if (uploadError) throw uploadError;
+    if (uploadError) {
+      throw new Error(uploadError.message || 'Storage upload failed.');
+    }
 
     const { data, error } = await supabase
       .from('photos')
@@ -98,10 +106,113 @@ export function usePhotos() {
       })
       .select()
       .single();
-    if (error) throw error;
-    const normalized = normalizePhoto(data);
-    setPhotos(prev => [normalized, ...prev.filter(p => p.id !== normalized.id)]);
-    return normalized;
+    if (error) {
+      throw new Error(error.message || 'Failed to save photo metadata.');
+    }
+    return normalizePhoto(data);
+  };
+
+  const getAccessToken = async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw new Error(error.message || 'Failed to load session.');
+    const token = data?.session?.access_token;
+    if (!token) throw new Error('Please sign in again to upload photos.');
+    return token;
+  };
+
+  const uploadPhoto = async ({ jobId, clientId, date, type, file, uploadedBy }) => {
+    if (!supabaseReady) throw new Error('Supabase not configured');
+    if (!jobId) throw new Error('Job ID is required');
+
+    const safeType = (type === 'after' ? 'after' : 'before');
+    const safeDate = date || new Date().toISOString().split('T')[0];
+    const contentType = file?.type || 'image/jpeg';
+
+    let stage = 'request-upload-url';
+    try {
+      const accessToken = await getAccessToken();
+
+      const createRes = await fetch('/api/photos/create-upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          jobId,
+          clientId,
+          date: safeDate,
+          type: safeType,
+          fileName: file?.name || '',
+          contentType,
+        }),
+      });
+      const createBody = await parseJsonSafe(createRes);
+      if (!createRes.ok || createBody?.error) {
+        const message = createBody?.error || createBody?.details || `Upload URL request failed (${createRes.status})`;
+        throw new Error(message);
+      }
+
+      const uploadPath = createBody?.upload?.path;
+      const uploadToken = createBody?.upload?.token;
+      if (!uploadPath || !uploadToken) {
+        throw new Error('Upload URL response missing token/path.');
+      }
+
+      stage = 'upload-to-signed-url';
+      const { error: signedUploadError } = await supabase.storage
+        .from('job-photos')
+        .uploadToSignedUrl(uploadPath, uploadToken, file, { contentType, upsert: false });
+      if (signedUploadError) {
+        throw new Error(signedUploadError.message || 'Signed upload failed.');
+      }
+
+      stage = 'complete-upload';
+      const completeRes = await fetch('/api/photos/complete-upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          jobId,
+          clientId,
+          date: safeDate,
+          type: safeType,
+          storagePath: uploadPath,
+          uploadedBy,
+        }),
+      });
+      const completeBody = await parseJsonSafe(completeRes);
+      if (!completeRes.ok || completeBody?.error) {
+        const message = completeBody?.error || completeBody?.details || `Upload completion failed (${completeRes.status})`;
+        throw new Error(message);
+      }
+
+      const normalized = normalizePhoto(completeBody?.photo);
+      setPhotos(prev => [normalized, ...prev.filter(p => p.id !== normalized.id)]);
+      return normalized;
+    } catch (secureErr) {
+      const message = secureErr?.message || 'Unknown upload error.';
+      const canFallback = stage === 'request-upload-url' && (
+        message.includes('404') ||
+        message.includes('Method not allowed') ||
+        message.includes('Failed to fetch')
+      );
+
+      if (!canFallback) {
+        throw new Error(`Photo upload failed (${stage}): ${message}`);
+      }
+
+      // Local-dev fallback where API routes may not be running.
+      try {
+        const normalized = await uploadPhotoDirect({ jobId, clientId, date: safeDate, type: safeType, file, uploadedBy });
+        setPhotos(prev => [normalized, ...prev.filter(p => p.id !== normalized.id)]);
+        return normalized;
+      } catch (directErr) {
+        throw new Error(`Photo upload failed: ${directErr?.message || message}`);
+      }
+    }
   };
 
   const getSignedUrl = async (storagePath) => {

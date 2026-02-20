@@ -24,6 +24,8 @@ export default function ToolsTab({
   setSelectedRouteDate,
   calculateRouteForDate,
   routeData,
+  toolsMapMode,
+  setToolsMapMode,
   isMobile,
 }) {
   const apiKeyMissing = !isGoogleMapsKeyConfigured(GOOGLE_MAPS_API_KEY) || mapsError === "missing_key";
@@ -160,20 +162,52 @@ export default function ToolsTab({
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 24 }}>🗺️</span>
             <div>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: T.text }}>Route Visualizer</h3>
-              <p style={{ margin: "2px 0 0", fontSize: 12, color: T.textMuted }}>View team routes on the map</p>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: T.text }}>Service Area Map</h3>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: T.textMuted }}>
+                Visualize all active clients or switch to route view
+              </p>
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={() => setToolsMapMode("clients")}
+              style={{
+                padding: "10px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${toolsMapMode === "clients" ? T.primary : T.border}`,
+                background: toolsMapMode === "clients" ? T.primaryLight : "#fff", color: toolsMapMode === "clients" ? T.primaryDark : T.textMuted,
+                fontWeight: 700, fontSize: 12, cursor: "pointer",
+              }}
+            >
+              All Clients
+            </button>
+            <button
+              onClick={() => setToolsMapMode("route")}
+              style={{
+                padding: "10px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${toolsMapMode === "route" ? T.blue : T.border}`,
+                background: toolsMapMode === "route" ? T.blueLight : "#fff", color: toolsMapMode === "route" ? T.blue : T.textMuted,
+                fontWeight: 700, fontSize: 12, cursor: "pointer",
+              }}
+            >
+              Routes
+            </button>
+          </div>
+        </div>
+
+        {toolsMapMode === "route" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
             <input type="date" value={selectedRouteDate} onChange={e => setSelectedRouteDate(e.target.value)} style={{ padding: "10px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }} />
             <button onClick={() => calculateRouteForDate(selectedRouteDate)} style={{ padding: "10px 20px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
               Load Routes
             </button>
           </div>
-        </div>
+        )}
+        {toolsMapMode === "clients" && (
+          <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: T.radiusSm, background: T.primaryLight, fontSize: 12, color: T.textMuted }}>
+            Showing {scheduleClients.filter(c => c.status === "active").length} active clients across {new Set(scheduleClients.filter(c => c.status === "active").map(c => c.suburb)).size} suburbs.
+          </div>
+        )}
 
         {/* Route Summary Cards */}
-        {routeData && (
+        {toolsMapMode === "route" && routeData && (
           <div style={{ marginBottom: 20 }}>
             {routeData.teamA?.jobs?.length > 0 && (
               <div style={{ padding: "16px 20px", background: `${T.primary}15`, borderRadius: T.radius, borderLeft: `4px solid ${T.primary}` }}>
@@ -229,11 +263,23 @@ export default function ToolsTab({
         </div>
 
         {/* Legend */}
-        {mapsLoaded && routeData && (
+        {mapsLoaded && toolsMapMode === "route" && routeData && (
           <div style={{ display: "flex", gap: 20, marginTop: 16, justifyContent: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ width: 24, height: 4, borderRadius: 2, background: T.primary }} />
               <span style={{ fontSize: 12, color: T.textMuted }}>Route</span>
+            </div>
+          </div>
+        )}
+        {mapsLoaded && toolsMapMode === "clients" && (
+          <div style={{ display: "flex", gap: 20, marginTop: 16, justifyContent: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: T.blue }} />
+              <span style={{ fontSize: 12, color: T.textMuted }}>Client location</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 18, height: 18, borderRadius: "50%", border: `2px solid ${T.primaryDark}`, background: `${T.primary}25` }} />
+              <span style={{ fontSize: 12, color: T.textMuted }}>Area density</span>
             </div>
           </div>
         )}

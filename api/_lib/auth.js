@@ -1,6 +1,6 @@
 import { ApiError } from "./http.js";
 
-export async function requireAdmin(req, adminClient) {
+function getBearerToken(req) {
   const authHeader = req.headers.authorization || req.headers.Authorization || "";
   if (!authHeader.startsWith("Bearer ")) {
     throw new ApiError(401, "Missing bearer token.");
@@ -8,6 +8,11 @@ export async function requireAdmin(req, adminClient) {
 
   const token = authHeader.slice(7).trim();
   if (!token) throw new ApiError(401, "Missing bearer token.");
+  return token;
+}
+
+export async function requireProfile(req, adminClient, { roles = null, requireActive = true } = {}) {
+  const token = getBearerToken(req);
 
   const {
     data: { user },
@@ -25,12 +30,18 @@ export async function requireAdmin(req, adminClient) {
     .single();
 
   if (profileError || !profile) {
-    throw new ApiError(403, "Admin profile not found.", profileError?.message || null);
+    throw new ApiError(403, "Profile not found.", profileError?.message || null);
   }
-  if (profile.role !== "admin" || profile.is_active === false) {
-    throw new ApiError(403, "Admin access required.");
+  if (requireActive && profile.is_active === false) {
+    throw new ApiError(403, "Account is inactive.");
+  }
+  if (Array.isArray(roles) && roles.length > 0 && !roles.includes(profile.role)) {
+    throw new ApiError(403, `Access denied for role '${profile.role}'.`);
   }
 
   return { user, profile };
 }
 
+export async function requireAdmin(req, adminClient) {
+  return requireProfile(req, adminClient, { roles: ["admin"], requireActive: true });
+}

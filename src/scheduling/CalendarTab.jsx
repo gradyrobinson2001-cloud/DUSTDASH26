@@ -1,5 +1,8 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { T, calculateDuration } from "../shared";
+
+const getPhotoJobId = (photo) => String(photo?.job_id ?? photo?.jobId ?? "");
+const getPhotoType = (photo) => (photo?.type === "after" ? "after" : "before");
 
 export default function CalendarTab({
   scheduledJobs,
@@ -24,14 +27,53 @@ export default function CalendarTab({
   publishWeek,
   updateJob,
   showToast,
+  photos = [],
 }) {
   const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const [publishing, setPublishing] = useState(false);
+  const todayDate = new Date().toISOString().split("T")[0];
 
   // Check if any jobs this week are unpublished
   const weekJobs = scheduledJobs.filter(j => weekDates.includes(j.date));
   const unpublishedCount = weekJobs.filter(j => !j.is_published && !j.isBreak).length;
   const allPublished = weekJobs.length > 0 && unpublishedCount === 0;
+  const photoComplianceByJob = useMemo(() => {
+    const out = {};
+    (photos || []).forEach((photo) => {
+      const jobId = getPhotoJobId(photo);
+      if (!jobId) return;
+      if (!out[jobId]) {
+        out[jobId] = { before: 0, after: 0, total: 0 };
+      }
+      const type = getPhotoType(photo);
+      out[jobId][type] += 1;
+      out[jobId].total += 1;
+    });
+    return out;
+  }, [photos]);
+
+  const weekCompliance = useMemo(() => {
+    const checkable = weekJobs.filter((job) =>
+      !job.isBreak && !job.is_break &&
+      (
+        String(job.date || "") <= todayDate ||
+        Boolean(job.is_published || job.isPublished) ||
+        String(job.status || job.job_status || job.jobStatus) === "completed"
+      )
+    );
+
+    const missingBefore = checkable.filter((job) => {
+      const data = photoComplianceByJob[String(job.id)] || { before: 0 };
+      return data.before === 0;
+    }).length;
+
+    const missingAfter = checkable.filter((job) => {
+      const data = photoComplianceByJob[String(job.id)] || { after: 0 };
+      return data.after === 0;
+    }).length;
+
+    return { checkableCount: checkable.length, missingBefore, missingAfter };
+  }, [weekJobs, photoComplianceByJob, todayDate]);
 
   const handlePublishWeek = async () => {
     if (!publishWeek) return;
@@ -145,6 +187,22 @@ export default function CalendarTab({
         </div>
       </div>
 
+      {weekCompliance.checkableCount > 0 && (
+        <div style={{ marginBottom: 16, background: "#fff", border: `1px solid ${T.borderLight}`, borderRadius: T.radiusSm, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 12, color: T.textMuted }}>
+            Photo compliance for {weekCompliance.checkableCount} completed/published/past job{weekCompliance.checkableCount === 1 ? "" : "s"}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: weekCompliance.missingBefore > 0 ? T.danger : T.primaryDark }}>
+              Before missing: {weekCompliance.missingBefore}
+            </span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: weekCompliance.missingAfter > 0 ? T.danger : T.primaryDark }}>
+              After missing: {weekCompliance.missingAfter}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Staff Legend */}
       {staffMembers.length > 0 && (
         <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -186,9 +244,17 @@ export default function CalendarTab({
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {dayJobs.map((job) => {
-                        const assigned = job.assigned_staff || [];
-                        const assignedNames = assigned.map(id => staffMembers.find(s => s.id === id)?.full_name).filter(Boolean);
-                        const isPublished = job.is_published;
+                        const assigned = (job.assigned_staff || []).map(String);
+                        const assignedNames = assigned.map(id => staffMembers.find(s => String(s.id) === id)?.full_name).filter(Boolean);
+                        const isPublished = Boolean(job.is_published || job.isPublished);
+                        const photoState = photoComplianceByJob[String(job.id)] || { before: 0, after: 0, total: 0 };
+                        const requiresPhotoCheck =
+                          String(job.date || "") <= todayDate ||
+                          isPublished ||
+                          String(job.status || job.job_status || job.jobStatus) === "completed";
+                        const missingBefore = requiresPhotoCheck && photoState.before === 0;
+                        const missingAfter = requiresPhotoCheck && photoState.after === 0;
+                        const hasPhotoWarning = missingBefore || missingAfter;
 
                         return (
                           <div key={job.id} style={{ position: "relative" }}>
@@ -213,6 +279,17 @@ export default function CalendarTab({
                                 {job.suburb}
                               </div>
 
+                              {requiresPhotoCheck && (
+                                <div style={{ marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: photoState.before > 0 ? T.primaryLight : T.dangerLight, color: photoState.before > 0 ? T.primaryDark : T.danger }}>
+                                    Before {photoState.before > 0 ? "✓" : "Missing"}
+                                  </span>
+                                  <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: photoState.after > 0 ? T.primaryLight : T.dangerLight, color: photoState.after > 0 ? T.primaryDark : T.danger }}>
+                                    After {photoState.after > 0 ? "✓" : "Missing"}
+                                  </span>
+                                </div>
+                              )}
+
                               {/* Assigned staff chips */}
                               {assignedNames.length > 0 ? (
                                 <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>
@@ -230,6 +307,11 @@ export default function CalendarTab({
                               {isPublished && (
                                 <div style={{ position: "absolute", top: 4, right: 6, fontSize: 9, color: T.primary, fontWeight: 700 }}>
                                   Published
+                                </div>
+                              )}
+                              {hasPhotoWarning && (
+                                <div style={{ position: "absolute", top: 18, right: 6, fontSize: 9, color: T.danger, fontWeight: 700 }}>
+                                  Photo check
                                 </div>
                               )}
                             </div>
@@ -321,7 +403,7 @@ export default function CalendarTab({
 // ─── Inline Staff Assignment Dropdown ──────────────────
 function StaffAssignDropdown({ job, staffMembers, onToggle }) {
   const [open, setOpen] = useState(false);
-  const assigned = job.assigned_staff || [];
+  const assigned = (job.assigned_staff || []).map(String);
 
   return (
     <div style={{ marginTop: 2 }}>
@@ -337,7 +419,7 @@ function StaffAssignDropdown({ job, staffMembers, onToggle }) {
       {open && (
         <div style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 6, padding: 4, marginTop: 2, boxShadow: T.shadow }}>
           {staffMembers.map(s => {
-            const isAssigned = assigned.includes(s.id);
+            const isAssigned = assigned.includes(String(s.id));
             return (
               <button
                 key={s.id}

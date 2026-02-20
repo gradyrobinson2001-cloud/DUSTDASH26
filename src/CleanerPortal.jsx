@@ -110,6 +110,37 @@ function resolveClientProfile(job, clients) {
   return null;
 }
 
+function buildJobSnapshotProfile(job) {
+  const bedrooms = job?.bedrooms;
+  const bathrooms = job?.bathrooms;
+  const living = job?.living;
+  const kitchen = job?.kitchen;
+  const hasSnapshot =
+    Boolean(job?.address || job?.email || job?.phone || job?.notes || job?.access_notes || job?.accessNotes || job?.frequency || job?.preferred_day || job?.preferredDay || job?.preferred_time || job?.preferredTime) ||
+    [bedrooms, bathrooms, living, kitchen].some(v => v !== null && v !== undefined);
+
+  if (!hasSnapshot) return null;
+
+  return {
+    id: job?.client_id || job?.clientId || `job-${job?.id || Date.now()}`,
+    name: job?.client_name || job?.clientName || "Client",
+    address: job?.address || (job?.suburb ? `${job.suburb}, QLD` : ""),
+    suburb: job?.suburb || "",
+    notes: job?.notes || "",
+    access_notes: job?.access_notes || job?.accessNotes || "",
+    frequency: job?.frequency || "",
+    preferred_day: job?.preferred_day || job?.preferredDay || "",
+    preferred_time: job?.preferred_time || job?.preferredTime || "",
+    bedrooms,
+    bathrooms,
+    living,
+    kitchen,
+    email: job?.email || "",
+    phone: job?.phone || "",
+    source: "job_snapshot",
+  };
+}
+
 // ─── Component ────────────────────────────────────────────
 export default function CleanerPortal() {
   const [profile,      setProfile]      = useState(null);
@@ -122,6 +153,7 @@ export default function CleanerPortal() {
   const [activeTimers, setActiveTimers] = useState({});
   const [localPhotos,  setLocalPhotos]  = useState({});
   const [payslips,     setPayslips]     = useState([]);
+  const [jobClientProfiles, setJobClientProfiles] = useState({});
 
   const timerRefs = useRef({});
   const cameraRef = useRef(null);
@@ -150,6 +182,7 @@ export default function CleanerPortal() {
       return jDate === selectedDate && !j.is_break && !j.isBreak;
     })
     .sort((a, b) => (a.start_time || a.startTime || '').localeCompare(b.start_time || b.startTime || ''));
+  const dayJobIdsKey = dayJobs.map(j => String(j.id)).sort().join('|');
 
   // ── Toast helper ───────────────────────────────────────
   const showToast = useCallback((msg) => {
@@ -192,6 +225,51 @@ export default function CleanerPortal() {
     };
     buildMap();
   }, [supaPhotos, selectedDate, demoMode]);
+
+  // ── Load client profiles for visible jobs via secure API fallback ─────
+  useEffect(() => {
+    if (demoMode) {
+      setJobClientProfiles({});
+      return;
+    }
+
+    const loadProfiles = async () => {
+      if (!supabaseReady || dayJobs.length === 0) {
+        setJobClientProfiles({});
+        return;
+      }
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const token = data?.session?.access_token;
+        if (!token) throw new Error('Missing session token');
+
+        const res = await fetch('/api/staff/job-client-profiles', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ jobIds: dayJobs.map(j => j.id) }),
+        });
+        let body = {};
+        try {
+          body = await res.json();
+        } catch {}
+
+        if (!res.ok || body?.error) {
+          throw new Error(body?.error || body?.details || `Request failed (${res.status})`);
+        }
+
+        setJobClientProfiles(body?.profilesByJob || {});
+      } catch (err) {
+        console.error('[staff:client-profiles] failed', err);
+        setJobClientProfiles({});
+      }
+    };
+
+    loadProfiles();
+  }, [demoMode, dayJobIdsKey]);
 
   // ── Load payslips ─────────────────────────────────────
   useEffect(() => {
@@ -267,7 +345,7 @@ export default function CleanerPortal() {
         showToast(`${type === 'before' ? 'Before' : 'After'} photo uploaded!`);
       } catch (err) {
         console.error('Photo upload failed:', err);
-        showToast('Upload failed. Try again.');
+        showToast(`Upload failed: ${err?.message || 'Try again.'}`);
       }
     }
     e.target.value = '';
@@ -463,7 +541,10 @@ export default function CleanerPortal() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {dayJobs.map((job, idx) => {
-                const client     = resolveClientProfile(job, allClients);
+                const clientFromLocal = resolveClientProfile(job, allClients);
+                const clientFromApi = jobClientProfiles[String(job.id)] || null;
+                const clientFromSnapshot = buildJobSnapshotProfile(job);
+                const client = clientFromLocal || clientFromApi || clientFromSnapshot;
                 const photos     = localPhotos[job.id] || { before: [], after: [] };
                 const isExp      = expandedJob === job.id;
                 const status     = job.status || job.job_status || job.jobStatus || 'scheduled';
@@ -485,9 +566,7 @@ export default function CleanerPortal() {
                 const bathrooms  = job?.bathrooms ?? client?.bathrooms;
                 const living     = job?.living ?? client?.living;
                 const kitchen    = job?.kitchen ?? client?.kitchen;
-                const hasJobSnapshot =
-                  Boolean(job?.address || job?.email || job?.phone || job?.notes || job?.access_notes || job?.accessNotes) ||
-                  [bedrooms, bathrooms, living, kitchen].some(v => v !== null && v !== undefined);
+                const hasJobSnapshot = Boolean(clientFromSnapshot);
                 const mapsDestination = client?.lat && client?.lng
                   ? `${client.lat},${client.lng}`
                   : address;

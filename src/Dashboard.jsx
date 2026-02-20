@@ -120,10 +120,15 @@ export default function Dashboard() {
   const [calculatingDistance,setCalculatingDistance]= useState(false);
   const [selectedRouteDate,  setSelectedRouteDate]  = useState(() => new Date().toISOString().split("T")[0]);
   const [routeData,          setRouteData]           = useState(null);
+  const [toolsMapMode,       setToolsMapMode]        = useState("clients");
   const [mapsLoaded,         setMapsLoaded]          = useState(false);
   const [mapsError,          setMapsError]           = useState("");
   const mapRef         = useRef(null);
   const mapInstanceRef = useRef(null);
+  const mapMarkersRef  = useRef([]);
+  const mapCirclesRef  = useRef([]);
+  const routeRenderersRef = useRef([]);
+  const mapInfoWindowRef = useRef(null);
 
   // Finance
   const [showInvoiceModal, setShowInvoiceModal] = useState(null);
@@ -253,10 +258,6 @@ export default function Dashboard() {
       }, 100);
     }
   }, [page, mapsLoaded]);
-
-  useEffect(() => {
-    if (routeData && mapsLoaded && page === "tools") setTimeout(() => drawRouteOnMap(), 200);
-  }, [routeData, mapsLoaded, page]);
 
   // ─── Enquiry Actions ───
   const sendInfoForm = (enqId) => {
@@ -673,14 +674,131 @@ export default function Dashboard() {
     const allJobsSorted = jobs.sort((a,b) => (a.startTime||a.start_time).localeCompare(b.startTime||b.start_time));
     const allRoute = await calc(allJobsSorted);
     setRouteData({ date, teamA: allRoute, teamB: { totalDistance: 0, totalDuration: 0, legs: [], jobs: [] } });
+    setToolsMapMode("route");
   };
+
+  const clearClientOverlays = useCallback(() => {
+    mapMarkersRef.current.forEach(marker => marker?.setMap?.(null));
+    mapMarkersRef.current = [];
+    mapCirclesRef.current.forEach(circle => circle?.setMap?.(null));
+    mapCirclesRef.current = [];
+  }, []);
+
+  const clearRouteOverlays = useCallback(() => {
+    routeRenderersRef.current.forEach(renderer => renderer?.setMap?.(null));
+    routeRenderersRef.current = [];
+  }, []);
+
+  const drawClientsOnMap = useCallback(() => {
+    if (!mapRef.current || !window.google?.maps) return;
+    if (!mapInstanceRef.current) {
+      mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
+        center: { lat: -26.6590, lng: 153.0800 },
+        zoom: 11,
+        styles: [{ featureType: "poi", stylers: [{ visibility: "off" }] }],
+      });
+    }
+    const map = mapInstanceRef.current;
+    clearRouteOverlays();
+    clearClientOverlays();
+
+    const activeClients = scheduleClients.filter(c => c.status === "active");
+    if (activeClients.length === 0) {
+      map.setCenter({ lat: -26.6590, lng: 153.0800 });
+      map.setZoom(11);
+      return;
+    }
+
+    if (!mapInfoWindowRef.current) {
+      mapInfoWindowRef.current = new window.google.maps.InfoWindow();
+    }
+
+    const bounds = new window.google.maps.LatLngBounds();
+    const suburbBuckets = {};
+
+    activeClients.forEach((client) => {
+      const coords = getClientCoords(client);
+      if (!coords || typeof coords.lat !== "number" || typeof coords.lng !== "number") return;
+
+      bounds.extend(coords);
+      const marker = new window.google.maps.Marker({
+        map,
+        position: coords,
+        title: `${client.name || "Client"}${client.suburb ? ` — ${client.suburb}` : ""}`,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          fillColor: T.blue,
+          fillOpacity: 0.92,
+          strokeColor: "#ffffff",
+          strokeWeight: 1.5,
+          scale: 7,
+        },
+      });
+
+      marker.addListener("click", () => {
+        const suburb = client.suburb || "Unknown suburb";
+        const frequency = client.frequency || "Not set";
+        const address = client.address || `${suburb}, QLD`;
+        const phone = client.phone || "";
+        const email = client.email || "";
+        const html = `
+          <div style="min-width:220px;font-family:Arial,sans-serif;color:#26352D;">
+            <div style="font-weight:700;font-size:14px;margin-bottom:6px;">${client.name || "Client"}</div>
+            <div style="font-size:12px;color:#6F7F74;line-height:1.45;">
+              <div>${address}</div>
+              <div>Frequency: ${frequency}</div>
+              ${phone ? `<div>Phone: ${phone}</div>` : ""}
+              ${email ? `<div>Email: ${email}</div>` : ""}
+            </div>
+          </div>
+        `;
+        mapInfoWindowRef.current.setContent(html);
+        mapInfoWindowRef.current.open({ anchor: marker, map });
+      });
+
+      mapMarkersRef.current.push(marker);
+
+      const suburbKey = client.suburb || "Unknown";
+      if (!suburbBuckets[suburbKey]) {
+        suburbBuckets[suburbKey] = { count: 0, latSum: 0, lngSum: 0 };
+      }
+      suburbBuckets[suburbKey].count += 1;
+      suburbBuckets[suburbKey].latSum += coords.lat;
+      suburbBuckets[suburbKey].lngSum += coords.lng;
+    });
+
+    Object.values(suburbBuckets).forEach((bucket) => {
+      const center = {
+        lat: bucket.latSum / bucket.count,
+        lng: bucket.lngSum / bucket.count,
+      };
+      const circle = new window.google.maps.Circle({
+        map,
+        center,
+        radius: Math.min(1400, 180 + bucket.count * 110),
+        fillColor: T.primary,
+        fillOpacity: 0.12,
+        strokeColor: T.primaryDark,
+        strokeOpacity: 0.4,
+        strokeWeight: 1,
+      });
+      mapCirclesRef.current.push(circle);
+    });
+
+    if (activeClients.length === 1) {
+      map.setCenter(bounds.getCenter());
+      map.setZoom(13);
+    } else if (!bounds.isEmpty()) {
+      map.fitBounds(bounds);
+    }
+  }, [clearClientOverlays, clearRouteOverlays, scheduleClients]);
 
   const drawRouteOnMap = useCallback(async () => {
     if (!mapRef.current || !routeData || !window.google?.maps) return;
     if (!mapInstanceRef.current) mapInstanceRef.current = new window.google.maps.Map(mapRef.current, { center: { lat: -26.6590, lng: 153.0800 }, zoom: 11 });
     const map = mapInstanceRef.current;
-    if (window.directionsRenderers) window.directionsRenderers.forEach(r => r.setMap(null));
-    window.directionsRenderers = [];
+    clearClientOverlays();
+    clearRouteOverlays();
     const ds = new window.google.maps.DirectionsService();
     const bounds = new window.google.maps.LatLngBounds();
     const drawTeamRoute = (teamRoute, color) => new Promise((resolve) => {
@@ -694,7 +812,7 @@ export default function Dashboard() {
       ds.route({ origin: fc?.address || `${teamRoute.jobs[0].suburb}, QLD, Australia`, destination: lc?.address || `${teamRoute.jobs[teamRoute.jobs.length-1].suburb}, QLD, Australia`, waypoints, travelMode: window.google.maps.TravelMode.DRIVING, optimizeWaypoints: false }, (result, status) => {
         if (status === "OK") {
           const renderer = new window.google.maps.DirectionsRenderer({ map, directions: result, polylineOptions: { strokeColor: color, strokeWeight: 5, strokeOpacity: 0.8 }, markerOptions: { icon: { path: window.google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: color, fillOpacity: 1, strokeWeight: 2, strokeColor: "#fff" } } });
-          window.directionsRenderers.push(renderer);
+          routeRenderersRef.current.push(renderer);
           result.routes[0].legs.forEach(leg => { bounds.extend(leg.start_location); bounds.extend(leg.end_location); });
           map.fitBounds(bounds);
         }
@@ -703,7 +821,37 @@ export default function Dashboard() {
     });
     await drawTeamRoute(routeData.teamA, "#4A9E7E");
     if (routeData.teamB?.jobs?.length > 0) await drawTeamRoute(routeData.teamB, "#5B9EC4");
-  }, [routeData, scheduleClients, scheduleSettings]);
+  }, [clearClientOverlays, clearRouteOverlays, routeData, scheduleClients, scheduleSettings]);
+
+  useEffect(() => {
+    if (page !== "tools" || !mapsLoaded || !window.google?.maps || !mapRef.current) return;
+
+    if (toolsMapMode === "clients") {
+      drawClientsOnMap();
+      return;
+    }
+
+    if (routeData) {
+      setTimeout(() => drawRouteOnMap(), 200);
+      return;
+    }
+
+    clearRouteOverlays();
+    clearClientOverlays();
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setCenter({ lat: -26.6590, lng: 153.0800 });
+      mapInstanceRef.current.setZoom(11);
+    }
+  }, [
+    clearClientOverlays,
+    clearRouteOverlays,
+    drawClientsOnMap,
+    drawRouteOnMap,
+    mapsLoaded,
+    page,
+    routeData,
+    toolsMapMode,
+  ]);
 
   const calculateCalendarTravelTimes = useCallback(async () => {
     if (!mapsLoaded || scheduledJobs.length === 0) return;
@@ -889,8 +1037,8 @@ export default function Dashboard() {
         {page === "payroll"  && <PayrollTab showToast={showToast} isMobile={isMobile} />}
         {page === "payments" && <PaymentsTab scheduledJobs={scheduledJobs} setScheduledJobs={setScheduledJobs} scheduleClients={scheduleClients} invoices={invoices} setInvoices={setInvoices} paymentFilter={paymentFilter} setPaymentFilter={setPaymentFilter} setShowInvoiceModal={setShowInvoiceModal} showToast={showToast} isMobile={isMobile} />}
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} showToast={showToast} isMobile={isMobile} refreshPhotos={refreshPhotos} getSignedUrl={getSignedUrl} />}
-        {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} isMobile={isMobile} />}
-        {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} />}
+        {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} toolsMapMode={toolsMapMode} setToolsMapMode={setToolsMapMode} isMobile={isMobile} />}
+        {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} photos={photos} />}
         {page === "rota"     && <RotaTab
           scheduledJobs={scheduledJobs}
           staffMembers={staffMembers}
