@@ -5,6 +5,7 @@ import { T } from '../shared';
 import { useProfiles }      from '../hooks/useProfiles';
 import { usePayroll }       from '../hooks/usePayroll';
 import { useScheduledJobs } from '../hooks/useScheduledJobs';
+import { useStaffTimeEntries } from '../hooks/useStaffTimeEntries';
 import { calcPayrollBreakdown, calcHoursFromJobs, fmtCurrency, fmtPercent, getWeekLabel } from '../utils/payroll';
 
 // ═══════════════════════════════════════════════════════════
@@ -242,6 +243,7 @@ export default function PayrollTab({ showToast, isMobile }) {
   const { staffMembers }                         = useProfiles();
   const { payrollRecords, savePayrollRecord }    = usePayroll();
   const { scheduledJobs }                        = useScheduledJobs();
+  const { timeEntries }                          = useStaffTimeEntries({ weekStart });
 
   // Build draft payroll rows for this week
   const draftRows = useMemo(() => {
@@ -253,7 +255,7 @@ export default function PayrollTab({ showToast, isMobile }) {
       if (existing) return { staff, existing, draft: null };
 
       // Auto-calculate hours from jobs
-      const hoursCalc = calcHoursFromJobs(scheduledJobs, staff.id, weekStart);
+      const hoursCalc = calcHoursFromJobs(scheduledJobs, staff.id, weekStart, timeEntries);
 
       const ov = overrides[staff.id] || {};
       const hoursWorked    = ov.hoursWorked    ?? hoursCalc.hoursWorked;
@@ -290,7 +292,7 @@ export default function PayrollTab({ showToast, isMobile }) {
         },
       };
     });
-  }, [staffMembers, payrollRecords, scheduledJobs, weekStart, overrides]);
+  }, [staffMembers, payrollRecords, scheduledJobs, weekStart, overrides, timeEntries]);
 
   const hasAnyDraft    = draftRows.some(r => r.draft !== null);
   const hasAnyExisting = draftRows.some(r => r.existing !== null);
@@ -473,9 +475,11 @@ export default function PayrollTab({ showToast, isMobile }) {
                       value={ov.hoursWorked ?? rec.hoursWorked ?? 0}
                       onChange={v => handleOverride(staff.id, 'hoursWorked', v)}
                       hint={
-                        draft?.hoursSource === 'published_rota_schedule'
-                          ? `Auto: ${draft?.scheduledHours || 0}h from published rota (${draft?.jobsScheduled || 0} jobs)`
-                          : `Auto: ${draft?.completedHours || 0}h from completed jobs (${draft?.jobsCompleted || 0}/${draft?.jobsScheduled || 0})`
+                        draft?.hoursSource === 'clock_timesheet'
+                          ? `Auto: ${draft?.clockHours || 0}h from staff clock records (${draft?.clockEntries || 0} day${(draft?.clockEntries || 0) === 1 ? '' : 's'})`
+                          : draft?.hoursSource === 'published_rota_schedule'
+                            ? `Auto: ${draft?.scheduledHours || 0}h from published rota (${draft?.jobsScheduled || 0} jobs)`
+                            : `Auto: ${draft?.completedHours || 0}h from completed jobs (${draft?.jobsCompleted || 0}/${draft?.jobsScheduled || 0})`
                       }
                     />
                     <EditField

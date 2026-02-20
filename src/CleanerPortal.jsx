@@ -3,15 +3,17 @@ import StaffLogin from './auth/StaffLogin';
 import { useScheduledJobs } from './hooks/useScheduledJobs';
 import { useClients } from './hooks/useClients';
 import { usePhotos } from './hooks/usePhotos';
+import { useStaffTimeEntries } from './hooks/useStaffTimeEntries';
 import { supabase, supabaseReady } from './lib/supabase';
 import { T } from './shared';
+import { calcPayrollBreakdown, calcWorkedMinutesFromEntry, fmtCurrency } from './utils/payroll';
 
 // ═══════════════════════════════════════════════════════════
 // STAFF PORTAL
 // Auth: StaffLogin (email + password → Supabase session)
 // Data: Supabase Realtime — filters by assigned_staff + is_published
 // Photos: Supabase Storage
-// Tabs: Today | Payslips
+// Tabs: Today | Rota | Hours | Payslips
 // ═══════════════════════════════════════════════════════════
 
 // ─── Demo data ───────────────────────────────────────────
@@ -29,6 +31,8 @@ const DEMO_CLIENTS = [
   { id: 'dc3', name: 'Emma Collins',   address: '5 Parkyn Parade, Mooloolaba QLD 4557',         notes: '',                                    access_notes: 'Lockbox side gate – code 5678',       frequency: 'weekly' },
 ];
 
+const DEFAULT_BREAK_MINUTES = 30;
+
 // ─── Helpers ─────────────────────────────────────────────
 function fmtSecs(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -37,6 +41,16 @@ function fmtSecs(s) {
 function fmtMins(m) {
   const h = Math.floor(m / 60), rem = m % 60;
   return h > 0 ? `${h}hr${rem > 0 ? ` ${rem}min` : ''}` : `${m}min`;
+}
+function fmtHours(hours) {
+  const n = Number(hours) || 0;
+  return `${n.toFixed(2)}h`;
+}
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
 }
 function weekDays(anchorDate) {
   const d = new Date(anchorDate);
@@ -154,6 +168,9 @@ export default function CleanerPortal() {
   const [localPhotos,  setLocalPhotos]  = useState({});
   const [payslips,     setPayslips]     = useState([]);
   const [jobClientProfiles, setJobClientProfiles] = useState({});
+  const [clockActionLoading, setClockActionLoading] = useState(false);
+  const [breakMinutes, setBreakMinutes] = useState(DEFAULT_BREAK_MINUTES);
+  const [demoTimeEntries, setDemoTimeEntries] = useState([]);
 
   const timerRefs = useRef({});
   const cameraRef = useRef(null);
@@ -164,17 +181,19 @@ export default function CleanerPortal() {
 
   // ── Hooks ──────────────────────────────────────────────
   // For staff portal: useScheduledJobs filters by assigned_staff + is_published
-  const { scheduledJobs, updateJob } = useScheduledJobs(staffId ? { staffId } : {});
-  const { clients, loading: clientsLoading } = useClients();
-  const { photos: supaPhotos, uploadPhoto, getSignedUrl } = usePhotos();
-
   // Week for date strip
   const weekDates = weekDays(selectedDate);
   const weekStart = getMonday(selectedDate);
 
+  const { scheduledJobs, updateJob, refreshScheduledJobs } = useScheduledJobs(staffId ? { staffId } : {});
+  const { clients, loading: clientsLoading } = useClients();
+  const { photos: supaPhotos, uploadPhoto, getSignedUrl } = usePhotos();
+  const { timeEntries, refreshTimeEntries } = useStaffTimeEntries(staffId ? { staffId, weekStart } : { weekStart });
+
   // ── Active jobs for selected date ──────────────────────
   const allJobs = demoMode ? DEMO_JOBS : scheduledJobs;
   const allClients = demoMode ? DEMO_CLIENTS : clients;
+  const allTimeEntries = demoMode ? demoTimeEntries : timeEntries;
 
   const dayJobs = allJobs
     .filter(j => {
@@ -190,10 +209,35 @@ export default function CleanerPortal() {
     setTimeout(() => setToast(null), 3000);
   }, []);
 
+  useEffect(() => {
+    if (demoMode || !staffId) return;
+    const refresh = async () => {
+      await Promise.allSettled([
+        refreshScheduledJobs?.(),
+        refreshTimeEntries?.(),
+      ]);
+    };
+    refresh();
+    const onFocus = () => { refresh(); };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refresh();
+    }, 15000);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [demoMode, refreshScheduledJobs, refreshTimeEntries, staffId]);
+
   // ── Timer management ───────────────────────────────────
   useEffect(() => {
     dayJobs.forEach(job => {
-      const arrivedAt = job.arrived_at || job.arrivedAt;
+      const arrivedAt = job.actual_start_at || job.actualStartAt || job.arrived_at || job.arrivedAt;
       const status    = job.status || job.job_status || job.jobStatus;
       if (status === 'in_progress' && arrivedAt && !timerRefs.current[job.id]) {
         const start = new Date(arrivedAt).getTime();
@@ -288,16 +332,19 @@ export default function CleanerPortal() {
     const job = allJobs.find(j => j.id === jobId);
     if (!job) return;
 
-    const arrivedAt = job.arrived_at || job.arrivedAt;
+    const arrivedAt = job.actual_start_at || job.actualStartAt || job.arrived_at || job.arrivedAt;
     const updates = { status: newStatus };
     if (newStatus === 'in_progress') {
+      updates.actual_start_at = now;
       const start = Date.now();
       timerRefs.current[jobId] = setInterval(() => {
         setActiveTimers(p => ({ ...p, [jobId]: Math.floor((Date.now() - start) / 1000) }));
       }, 1000);
     } else if (newStatus === 'completed') {
+      updates.actual_end_at = now;
       if (arrivedAt) {
-        updates.duration = Math.max(15, Math.round((new Date(now) - new Date(arrivedAt)) / 60000));
+        const actualMinutes = Math.max(15, Math.round((new Date(now) - new Date(arrivedAt)) / 60000));
+        updates.actual_duration = actualMinutes;
       }
       if (timerRefs.current[jobId]) { clearInterval(timerRefs.current[jobId]); delete timerRefs.current[jobId]; }
     }
@@ -308,6 +355,94 @@ export default function CleanerPortal() {
 
     showToast(newStatus === 'in_progress' ? 'Timer started!' : 'Job completed!');
   }, [allJobs, demoMode, updateJob, showToast]);
+
+  const callStaffClockApi = useCallback(async (action, workDate) => {
+    if (!supabaseReady || !supabase) throw new Error('Supabase auth is not configured.');
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw new Error(error.message || 'Failed to load auth session.');
+    const token = data?.session?.access_token;
+    if (!token) throw new Error('Session expired. Please sign in again.');
+
+    const res = await fetch('/api/staff/clock', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        action,
+        workDate,
+        breakMinutes,
+      }),
+    });
+    let body = {};
+    try { body = await res.json(); } catch {}
+    if (!res.ok || body?.error) {
+      throw new Error(body?.error || body?.details || `Request failed (${res.status})`);
+    }
+    return body?.entry || null;
+  }, [breakMinutes]);
+
+  const handleClockIn = useCallback(async () => {
+    if (!window.confirm(`Are you sure you want to clock in for ${selectedDate}?`)) return;
+    setClockActionLoading(true);
+    try {
+      if (demoMode) {
+        const now = new Date().toISOString();
+        setDemoTimeEntries(prev => {
+          const existing = prev.find(entry => entry.work_date === selectedDate);
+          if (existing?.clock_out_at) return prev;
+          if (existing?.clock_in_at) return prev;
+          return [
+            ...prev.filter(entry => entry.work_date !== selectedDate),
+            {
+              id: `demo_clock_${selectedDate}`,
+              staff_id: 'demo',
+              work_date: selectedDate,
+              clock_in_at: now,
+              clock_out_at: null,
+              break_minutes: breakMinutes,
+            },
+          ];
+        });
+        showToast('✅ Clocked in');
+      } else {
+        await callStaffClockApi('clock_in', selectedDate);
+        await refreshTimeEntries();
+        showToast('✅ Clocked in');
+      }
+    } catch (err) {
+      console.error('[staff:clock-in] failed', err);
+      showToast(`❌ Clock in failed: ${err.message}`);
+    } finally {
+      setClockActionLoading(false);
+    }
+  }, [breakMinutes, callStaffClockApi, demoMode, refreshTimeEntries, selectedDate, showToast]);
+
+  const handleClockOut = useCallback(async () => {
+    if (!window.confirm(`Are you sure you want to clock out for ${selectedDate}?`)) return;
+    setClockActionLoading(true);
+    try {
+      if (demoMode) {
+        const now = new Date().toISOString();
+        setDemoTimeEntries(prev => prev.map(entry => (
+          entry.work_date === selectedDate
+            ? { ...entry, clock_out_at: entry.clock_out_at || now, break_minutes: breakMinutes }
+            : entry
+        )));
+        showToast('✅ Clocked out');
+      } else {
+        await callStaffClockApi('clock_out', selectedDate);
+        await refreshTimeEntries();
+        showToast('✅ Clocked out');
+      }
+    } catch (err) {
+      console.error('[staff:clock-out] failed', err);
+      showToast(`❌ Clock out failed: ${err.message}`);
+    } finally {
+      setClockActionLoading(false);
+    }
+  }, [breakMinutes, callStaffClockApi, demoMode, refreshTimeEntries, selectedDate, showToast]);
 
   // ── Photo upload ──────────────────────────────────────
   const handlePhotoFile = useCallback(async (e) => {
@@ -352,20 +487,54 @@ export default function CleanerPortal() {
   }, [allJobs, demoMode, selectedDate, profile, uploadPhoto, showToast]);
 
   // ── Weekly hours summary ───────────────────────────────
+  const selectedDayEntry = allTimeEntries.find(entry => entry.work_date === selectedDate) || null;
+  useEffect(() => {
+    setBreakMinutes(selectedDayEntry?.break_minutes ?? DEFAULT_BREAK_MINUTES);
+  }, [selectedDayEntry?.id, selectedDayEntry?.break_minutes]);
+
   const weeklyStats = (() => {
     return weekDates.map((d, i) => {
       const dJobs = allJobs.filter(j => j.date === d && !j.is_break && !j.isBreak);
       const done  = dJobs.filter(j => (j.status || j.job_status || j.jobStatus) === 'completed');
-      const mins  = done.reduce((s, j) => s + (j.duration || 0), 0);
-      return { label: DAY_LABELS[i], date: d, jobs: dJobs.length, done: done.length, hours: Math.round(mins / 60 * 10) / 10 };
+      const scheduledMins = dJobs.reduce((s, j) => s + (j.duration || 0), 0);
+      const completedMins = done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
+      const timeEntry = allTimeEntries.find(entry => entry.work_date === d);
+      const workedMins = timeEntry
+        ? calcWorkedMinutesFromEntry(timeEntry, d === TODAY)
+        : completedMins;
+      return {
+        label: DAY_LABELS[i],
+        date: d,
+        jobs: dJobs.length,
+        done: done.length,
+        scheduledMins,
+        workedMins,
+        timeEntry,
+        scheduledHours: Math.round((scheduledMins / 60) * 100) / 100,
+        actualHours: Math.round((workedMins / 60) * 100) / 100,
+      };
     });
   })();
 
   const todayStats = (() => {
     const done = dayJobs.filter(j => (j.status || j.job_status || j.jobStatus) === 'completed');
-    const total = dayJobs.reduce((s, j) => s + (j.duration || 0), 0);
-    return { done: done.length, total: dayJobs.length, mins: total };
+    const scheduledMins = dayJobs.reduce((s, j) => s + (j.duration || 0), 0);
+    const workedMins = selectedDayEntry
+      ? calcWorkedMinutesFromEntry(selectedDayEntry, selectedDate === TODAY)
+      : done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
+    return { done: done.length, total: dayJobs.length, scheduledMins, workedMins };
   })();
+
+  const weeklyScheduledMinutes = weeklyStats.reduce((sum, s) => sum + s.scheduledMins, 0);
+  const weeklyWorkedMinutes = weeklyStats.reduce((sum, s) => sum + s.workedMins, 0);
+  const weeklyScheduledHours = Math.round((weeklyScheduledMinutes / 60) * 100) / 100;
+  const weeklyWorkedHours = Math.round((weeklyWorkedMinutes / 60) * 100) / 100;
+  const hourlyRate = Number(profile?.hourly_rate || 0);
+  const payrollEstimate = calcPayrollBreakdown({
+    hoursWorked: weeklyWorkedHours || weeklyScheduledHours,
+    hourlyRate,
+    employmentType: profile?.employment_type || 'casual',
+  });
 
   // ── Sign out ───────────────────────────────────────────
   const handleSignOut = async () => {
@@ -374,6 +543,8 @@ export default function CleanerPortal() {
     setDemoMode(false);
     setActiveTimers({});
     setLocalPhotos({});
+    setDemoTimeEntries([]);
+    setBreakMinutes(DEFAULT_BREAK_MINUTES);
   };
 
   const teamColor = T.primary;
@@ -398,7 +569,7 @@ export default function CleanerPortal() {
   // ── MAIN PORTAL ────────────────────────────────────────
   // ══════════════════════════════════════════════════════
   return (
-    <div style={{ minHeight: '100vh', background: T.bg, paddingBottom: 90 }}>
+    <div style={{ minHeight: '100vh', background: T.bg, paddingBottom: 112 }}>
 
       {/* ── Header ─────────────────────────────────────── */}
       <div style={{ background: teamColor, padding: '16px 20px', color: '#fff', position: 'sticky', top: 0, zIndex: 30 }}>
@@ -410,8 +581,10 @@ export default function CleanerPortal() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{displayName}</div>
-            {activeTab === 'today' && (
-              <div style={{ fontSize: 12, opacity: 0.9 }}>{todayStats.done}/{todayStats.total} jobs · {fmtMins(todayStats.mins)}</div>
+            {activeTab !== 'payslips' && (
+              <div style={{ fontSize: 12, opacity: 0.9 }}>
+                {todayStats.done}/{todayStats.total} jobs · {fmtMins(todayStats.scheduledMins)} scheduled · {fmtMins(todayStats.workedMins)} worked
+              </div>
             )}
           </div>
           <button
@@ -423,7 +596,7 @@ export default function CleanerPortal() {
         </div>
 
         {/* Week strip */}
-        {activeTab === 'today' && (
+        {activeTab !== 'payslips' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 2 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <button
@@ -480,33 +653,73 @@ export default function CleanerPortal() {
         )}
       </div>
 
-      {/* ── Tab Bar ────────────────────────────────────── */}
-      <div style={{ display: 'flex', background: '#fff', borderBottom: `1px solid ${T.border}`, position: 'sticky', top: activeTab === 'today' ? 120 : 76, zIndex: 20 }}>
-        {[
-          { id: 'today',    label: 'Today' },
-          { id: 'payslips', label: 'Payslips' },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              flex: 1, padding: '12px 8px', border: 'none', background: 'none', cursor: 'pointer',
-              fontSize: 13, fontWeight: 700,
-              color: activeTab === tab.id ? teamColor : T.textMuted,
-              borderBottom: activeTab === tab.id ? `2px solid ${teamColor}` : '2px solid transparent',
-              transition: 'all 0.15s',
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       {/* ══════════════════════════════════════════════════
           TODAY TAB
       ══════════════════════════════════════════════════ */}
       {activeTab === 'today' && (
         <div style={{ padding: '16px 16px 0' }}>
+          {/* Daily clock in/out */}
+          <div style={{ background: '#fff', borderRadius: T.radius, padding: '14px 14px', marginBottom: 16, boxShadow: T.shadow }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted }}>TODAY'S WORKDAY</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>{new Date(selectedDate).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}</div>
+              </div>
+              <div style={{ fontSize: 11, color: T.textMuted, textAlign: 'right' }}>
+                <div>Break: {breakMinutes} min/day</div>
+                <div>Worked: {fmtMins(calcWorkedMinutesFromEntry(selectedDayEntry, selectedDate === TODAY))}</div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+              <div style={{ background: T.bg, borderRadius: T.radiusSm, padding: '8px 10px' }}>
+                <div style={{ fontSize: 10, color: T.textMuted, marginBottom: 2 }}>Clock In</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: T.text }}>{fmtTime(selectedDayEntry?.clock_in_at || selectedDayEntry?.clockInAt)}</div>
+              </div>
+              <div style={{ background: T.bg, borderRadius: T.radiusSm, padding: '8px 10px' }}>
+                <div style={{ fontSize: 10, color: T.textMuted, marginBottom: 2 }}>Clock Out</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: T.text }}>{fmtTime(selectedDayEntry?.clock_out_at || selectedDayEntry?.clockOutAt)}</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={handleClockIn}
+                disabled={clockActionLoading || Boolean((selectedDayEntry?.clock_in_at || selectedDayEntry?.clockInAt) && !(selectedDayEntry?.clock_out_at || selectedDayEntry?.clockOutAt))}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: T.radiusSm,
+                  border: 'none',
+                  background: T.accent,
+                  color: '#fff',
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: clockActionLoading ? 'not-allowed' : 'pointer',
+                  opacity: clockActionLoading ? 0.7 : 1,
+                }}
+              >
+                {clockActionLoading ? '...' : 'Clock In'}
+              </button>
+              <button
+                onClick={handleClockOut}
+                disabled={clockActionLoading || !(selectedDayEntry?.clock_in_at || selectedDayEntry?.clockInAt) || Boolean(selectedDayEntry?.clock_out_at || selectedDayEntry?.clockOutAt)}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: T.radiusSm,
+                  border: 'none',
+                  background: teamColor,
+                  color: '#fff',
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: clockActionLoading ? 'not-allowed' : 'pointer',
+                  opacity: clockActionLoading ? 0.7 : 1,
+                }}
+              >
+                {clockActionLoading ? '...' : 'Clock Out'}
+              </button>
+            </div>
+          </div>
+
           {/* Weekly hours bar */}
           <div style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', marginBottom: 16, boxShadow: T.shadow }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: T.textMuted, marginBottom: 8 }}>THIS WEEK</div>
@@ -523,9 +736,9 @@ export default function CleanerPortal() {
                 >
                   <div style={{ fontSize: 9, color: T.textMuted }}>{s.label}</div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: s.done === s.jobs && s.jobs > 0 ? teamColor : T.text }}>
-                    {s.hours > 0 ? `${s.hours}h` : s.jobs > 0 ? `${s.jobs}j` : '–'}
+                    {s.actualHours > 0 ? `${s.actualHours}h` : s.jobs > 0 ? `${s.jobs}j` : '–'}
                   </div>
-                  <div style={{ fontSize: 9, color: T.textLight }}>{s.done}/{s.jobs}</div>
+                  <div style={{ fontSize: 9, color: T.textLight }}>{fmtHours(s.scheduledHours)} sch</div>
                 </div>
               ))}
             </div>
@@ -552,7 +765,7 @@ export default function CleanerPortal() {
                 const isDone     = status === 'completed';
                 const timer      = activeTimers[job.id];
                 const startT     = job.start_time || job.startTime || '';
-                const actualDur  = job.duration;
+                const actualDur  = job.actual_duration || job.actualDuration || job.duration;
                 const extras     = job.extras || [];
                 const address    = client?.address || job?.address || `${job.suburb}, QLD`;
                 const accessNote = client?.access_notes || client?.accessNotes || job?.access_notes || job?.accessNotes;
@@ -683,7 +896,7 @@ export default function CleanerPortal() {
 
                     {/* Action buttons */}
                     <div style={{ padding: '14px 16px' }}>
-                      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
                         <button
                           onClick={() => {
                             const dest = encodeURIComponent(mapsDestination);
@@ -691,13 +904,26 @@ export default function CleanerPortal() {
                             const opened = window.open(mapsUrl, '_blank', 'noopener,noreferrer');
                             if (!opened) window.location.href = mapsUrl;
                           }}
-                          style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: 'none', background: T.blue, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                          style={{ padding: '12px', borderRadius: T.radiusSm, border: 'none', background: T.blue, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                         >
-                          Navigate
+                          Google
+                        </button>
+                        <button
+                          onClick={() => {
+                            const dest = encodeURIComponent(mapsDestination);
+                            const wazeUrl = client?.lat && client?.lng
+                              ? `https://waze.com/ul?ll=${client.lat},${client.lng}&navigate=yes`
+                              : `https://waze.com/ul?q=${dest}&navigate=yes`;
+                            const opened = window.open(wazeUrl, '_blank', 'noopener,noreferrer');
+                            if (!opened) window.location.href = wazeUrl;
+                          }}
+                          style={{ padding: '12px', borderRadius: T.radiusSm, border: 'none', background: '#2F5F4A', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          Waze
                         </button>
                         <button
                           onClick={() => setExpandedJob(isExp ? null : job.id)}
-                          style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: isExp ? T.primaryLight : '#fff', color: T.text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                          style={{ padding: '12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: isExp ? T.primaryLight : '#fff', color: T.text, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                         >
                           Photos ({photos.before.length + photos.after.length})
                         </button>
@@ -783,6 +1009,118 @@ export default function CleanerPortal() {
       )}
 
       {/* ══════════════════════════════════════════════════
+          ROTA TAB
+      ══════════════════════════════════════════════════ */}
+      {activeTab === 'rota' && (
+        <div style={{ padding: 16 }}>
+          <div style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', marginBottom: 12, boxShadow: T.shadow }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted, marginBottom: 8 }}>WEEKLY ROTA</div>
+            <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+              {weeklyStats.map(s => (
+                <button
+                  key={s.date}
+                  onClick={() => setSelectedDate(s.date)}
+                  style={{
+                    flex: '0 0 auto',
+                    padding: '8px 10px',
+                    borderRadius: 10,
+                    border: s.date === selectedDate ? `1.5px solid ${teamColor}` : `1.5px solid ${T.border}`,
+                    background: s.date === selectedDate ? `${teamColor}15` : '#fff',
+                    color: s.date === selectedDate ? teamColor : T.text,
+                    cursor: 'pointer',
+                    minWidth: 66,
+                  }}
+                >
+                  <div style={{ fontSize: 10, fontWeight: 700 }}>{s.label}</div>
+                  <div style={{ fontSize: 12, fontWeight: 800 }}>{s.jobs} jobs</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {dayJobs.length === 0 ? (
+            <div style={{ background: '#fff', borderRadius: T.radius, padding: 36, textAlign: 'center', boxShadow: T.shadow }}>
+              <div style={{ fontWeight: 700, color: T.text, marginBottom: 4 }}>No assigned jobs</div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>Nothing scheduled for {new Date(selectedDate).toLocaleDateString('en-AU', { weekday: 'long' })}.</div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {dayJobs.map(job => {
+                const start = job.start_time || job.startTime || '—';
+                const end = job.end_time || job.endTime || '—';
+                const client = resolveClientProfile(job, allClients) || jobClientProfiles[String(job.id)] || buildJobSnapshotProfile(job);
+                const address = client?.address || `${job.suburb}, QLD`;
+                return (
+                  <div key={job.id} style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', boxShadow: T.shadow }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>{job.client_name || job.clientName}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: teamColor }}>{start} - {end}</div>
+                    </div>
+                    <div style={{ fontSize: 12, color: T.textMuted }}>{address}</div>
+                    <div style={{ fontSize: 11, color: T.textLight, marginTop: 6 }}>{fmtMins(job.duration || 0)} scheduled</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════
+          HOURS TAB
+      ══════════════════════════════════════════════════ */}
+      {activeTab === 'hours' && (
+        <div style={{ padding: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+            <Stat label="Scheduled Hours" value={fmtHours(weeklyScheduledHours)} />
+            <Stat label="Worked Hours" value={fmtHours(weeklyWorkedHours)} highlight={teamColor} />
+            <Stat label="Est. Gross" value={fmtCurrency(payrollEstimate.grossPay)} />
+            <Stat label="Est. Net" value={fmtCurrency(payrollEstimate.netPay)} highlight={teamColor} />
+          </div>
+
+          <div style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', marginBottom: 12, boxShadow: T.shadow }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted, marginBottom: 10 }}>WEEK DETAIL · {fmtWeekRange(weekStart)}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {weeklyStats.map(s => {
+                const clockIn = s.timeEntry?.clock_in_at || s.timeEntry?.clockInAt;
+                const clockOut = s.timeEntry?.clock_out_at || s.timeEntry?.clockOutAt;
+                const breakMins = Number(s.timeEntry?.break_minutes ?? DEFAULT_BREAK_MINUTES) || DEFAULT_BREAK_MINUTES;
+                return (
+                  <button
+                    key={s.date}
+                    onClick={() => setSelectedDate(s.date)}
+                    style={{
+                      border: s.date === selectedDate ? `1.5px solid ${teamColor}` : `1px solid ${T.border}`,
+                      background: s.date === selectedDate ? `${teamColor}10` : '#fff',
+                      borderRadius: 10,
+                      padding: '10px 12px',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: T.text }}>{s.label} {new Date(s.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: T.text }}>{fmtHours(s.actualHours)} worked</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: T.textMuted }}>
+                      Scheduled {fmtHours(s.scheduledHours)} · Clock {fmtTime(clockIn)} - {fmtTime(clockOut)} · Break {breakMins}m
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ background: T.blueLight, borderRadius: T.radius, padding: '12px 14px' }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: T.blue, marginBottom: 4 }}>Payroll Sync</div>
+            <div style={{ fontSize: 12, color: T.textMuted }}>
+              Clocked hours sync to admin payroll automatically. Owners can still adjust before processing payslips.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════
           PAYSLIPS TAB
       ══════════════════════════════════════════════════ */}
       {activeTab === 'payslips' && (
@@ -791,13 +1129,40 @@ export default function CleanerPortal() {
         </div>
       )}
 
+      {/* Bottom navigation */}
+      <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, background: '#fff', borderTop: `1px solid ${T.border}`, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', zIndex: 120 }}>
+        {[
+          { id: 'today', label: 'Today', icon: '🧼' },
+          { id: 'rota', label: 'Rota', icon: '📅' },
+          { id: 'hours', label: 'Hours', icon: '⏱️' },
+          { id: 'payslips', label: 'Pay', icon: '💵' },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: '10px 4px 12px',
+              color: activeTab === tab.id ? teamColor : T.textMuted,
+              fontSize: 11,
+              fontWeight: activeTab === tab.id ? 800 : 600,
+              cursor: 'pointer',
+            }}
+          >
+            <div style={{ fontSize: 16, marginBottom: 3 }}>{tab.icon}</div>
+            <div>{tab.label}</div>
+          </button>
+        ))}
+      </div>
+
       {/* Hidden file inputs */}
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoFile} style={{ display: 'none' }} />
       <input ref={fileRef}   type="file" accept="image/*" multiple            onChange={handlePhotoFile} style={{ display: 'none' }} />
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', background: '#1B3A2D', color: '#fff', padding: '13px 22px', borderRadius: 30, fontSize: 14, fontWeight: 600, boxShadow: T.shadowLg, zIndex: 200, whiteSpace: 'nowrap' }}>
+        <div style={{ position: 'fixed', bottom: 74, left: '50%', transform: 'translateX(-50%)', background: '#1B3A2D', color: '#fff', padding: '13px 22px', borderRadius: 30, fontSize: 14, fontWeight: 600, boxShadow: T.shadowLg, zIndex: 200, whiteSpace: 'nowrap' }}>
           {toast}
         </div>
       )}

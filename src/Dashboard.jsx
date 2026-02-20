@@ -70,17 +70,17 @@ export default function Dashboard() {
   const { profile, signOut } = useAuth();
 
   // ─── Data from hooks (Supabase or localStorage fallback) ───
-  const { clients,  addClient,  updateClient,  removeClient }          = useClients();
-  const { enquiries, setEnquiries, addEnquiry, updateEnquiry, removeEnquiry } = useEnquiries();
-  const { quotes,   setQuotes,  addQuote,    updateQuote }             = useQuotes();
-  const { scheduledJobs, setScheduledJobs, addJob, updateJob: updateJobDB, removeJob, bulkUpsertJobs, publishWeek, unpublishWeek } = useScheduledJobs();
-  const { invoices, setInvoices, addInvoice: addInvoiceDB, updateInvoice } = useInvoices();
-  const { emailHistory, setEmailHistory, addEmailHistory }             = useEmailHistory();
+  const { clients,  addClient,  updateClient,  removeClient, refreshClients } = useClients();
+  const { enquiries, setEnquiries, addEnquiry, updateEnquiry, removeEnquiry, refreshEnquiries } = useEnquiries();
+  const { quotes,   setQuotes,  addQuote,    updateQuote, refreshQuotes } = useQuotes();
+  const { scheduledJobs, setScheduledJobs, addJob, updateJob: updateJobDB, removeJob, bulkUpsertJobs, publishWeek, unpublishWeek, refreshScheduledJobs } = useScheduledJobs();
+  const { invoices, setInvoices, addInvoice: addInvoiceDB, updateInvoice, refreshInvoices } = useInvoices();
+  const { emailHistory, setEmailHistory, addEmailHistory, refreshEmailHistory } = useEmailHistory();
   const { pricing,  setPricing }                                        = usePricing();
   const { templates, addTemplate: addTemplateDB, removeTemplate: removeTemplateDB, saveAllTemplates } = useTemplates();
   const { scheduleSettings, setScheduleSettings }                      = useScheduleSettings();
   const { photos, refreshPhotos, getSignedUrl }                         = usePhotos();
-  const { staffMembers }                                                = useProfiles();
+  const { staffMembers, refreshProfiles }                               = useProfiles();
 
   // scheduleClients = active clients with scheduling info (subset of clients)
   const scheduleClients = clients.filter(c => c.status === "active");
@@ -152,6 +152,7 @@ export default function Dashboard() {
   const [editingScheduleClient,  setEditingScheduleClient]   = useState(null);
 
   const showToast = useCallback((msg) => setToast(msg), []);
+  const refreshAllDataRunningRef = useRef(false);
   const getAccessToken = useCallback(async () => {
     if (!supabaseReady || !supabase) throw new Error("Supabase auth is not configured.");
     const { data, error } = await supabase.auth.getSession();
@@ -182,6 +183,34 @@ export default function Dashboard() {
     return body;
   }, [getAccessToken]);
 
+  const refreshAllData = useCallback(async () => {
+    if (!supabaseReady || refreshAllDataRunningRef.current) return;
+    refreshAllDataRunningRef.current = true;
+    try {
+      await Promise.allSettled([
+        refreshEnquiries(),
+        refreshQuotes(),
+        refreshClients(),
+        refreshScheduledJobs(),
+        refreshInvoices(),
+        refreshEmailHistory(),
+        refreshProfiles(),
+        refreshPhotos(),
+      ]);
+    } finally {
+      refreshAllDataRunningRef.current = false;
+    }
+  }, [
+    refreshClients,
+    refreshEmailHistory,
+    refreshEnquiries,
+    refreshInvoices,
+    refreshPhotos,
+    refreshProfiles,
+    refreshQuotes,
+    refreshScheduledJobs,
+  ]);
+
   // ─── Effects ───
   useEffect(() => {
     const handler = () => setIsMobile(window.innerWidth < 768);
@@ -190,6 +219,26 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => { if (isMobile) setSidebarOpen(false); }, [page, isMobile]);
+
+  useEffect(() => {
+    if (!supabaseReady) return;
+    refreshAllData();
+    const onFocus = () => { refreshAllData(); };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshAllData();
+    };
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") refreshAllData();
+    }, 12000);
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [refreshAllData]);
 
   // Realtime: listen for new form submissions (Supabase will push via hook subscription)
   // The useEnquiries hook already subscribes to postgres_changes on enquiries table.
@@ -279,6 +328,7 @@ export default function Dashboard() {
     try {
       const result = await callSecureQuoteApi("/api/quotes/create", { enquiryId: enqId });
       const quoteId = result?.quote?.id || "new";
+      await refreshAllData();
       showToast(`💰 Quote ${quoteId} generated — review & approve`);
     } catch (err) {
       console.error("[quote:create] failed", { enqId, error: err });
@@ -381,6 +431,7 @@ export default function Dashboard() {
       } catch (historyErr) {
         console.error("[quote:mark-sent] email sent but failed to save history", historyErr);
       }
+      await refreshAllData();
       setEmailPreview(null);
       showToast(`✅ Quote sent to ${recipientEmail}!`);
     } catch (err) {
@@ -395,6 +446,7 @@ export default function Dashboard() {
     try {
       const result = await callSecureQuoteApi("/api/quotes/accept", { quoteId: qId });
       const clientName = result?.client?.name;
+      await refreshAllData();
       showToast(clientName ? `🎉 Quote accepted — ${clientName} is now a client` : "🎉 Quote accepted — new client!");
     } catch (err) {
       console.error("[quote:accept] failed", { qId, error: err });

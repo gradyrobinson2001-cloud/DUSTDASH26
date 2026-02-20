@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { loadScheduledJobs, saveScheduledJobs } from '../shared';
 
@@ -11,6 +11,9 @@ const mapDbToJob = (row) => {
   const clientName = row.client_name ?? row.clientName ?? '';
   const startTime = row.start_time ?? row.startTime ?? '';
   const endTime = row.end_time ?? row.endTime ?? '';
+  const actualStartAt = row.actual_start_at ?? row.actualStartAt ?? row.arrived_at ?? row.arrivedAt ?? null;
+  const actualEndAt = row.actual_end_at ?? row.actualEndAt ?? null;
+  const actualDuration = row.actual_duration ?? row.actualDuration ?? null;
   const status = row.status ?? row.job_status ?? row.jobStatus ?? 'scheduled';
   const assignedStaff = Array.isArray(row.assigned_staff) ? row.assigned_staff : [];
   const isDemo = Boolean(row.is_demo ?? row.isDemo ?? false);
@@ -27,6 +30,14 @@ const mapDbToJob = (row) => {
     startTime,
     end_time: endTime,
     endTime,
+    actual_start_at: actualStartAt,
+    actualStartAt,
+    arrived_at: actualStartAt,
+    arrivedAt: actualStartAt,
+    actual_end_at: actualEndAt,
+    actualEndAt,
+    actual_duration: actualDuration,
+    actualDuration,
     status,
     job_status: status,
     jobStatus: status,
@@ -60,6 +71,15 @@ const toDbJob = (job) => {
   const endTime = job?.end_time ?? job?.endTime ?? null;
   if (endTime !== undefined) out.end_time = endTime;
 
+  const actualStartAt = job?.actual_start_at ?? job?.actualStartAt ?? job?.arrived_at ?? job?.arrivedAt ?? null;
+  if (actualStartAt !== undefined) out.actual_start_at = actualStartAt;
+
+  const actualEndAt = job?.actual_end_at ?? job?.actualEndAt ?? null;
+  if (actualEndAt !== undefined) out.actual_end_at = actualEndAt;
+
+  const actualDuration = job?.actual_duration ?? job?.actualDuration ?? null;
+  if (actualDuration !== undefined) out.actual_duration = actualDuration;
+
   if (job?.duration !== undefined) out.duration = job.duration;
 
   const status = job?.status ?? job?.job_status ?? job?.jobStatus;
@@ -92,6 +112,32 @@ export function useScheduledJobs({ staffId } = {}) {
   const [scheduledJobs, setScheduledJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
+  const fetchingRef = useRef(false);
+
+  const refreshScheduledJobs = useCallback(async () => {
+    if (!supabaseReady || !supabase || fetchingRef.current) return;
+    fetchingRef.current = true;
+    try {
+      let q = supabase
+        .from('scheduled_jobs')
+        .select('*')
+        .order('date')
+        .order('start_time');
+      if (staffId) {
+        q = q.contains('assigned_staff', [staffId]).eq('is_published', true);
+      }
+      const { data, error } = await q;
+      if (error) {
+        setError(error);
+        return;
+      }
+      setError(null);
+      setScheduledJobs((data ?? []).map(mapDbToJob));
+    } finally {
+      fetchingRef.current = false;
+      setLoading(false);
+    }
+  }, [staffId]);
 
   useEffect(() => {
     if (!supabaseReady) {
@@ -107,22 +153,17 @@ export function useScheduledJobs({ staffId } = {}) {
       return;
     }
     let mounted = true;
-    const fetch = async () => {
-      let q = supabase.from('scheduled_jobs').select('*').order('date').order('start_time');
-      // For staff portal: only show published jobs assigned to this staff member
-      if (staffId) {
-        q = q.contains('assigned_staff', [staffId]).eq('is_published', true);
-      }
-      const { data, error } = await q;
+    const safeRefresh = async () => {
       if (!mounted) return;
-      if (error) setError(error);
-      else setScheduledJobs((data ?? []).map(mapDbToJob));
-      setLoading(false);
+      await refreshScheduledJobs();
     };
-    fetch();
-    const ch = supabase.channel('scheduled_jobs').on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_jobs' }, fetch).subscribe();
+    safeRefresh();
+    const ch = supabase
+      .channel('scheduled_jobs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_jobs' }, safeRefresh)
+      .subscribe();
     return () => { mounted = false; supabase.removeChannel(ch); };
-  }, [staffId]);
+  }, [staffId, refreshScheduledJobs]);
 
   const addJob = async (j) => {
     const normalized = mapDbToJob(j);
@@ -247,5 +288,5 @@ export function useScheduledJobs({ staffId } = {}) {
     ));
   };
 
-  return { scheduledJobs, setScheduledJobs, loading, error, addJob, updateJob, removeJob, bulkUpsertJobs, publishWeek, unpublishWeek };
+  return { scheduledJobs, setScheduledJobs, loading, error, refreshScheduledJobs, addJob, updateJob, removeJob, bulkUpsertJobs, publishWeek, unpublishWeek };
 }

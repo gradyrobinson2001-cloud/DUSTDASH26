@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { getInitialQuotes } from '../shared';
 
@@ -6,20 +6,42 @@ export function useQuotes() {
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
+  const fetchingRef = useRef(false);
+
+  const refreshQuotes = useCallback(async () => {
+    if (!supabaseReady || !supabase || fetchingRef.current) return;
+    fetchingRef.current = true;
+    try {
+      const { data, error } = await supabase
+        .from('quotes')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        setError(error);
+        return;
+      }
+      setError(null);
+      setQuotes(data ?? []);
+    } finally {
+      fetchingRef.current = false;
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!supabaseReady) { setQuotes(getInitialQuotes()); setLoading(false); return; }
     let mounted = true;
-    const fetch = async () => {
-      const { data, error } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
+    const safeRefresh = async () => {
       if (!mounted) return;
-      if (error) setError(error); else setQuotes(data ?? []);
-      setLoading(false);
+      await refreshQuotes();
     };
-    fetch();
-    const ch = supabase.channel('quotes').on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, fetch).subscribe();
+    safeRefresh();
+    const ch = supabase
+      .channel('quotes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, safeRefresh)
+      .subscribe();
     return () => { mounted = false; supabase.removeChannel(ch); };
-  }, []);
+  }, [refreshQuotes]);
 
   const addQuote = async (q) => {
     if (!supabaseReady) {
@@ -47,5 +69,5 @@ export function useQuotes() {
     setQuotes(prev => prev.filter(q => q.id !== id));
   };
 
-  return { quotes, setQuotes, loading, error, addQuote, updateQuote, removeQuote };
+  return { quotes, setQuotes, loading, error, refreshQuotes, addQuote, updateQuote, removeQuote };
 }

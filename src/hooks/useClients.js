@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { loadClients, saveClients } from '../shared';
 
@@ -6,6 +6,27 @@ export function useClients() {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
+  const fetchingRef = useRef(false);
+
+  const refreshClients = useCallback(async () => {
+    if (!supabaseReady || !supabase || fetchingRef.current) return;
+    fetchingRef.current = true;
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        setError(error);
+        return;
+      }
+      setError(null);
+      setClients(data ?? []);
+    } finally {
+      fetchingRef.current = false;
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!supabaseReady) {
@@ -14,16 +35,14 @@ export function useClients() {
       return;
     }
     let mounted = true;
-    const fetch = async () => {
-      const { data, error } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
-      if (!mounted) return;
-      if (error) setError(error); else setClients(data ?? []);
-      setLoading(false);
-    };
-    fetch();
-    const ch = supabase.channel('clients').on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, fetch).subscribe();
+    const safeRefresh = async () => { if (mounted) await refreshClients(); };
+    safeRefresh();
+    const ch = supabase
+      .channel('clients')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, safeRefresh)
+      .subscribe();
     return () => { mounted = false; supabase.removeChannel(ch); };
-  }, []);
+  }, [refreshClients]);
 
   const addClient = async (c) => {
     if (!supabaseReady) { const updated = [...clients, { ...c, id: `local_${Date.now()}`, created_at: new Date().toISOString() }]; setClients(updated); saveClients(updated); return updated[updated.length-1]; }
@@ -47,5 +66,5 @@ export function useClients() {
     setClients(prev => prev.filter(c => c.id !== id));
   };
 
-  return { clients, setClients, loading, error, addClient, updateClient, removeClient };
+  return { clients, setClients, loading, error, refreshClients, addClient, updateClient, removeClient };
 }

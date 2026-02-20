@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 
 const normalizePhoto = (row) => {
@@ -40,32 +40,31 @@ export function usePhotos() {
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const fetchingRef = useRef(false);
 
-  const refreshPhotos = async () => {
-    if (!supabaseReady) return;
-    const { data, error } = await supabase
-      .from('photos')
-      .select('*')
-      .order('uploaded_at', { ascending: false });
-    if (error) throw error;
-    setPhotos((data ?? []).map(normalizePhoto));
-  };
+  const refreshPhotos = useCallback(async () => {
+    if (!supabaseReady || !supabase || fetchingRef.current) return;
+    fetchingRef.current = true;
+    try {
+      const { data, error } = await supabase
+        .from('photos')
+        .select('*')
+        .order('uploaded_at', { ascending: false });
+      if (error) throw error;
+      setError(null);
+      setPhotos((data ?? []).map(normalizePhoto));
+    } finally {
+      fetchingRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     if (!supabaseReady) { setLoading(false); return; }
     let mounted = true;
     const fetch = async () => {
       try {
-        const { data, error } = await supabase
-          .from('photos')
-          .select('*')
-          .order('uploaded_at', { ascending: false });
+        await refreshPhotos();
         if (!mounted) return;
-        if (error) {
-          setError(error);
-          return;
-        }
-        setPhotos((data ?? []).map(normalizePhoto));
       } catch (err) {
         if (mounted) setError(err);
       } finally {
@@ -78,7 +77,7 @@ export function usePhotos() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, fetch)
       .subscribe();
     return () => { mounted = false; supabase.removeChannel(ch); };
-  }, []);
+  }, [refreshPhotos]);
 
   const uploadPhotoDirect = async ({ jobId, clientId, date, type, file, uploadedBy }) => {
     const ext = inferExt(file);
