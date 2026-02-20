@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import emailjs from '@emailjs/browser';
+import { jsPDF } from 'jspdf';
 import { T } from '../shared';
 import { useProfiles }      from '../hooks/useProfiles';
 import { usePayroll }       from '../hooks/usePayroll';
@@ -73,6 +74,8 @@ function buildPayslipData(staff, rec, weekStart) {
     employeeName: staff?.full_name || 'Staff Member',
     employmentType: staff?.employment_type || 'casual',
     weekLabel: getWeekLabel(weekStart),
+    periodStartIso: weekStart,
+    periodEndIso: periodEnd.toISOString().split('T')[0],
     periodStartLabel: fmtDate(periodStart),
     periodEndLabel: fmtDate(periodEnd),
     paymentDateLabel: fmtDate(paymentDate),
@@ -92,51 +95,88 @@ function buildPayslipData(staff, rec, weekStart) {
     businessEmail: BUSINESS_EMAIL,
   };
 }
-function buildPayslipEmailHtml(slip) {
-  const travelRow = slip.travel > 0
-    ? `<tr><td style="padding:8px 0;">Travel allowance</td><td style="padding:8px 0;text-align:right;">${fmtCurrency(slip.travel)}</td></tr>`
-    : '';
-  const casualNote = slip.employmentType === 'casual'
-    ? `<p style="margin:8px 0 0;color:#6F7F74;font-size:12px;">Note: hourly rate includes casual loading where applicable.</p>`
-    : '';
 
-  return `
-<div style="font-family:Arial,sans-serif;color:#26352D;max-width:640px;">
-  <h2 style="margin:0 0 8px;color:#355240;">${escapeHtml(slip.businessName)} Payslip</h2>
-  <p style="margin:0 0 14px;color:#6F7F74;">Pay period ${escapeHtml(slip.periodStartLabel)} to ${escapeHtml(slip.periodEndLabel)} · Payment date ${escapeHtml(slip.paymentDateLabel)}</p>
-  <table style="width:100%;border-collapse:collapse;margin:0 0 12px;">
-    <tr><td style="padding:8px 0;color:#6F7F74;">Employee</td><td style="padding:8px 0;text-align:right;">${escapeHtml(slip.employeeName)}</td></tr>
-    <tr><td style="padding:8px 0;color:#6F7F74;">Employment type</td><td style="padding:8px 0;text-align:right;text-transform:capitalize;">${escapeHtml(slip.employmentType)}</td></tr>
-    ${slip.businessAbn ? `<tr><td style="padding:8px 0;color:#6F7F74;">Employer ABN</td><td style="padding:8px 0;text-align:right;">${escapeHtml(slip.businessAbn)}</td></tr>` : ''}
-  </table>
-  <table style="width:100%;border-collapse:collapse;border-top:1px solid #DCE4D9;border-bottom:1px solid #DCE4D9;margin:0 0 12px;">
-    <tr><td style="padding:8px 0;">Ordinary hours (${slip.hours.toFixed(2)} × ${fmtCurrency(slip.rate)}/hr)</td><td style="padding:8px 0;text-align:right;">${fmtCurrency(slip.ordinaryAmount)}</td></tr>
-    ${travelRow}
-    <tr><td style="padding:8px 0;">Gross pay</td><td style="padding:8px 0;text-align:right;">${fmtCurrency(slip.gross)}</td></tr>
-    <tr><td style="padding:8px 0;">PAYG tax withheld (ATO)</td><td style="padding:8px 0;text-align:right;">-${fmtCurrency(slip.tax)}</td></tr>
-    <tr><td style="padding:10px 0;font-weight:700;">Net pay</td><td style="padding:10px 0;text-align:right;font-weight:800;color:#355240;">${fmtCurrency(slip.net)}</td></tr>
-  </table>
-  ${casualNote}
-  <table style="width:100%;border-collapse:collapse;">
-    <tr><td style="padding:8px 0;color:#4F7D82;">Super (${(slip.superRate * 100).toFixed(1)}%)</td><td style="padding:8px 0;text-align:right;color:#4F7D82;">${fmtCurrency(slip.superAmount)}</td></tr>
-    <tr><td style="padding:4px 0;color:#6F7F74;font-size:12px;">Fund</td><td style="padding:4px 0;text-align:right;color:#6F7F74;font-size:12px;">${escapeHtml(slip.superFundName)}${slip.superFundNumber ? ` (${escapeHtml(slip.superFundNumber)})` : ''}</td></tr>
-  </table>
-</div>`;
+function buildPayslipFilename(slip) {
+  const start = slip.periodStartIso || 'week_start';
+  const end = slip.periodEndIso || 'week_end';
+  return `Payslip_${start}_to_${end}.pdf`;
 }
-function buildPayslipEmailText(slip) {
-  return [
-    `${slip.businessName} payslip`,
-    `Employee: ${slip.employeeName}`,
-    `Pay period: ${slip.periodStartLabel} to ${slip.periodEndLabel}`,
-    `Payment date: ${slip.paymentDateLabel}`,
-    `Ordinary hours: ${slip.hours.toFixed(2)} @ ${fmtCurrency(slip.rate)}/hr = ${fmtCurrency(slip.ordinaryAmount)}`,
-    `Travel allowance: ${fmtCurrency(slip.travel)}`,
-    `Gross pay: ${fmtCurrency(slip.gross)}`,
-    `PAYG tax withheld (ATO): ${fmtCurrency(slip.tax)}`,
-    `Net pay: ${fmtCurrency(slip.net)}`,
-    `Super (${(slip.superRate * 100).toFixed(1)}%): ${fmtCurrency(slip.superAmount)} to ${slip.superFundName}${slip.superFundNumber ? ` (${slip.superFundNumber})` : ''}`,
-    slip.businessAbn ? `Employer ABN: ${slip.businessAbn}` : '',
-  ].filter(Boolean).join('\n');
+
+function createPayslipPdfAttachment(slip) {
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let y = 56;
+
+  const write = (text, opts = {}) => {
+    const { size = 11, weight = 'normal', color = [38, 53, 45], x = 52 } = opts;
+    doc.setFont('helvetica', weight);
+    doc.setFontSize(size);
+    doc.setTextColor(...color);
+    doc.text(String(text), x, y);
+  };
+
+  const right = (text, opts = {}) => {
+    const { size = 11, weight = 'normal', color = [38, 53, 45], x = pageWidth - 52 } = opts;
+    doc.setFont('helvetica', weight);
+    doc.setFontSize(size);
+    doc.setTextColor(...color);
+    doc.text(String(text), x, y, { align: 'right' });
+  };
+
+  const row = (label, value, opts = {}) => {
+    write(label, { size: 11, color: [111, 127, 116] });
+    right(value, { size: 11, weight: opts.bold ? 'bold' : 'normal', color: opts.highlight ? [53, 82, 64] : [38, 53, 45] });
+    y += 20;
+  };
+
+  write(slip.businessName, { size: 22, weight: 'bold', color: [53, 82, 64] });
+  y += 20;
+  write(`Payslip - ${slip.weekLabel}`, { size: 12, color: [111, 127, 116] });
+  y += 26;
+
+  doc.setDrawColor(220, 228, 217);
+  doc.line(52, y, pageWidth - 52, y);
+  y += 22;
+
+  row('Employee', slip.employeeName);
+  row('Employment Type', slip.employmentType);
+  row('Pay Period', `${slip.periodStartLabel} to ${slip.periodEndLabel}`);
+  row('Payment Date', slip.paymentDateLabel);
+  if (slip.businessAbn) row('Employer ABN', slip.businessAbn);
+  y += 10;
+
+  doc.line(52, y, pageWidth - 52, y);
+  y += 22;
+
+  row('Ordinary Hours', `${slip.hours.toFixed(2)} x ${fmtCurrency(slip.rate)}/hr`);
+  row('Ordinary Pay', fmtCurrency(slip.ordinaryAmount));
+  if (slip.travel > 0) row('Travel Allowance', fmtCurrency(slip.travel));
+  row('Gross Pay', fmtCurrency(slip.gross));
+  row('PAYG Tax Withheld (ATO)', `-${fmtCurrency(slip.tax)}`);
+  row('Net Pay', fmtCurrency(slip.net), { bold: true, highlight: true });
+  y += 10;
+
+  doc.line(52, y, pageWidth - 52, y);
+  y += 22;
+
+  row(`Super Contribution (${(slip.superRate * 100).toFixed(1)}%)`, fmtCurrency(slip.superAmount));
+  row('Super Fund', `${slip.superFundName}${slip.superFundNumber ? ` (${slip.superFundNumber})` : ''}`);
+
+  y = Math.max(y + 18, doc.internal.pageSize.getHeight() - 74);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(111, 127, 116);
+  doc.text(
+    `Generated by ${slip.businessName}. This payslip includes key Fair Work required details.`,
+    52,
+    y
+  );
+
+  const dataUri = doc.output('datauristring');
+  const base64 = dataUri.includes(',')
+    ? dataUri.split(',')[1]
+    : dataUri;
+  return { dataUri, base64 };
 }
 function buildPayslipPrintHtml(slip) {
   const travelRow = slip.travel > 0 ? `<tr><td>Travel allowance</td><td style="text-align:right;">${fmtCurrency(slip.travel)}</td></tr>` : '';
@@ -309,9 +349,10 @@ export default function PayrollTab({ showToast, isMobile }) {
       return;
     }
     const slip = buildPayslipData(row.staff, rec, weekStart);
+    const payslipFilename = buildPayslipFilename(slip);
+    const payslipAttachment = createPayslipPdfAttachment(slip);
     const portalUrl = import.meta.env.VITE_STAFF_PORTAL_URL || `${window.location.origin}/cleaner`;
-    const payslipHtml = buildPayslipEmailHtml(slip);
-    const payslipText = buildPayslipEmailText(slip);
+    const cleanMessage = `Hi ${recipientName},\n\nPlease find attached your payslip for the week ${slip.periodStartLabel} to ${slip.periodEndLabel}.\n\nIf you have any payroll questions, reply to this email.\n\n${BUSINESS_NAME}`;
     setEmailingId(row.staff.id);
     try {
       await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_PAYROLL_TEMPLATE_ID, {
@@ -321,10 +362,9 @@ export default function PayrollTab({ showToast, isMobile }) {
         customer_email: recipientEmail,
         reply_to: BUSINESS_EMAIL || recipientEmail,
         subject: `${BUSINESS_NAME} payslip — ${slip.weekLabel}`,
-        headline: `Your payslip (${slip.weekLabel})`,
-        message: `Hi ${escapeHtml(recipientName)},<br><br>Please find your payroll summary below.<br><br>${payslipHtml}<br><br>If you have payroll questions, reply to this email.`,
-        payslip_html: payslipHtml,
-        payslip_text: payslipText,
+        headline: `Payslip attached (${slip.weekLabel})`,
+        message: cleanMessage.replace(/\n/g, "<br>"),
+        payslip_text: cleanMessage,
         week_label: slip.weekLabel,
         pay_period: `${slip.periodStartLabel} to ${slip.periodEndLabel}`,
         payment_date: slip.paymentDateLabel,
@@ -344,6 +384,13 @@ export default function PayrollTab({ showToast, isMobile }) {
         show_button: "true",
         button_text: "Open Staff Portal",
         button_link: portalUrl,
+        attachment: payslipAttachment.base64,
+        attachment_data_uri: payslipAttachment.dataUri,
+        attachment_content_type: "application/pdf",
+        attachment_name: payslipFilename,
+        payslip_attachment: payslipAttachment.base64,
+        payslip_attachment_data_uri: payslipAttachment.dataUri,
+        payslip_filename: payslipFilename,
       }, EMAILJS_PUBLIC_KEY);
       showToast(`✅ Payslip emailed to ${recipientName}`);
     } catch (e) {
