@@ -59,7 +59,7 @@ export default function EmailPreviewModal({ quote, enquiry, pricing, onSend, onC
           <div style={{ background: `linear-gradient(135deg, ${T.primary}, ${T.blue})`, borderRadius: T.radiusSm, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#fff", marginBottom: 20 }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.9 }}>TOTAL PER CLEAN</div>
-              <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>per {quote.frequency.toLowerCase()} visit</div>
+              <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>per {(quote.frequency || "scheduled").toLowerCase()} visit</div>
             </div>
             <div style={{ fontSize: 28, fontWeight: 900 }}>${calc.total.toFixed(2)}</div>
           </div>
