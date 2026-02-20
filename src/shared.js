@@ -16,6 +16,91 @@ export const SERVICED_AREAS = [
   "Buderim", "Alexandra Headland", "Mooloolaba", "Mountain Creek", "Minyama"
 ];
 
+// ─── 45 Demo Clients Generator ───
+export function generateDemoClients() {
+  const STREETS = {
+    "Twin Waters": ["Oceanside Dr","Lakeside Ave","Sailfish Ct","Pelican Way","Marina Blvd","Harbour Dr","Seaspray Cres","Coral Key Dr","Coorella Cct","Edgewater Pl"],
+    "Maroochydore": ["Aerodrome Rd","Duporth Ave","Dalton Dr","Cotton Tree Pde","Picnic Point Esp","Bradman Ave","Memorial Ave","Sixth Ave","Cornmeal Pde","Millwell Rd"],
+    "Kuluin": ["Kuluin St","Rosebed St","Lumeah Dr","Anne St","Valroy Dr","Sunshine Ct","Hilltop Ave","Cedar Rd","Acacia St","Teak Ct"],
+    "Forest Glen": ["Forest Glen Rd","Doolan St","Vise Rd","Anning Rd","Balmoral Rd","Creekside Dr","Ironbark Pl","Silky Oak Ct","Tallowwood Ave","Blackbutt Dr"],
+    "Mons": ["Mons Rd","Sunrise Rd","Panorama Dr","Ridgewood Ct","Mountain View Dr","Valley Cres","Hilltop Ct","Wattle Dr","Summit Ave","Bushland Pl"],
+    "Buderim": ["Burnett St","King St","Lindsay Rd","Gloucester Rd","Main St","Crosby Hill Rd","Ballinger Rd","Woombye–Palmwoods Rd","Seaview Tce","Dixon St"],
+    "Alexandra Headland": ["Alexandra Pde","Okinja Rd","Mary St","Pacific Tce","Albatross Ave","Hill St","Beach Rd","Ilya St","Peel St","Buderim Ave"],
+    "Mooloolaba": ["Smith St","Brisbane Rd","Walan St","Meta St","Foote St","River Esp","Parkyn Pde","Kyamba Ct","Venning St","Hancock St"],
+    "Mountain Creek": ["Karawatha Dr","Mountain Creek Rd","Glenfields Blvd","Brookfield Dr","Parklands Blvd","Creekwood Ct","Lakewood Dr","Rainforest Dr","Forest Park Dr","Greenway Cct"],
+    "Minyama": ["Jessica Blvd","Minyama St","Glenyce Ct","Brittany Dr","Windsong Pl","The Anchorage","Doone Ct","Catamaran Ct","Harbour View Tce","Regatta Blvd"],
+  };
+  const FIRST = ["Sarah","Emily","James","Michael","Jessica","Lauren","Daniel","Andrew","Rebecca","David","Natalie","Chris","Olivia","Ben","Sophie","Tom","Hannah","Matt","Chloe","Luke","Megan","Ryan","Amy","Nathan","Emma","Josh","Nicole","Aaron","Katie","Mark","Lisa","Jack","Rachel","Tim","Zoe","Sam","Brooke","Liam","Jess","Ethan","Holly","Lachlan","Tegan","Dylan","Gemma"];
+  const LAST = ["Mitchell","Anderson","Taylor","Campbell","Robinson","Thompson","Wilson","Martin","Clark","Walker","Harris","Scott","Stewart","Kelly","Murphy","Singh","Brown","White","Jones","Johnson","Williams","Davis","Thomas","Moore","Lee","Ward","Turner","Baker","Chen","Patel","O'Brien","Fraser","Hughes","Adams","Morgan","Price","Reid","Marshall","Ross","Nguyen","Cooper","Watson","Graham","Sullivan"];
+  const ACCESS = ["Key in lockbox — code 4521","Spare key under pot plant by front door","Garage code: 7890# — enter through laundry","Side gate unlocked, back door code 1234","Ring doorbell, owner works from home","Key under mat, alarm code 5678","Cleaner's key with building manager","Sliding door left unlocked on clean days","Keypad on front door — code 3690","Key in lockbox on side fence — combo 2580","Code for front gate: 8832, key under frog statue","Let yourself in via carport side door (unlocked)","Ring bell twice — husband is deaf in one ear","Access via back deck stairs, key taped inside meter box","Entry through garage — remote in lockbox by mailbox"];
+  const NOTES = ["Two friendly golden retrievers — keep gates closed","Cat Miso is indoor only, don't let him out","Baby naps 12–2pm, please keep noise down","Elderly mother lives in granny flat — say hi!","Uses eco-friendly products only — under sink","Please water indoor plants on kitchen bench","No vacuuming master bedroom on Wednesdays (night shift)","Teenagers' rooms need extra attention","Focus on bathrooms — hard water stains","Has 3 cats, please close all external doors","Uses robot vacuum M–F, just mop floors on clean day","Recently renovated kitchen — be careful with stone benchtops","Owner is allergic to bleach — green products only","Leave clean towels folded on bed please","Skip kids' playroom upstairs — they tidy it themselves","Please empty dishwasher if cycle is done","Two parrots in living room — cover cage while vacuuming","Pool area needs a sweep if leaves are bad","Please strip and remake beds fortnightly","Wipe down outdoor furniture if time allows","Home office is off limits — just vacuum floor","New puppy in training — may have accidents to clean","Please take bins out if it's bin night (Tuesday)","Incense burning = someone meditating, come back to that room later","Solar panels crew may be on roof some Thursdays"];
+  const TIMES = ["morning","morning","morning","afternoon","afternoon","anytime","anytime","anytime","morning","morning"];
+  const DAYS  = ["monday","monday","tuesday","tuesday","wednesday","wednesday","thursday","thursday","friday","monday","tuesday","wednesday","thursday","friday"];
+  const FREQS = ["weekly","weekly","weekly","fortnightly","fortnightly","fortnightly","fortnightly","fortnightly","monthly","monthly"];
+
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+  const shuffle = arr => [...arr].sort(() => Math.random() - 0.5);
+
+  const usedNames = new Set();
+  const clients = [];
+  const shuffledFirst = shuffle(FIRST);
+  const shuffledLast  = shuffle(LAST);
+
+  for (let i = 0; i < 45; i++) {
+    let first, last, fullName;
+    do {
+      first = shuffledFirst[i % shuffledFirst.length];
+      last  = shuffledLast[i % shuffledLast.length];
+      if (i >= shuffledFirst.length) last = shuffledLast[(i + 7) % shuffledLast.length];
+      fullName = `${first} ${last}`;
+    } while (usedNames.has(fullName) && usedNames.size < 200);
+    usedNames.add(fullName);
+
+    const suburb   = SERVICED_AREAS[i % SERVICED_AREAS.length];
+    const streets  = STREETS[suburb];
+    const street   = streets[i % streets.length];
+    const num      = 1 + Math.floor(Math.random() * 120);
+    const beds     = pick([2,3,3,3,4,4,4,5]);
+    const baths    = beds <= 3 ? pick([1,1,2,2]) : pick([2,2,3,3]);
+    const living   = pick([1,1,1,2,2]);
+    const kitchen  = 1;
+    const freq     = FREQS[i % FREQS.length];
+    const day      = DAYS[i % DAYS.length];
+    const time     = TIMES[i % TIMES.length];
+    const emailDomain = pick(["gmail.com","outlook.com","icloud.com","hotmail.com","yahoo.com.au"]);
+    const phone    = `04${String(Math.floor(10000000 + Math.random() * 90000000))}`;
+    const email    = `${first.toLowerCase()}.${last.toLowerCase().replace("'","")}@${emailDomain}`;
+    const postcode = suburb === "Buderim" ? "4556" : suburb === "Mooloolaba" || suburb === "Alexandra Headland" ? "4557" : suburb === "Maroochydore" || suburb === "Kuluin" ? "4558" : suburb === "Twin Waters" || suburb === "Minyama" ? "4575" : suburb === "Mountain Creek" ? "4557" : suburb === "Forest Glen" || suburb === "Mons" ? "4556" : "4556";
+    const address  = `${num} ${street}, ${suburb} QLD ${postcode}`;
+    const dur      = beds * 25 + baths * 30 + living * 20 + kitchen * 25 + 30;
+
+    const hasAccess = Math.random() < 0.65;
+    const hasNotes  = Math.random() < 0.55;
+
+    clients.push({
+      name: fullName,
+      email,
+      phone,
+      address,
+      suburb,
+      bedrooms: beds,
+      bathrooms: baths,
+      living,
+      kitchen,
+      frequency: freq,
+      preferred_day: day,
+      preferred_time: time,
+      estimated_duration: dur,
+      custom_duration: Math.random() < 0.2 ? dur + pick([-15, -10, 10, 15, 20]) : null,
+      status: i < 38 ? "active" : pick(["active","paused","paused"]),
+      notes: hasNotes ? pick(NOTES) : "",
+      access_notes: hasAccess ? pick(ACCESS) : "",
+      is_demo: true,
+    });
+  }
+  return clients;
+}
+
 // ─── Payment tracking ───
 export function loadPayments() {
   try {
@@ -781,73 +866,6 @@ const DEMO_ACCESS_NOTES = [
   "",
   "",
 ];
-
-export function generateDemoClients(count = 45) {
-  const clients = [];
-  const frequencies = [
-    ...Array(18).fill("weekly"),
-    ...Array(20).fill("fortnightly"),
-    ...Array(7).fill("monthly"),
-  ].sort(() => Math.random() - 0.5);
-
-  const shuffledNames = [...DEMO_NAMES].sort(() => Math.random() - 0.5);
-  const allSuburbs = [...SERVICED_AREAS];
-  
-  // Track used addresses per suburb to avoid duplicates
-  const usedAddresses = {};
-
-  for (let i = 0; i < count; i++) {
-    const name = shuffledNames[i] || `Client ${i + 1}`;
-    const suburb = allSuburbs[i % allSuburbs.length];
-    const frequency = frequencies[i] || "fortnightly";
-    
-    const bedrooms = 2 + Math.floor(Math.random() * 3); // 2-4
-    const bathrooms = 1 + Math.floor(Math.random() * 2); // 1-2
-    const living = 1 + Math.floor(Math.random() * 2); // 1-2
-    const kitchen = 1;
-    
-    // Generate address from real addresses
-    if (!usedAddresses[suburb]) usedAddresses[suburb] = 0;
-    const suburbAddresses = DEMO_ADDRESSES[suburb] || [];
-    const fullAddress = suburbAddresses[usedAddresses[suburb] % suburbAddresses.length] || `${Math.floor(Math.random() * 100) + 1} Main Street, ${suburb} QLD 4556`;
-    usedAddresses[suburb]++;
-    
-    // Assign preferred day based on suburb (for clustering)
-    const dayMap = {
-      "Buderim": "monday", "Kuluin": "monday",
-      "Maroochydore": "tuesday", "Alexandra Headland": "tuesday",
-      "Mooloolaba": "wednesday", "Minyama": "wednesday",
-      "Twin Waters": "thursday", "Mountain Creek": "thursday",
-      "Forest Glen": "friday", "Mons": "friday",
-    };
-    const preferredDay = dayMap[suburb] || "monday";
-    
-    clients.push({
-      id: `demo_client_${i + 1}`,
-      name,
-      email: name.toLowerCase().replace(" ", ".") + "@email.com",
-      phone: "04" + Math.floor(10000000 + Math.random() * 90000000),
-      address: fullAddress,
-      suburb,
-      bedrooms,
-      bathrooms,
-      living,
-      kitchen,
-      frequency,
-      preferredDay,
-      preferredTime: ["morning", "afternoon", "anytime"][Math.floor(Math.random() * 3)],
-      estimatedDuration: null, // Will be calculated
-      customDuration: null, // Manual override
-      status: "active",
-      notes: DEMO_NOTES[Math.floor(Math.random() * DEMO_NOTES.length)],
-      accessNotes: DEMO_ACCESS_NOTES[Math.floor(Math.random() * DEMO_ACCESS_NOTES.length)],
-      isDemo: true,
-      createdAt: new Date().toISOString(),
-    });
-  }
-  
-  return clients;
-}
 
 // ─── Generate schedule for clients over date range ───
 export function generateScheduleForClients(clients, startDate, endDate, settings) {

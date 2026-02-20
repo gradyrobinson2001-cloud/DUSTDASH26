@@ -43,6 +43,7 @@ export default function ClientsTab({
   onAddClient,
   onUpdateClient,
   onDeleteClient,
+  onLoadDemoClients,
   isMobile,
 }) {
   const [sortBy,        setSortBy]       = useState("name");
@@ -51,6 +52,7 @@ export default function ClientsTab({
   const [expandedId,    setExpandedId]   = useState(null);
   const [editingId,     setEditingId]    = useState(null); // null | "new" | client.id
   const [showFilters,   setShowFilters]  = useState(false);
+  const [loadingDemo,   setLoadingDemo]  = useState(false);
 
   const settings = scheduleSettings || {};
   const allSuburbs = [...new Set(clients.map(c => c.suburb).filter(Boolean))].sort();
@@ -102,12 +104,39 @@ export default function ClientsTab({
             {demoCount > 0 && <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 10, fontSize: 11, background: T.accentLight, color: "#8B6914" }}>🧪 {demoCount} demo</span>}
           </p>
         </div>
-        <button
-          onClick={() => { setEditingId("new"); setExpandedId(null); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-          style={{ padding: "11px 20px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
-        >
-          + Add Client
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {demoCount > 0 && onLoadDemoClients && (
+            <button
+              onClick={async () => {
+                if (!window.confirm("Remove all demo clients?")) return;
+                setLoadingDemo(true);
+                try { await onLoadDemoClients("remove"); } finally { setLoadingDemo(false); }
+              }}
+              disabled={loadingDemo}
+              style={{ padding: "11px 16px", borderRadius: T.radiusSm, border: `1.5px solid ${T.danger}`, background: T.dangerLight, color: T.danger, fontWeight: 700, fontSize: 13, cursor: loadingDemo ? "wait" : "pointer", opacity: loadingDemo ? 0.6 : 1 }}
+            >
+              {loadingDemo ? "Removing…" : `🗑️ Remove ${demoCount} Demo`}
+            </button>
+          )}
+          {demoCount === 0 && onLoadDemoClients && (
+            <button
+              onClick={async () => {
+                setLoadingDemo(true);
+                try { await onLoadDemoClients("load"); } finally { setLoadingDemo(false); }
+              }}
+              disabled={loadingDemo}
+              style={{ padding: "11px 16px", borderRadius: T.radiusSm, border: `1.5px solid ${T.accent}`, background: T.accentLight, color: "#8B6914", fontWeight: 700, fontSize: 13, cursor: loadingDemo ? "wait" : "pointer", opacity: loadingDemo ? 0.6 : 1 }}
+            >
+              {loadingDemo ? "Loading…" : "🧪 Load 45 Demo Clients"}
+            </button>
+          )}
+          <button
+            onClick={() => { setEditingId("new"); setExpandedId(null); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+            style={{ padding: "11px 20px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+          >
+            + Add Client
+          </button>
+        </div>
       </div>
 
       {/* ── New Client Form ────────────────────────────── */}

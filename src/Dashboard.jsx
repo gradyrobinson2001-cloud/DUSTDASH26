@@ -140,8 +140,36 @@ export default function Dashboard() {
   const [editingJob,             setEditingJob]              = useState(null);
   const [editingScheduleClient,  setEditingScheduleClient]   = useState(null);
 
-  const quoteCounter = useRef(quotes.length + 1);
   const showToast = useCallback((msg) => setToast(msg), []);
+  const getAccessToken = useCallback(async () => {
+    if (!supabaseReady || !supabase) throw new Error("Supabase auth is not configured.");
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw new Error(error.message || "Failed to load auth session.");
+    const token = data?.session?.access_token;
+    if (!token) throw new Error("Admin session required. Please sign in again.");
+    return token;
+  }, []);
+
+  const callSecureQuoteApi = useCallback(async (path, payload) => {
+    const token = await getAccessToken();
+    const res = await fetch(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    let body = {};
+    try { body = await res.json(); } catch {}
+
+    if (!res.ok || body?.error) {
+      const message = body?.error || body?.details || `Request failed (${res.status})`;
+      throw new Error(message);
+    }
+    return body;
+  }, [getAccessToken]);
 
   // ─── Effects ───
   useEffect(() => {
@@ -203,26 +231,22 @@ export default function Dashboard() {
 
   const generateQuote = async (enqId) => {
     const enq = enquiries.find(e => e.id === enqId);
-    if (!enq?.details) return;
-    const qNum = `Q${String(quoteCounter.current++).padStart(3, "0")}`;
-    const q = {
-      enquiry_id: enqId,
-      quote_number: qNum,
-      name: enq.name,
-      channel: enq.channel,
-      suburb: enq.suburb,
-      frequency: enq.details.frequency
-        ? enq.details.frequency.charAt(0).toUpperCase() + enq.details.frequency.slice(1)
-        : "Fortnightly",
-      status: "pending_approval",
-      details: { ...enq.details },
-    };
+    if (!enq) {
+      showToast("❌ Enquiry not found");
+      return;
+    }
+    if (!enq.details) {
+      console.warn("[quote:create] enquiry has no details", { enqId });
+      showToast("⚠️ Enquiry has no form details yet");
+      return;
+    }
     try {
-      const saved = await addQuote(q);
-      await updateEnquiry(enqId, { status: "quote_ready", quote_id: saved.id });
-      showToast(`💰 Quote ${qNum} generated — review & approve`);
+      const result = await callSecureQuoteApi("/api/quotes/create", { enquiryId: enqId });
+      const quoteId = result?.quote?.id || "new";
+      showToast(`💰 Quote ${quoteId} generated — review & approve`);
     } catch (err) {
-      showToast("❌ Failed to generate quote");
+      console.error("[quote:create] failed", { enqId, error: err });
+      showToast(`❌ Failed to generate quote: ${err.message}`);
     }
   };
 
@@ -250,25 +274,30 @@ export default function Dashboard() {
         to_email: enquiry?.details?.email || "",
       }, EMAILJS_PUBLIC_KEY);
       const now = new Date().toISOString();
-      await updateQuote(quote.id, { status: "sent" });
-      await updateEnquiry(enquiry.id, { status: "quote_sent", quote_sent_at: now });
-      await addEmailHistory({ client_id: enquiry.id, recipient_name: quote.name, recipient_email: enquiry?.details?.email, template_type: "quote" });
+      await callSecureQuoteApi("/api/quotes/mark-sent", { quoteId: quote.id, sentAt: now });
+      try {
+        await addEmailHistory({ client_id: enquiry.id, recipient_name: quote.name, recipient_email: enquiry?.details?.email, template_type: "quote" });
+      } catch (historyErr) {
+        console.error("[quote:mark-sent] email sent but failed to save history", historyErr);
+      }
       setEmailPreview(null);
       showToast(`✅ Quote sent to ${enquiry?.details?.email}!`);
-    } catch {
-      showToast("❌ Failed to send email. Please try again.");
+    } catch (err) {
+      console.error("[quote:send-email] failed", err);
+      showToast(`❌ Failed to send email: ${err.message || "Please try again."}`);
     }
     finally { setSendingEmail(false); }
   };
 
   const markAccepted = async (qId) => {
-    const q = quotes.find(q => q.id === qId);
-    await updateQuote(qId, { status: "accepted" });
-    if (q) {
-      const enqId = q.enquiry_id || q.enquiryId;
-      if (enqId) await updateEnquiry(enqId, { status: "accepted" });
+    try {
+      const result = await callSecureQuoteApi("/api/quotes/accept", { quoteId: qId });
+      const clientName = result?.client?.name;
+      showToast(clientName ? `🎉 Quote accepted — ${clientName} is now a client` : "🎉 Quote accepted — new client!");
+    } catch (err) {
+      console.error("[quote:accept] failed", { qId, error: err });
+      showToast(`❌ Failed to mark accepted: ${err.message}`);
     }
-    showToast("🎉 Quote accepted — new client!");
   };
 
   const declineOutOfArea = (enqId) => {
@@ -768,6 +797,29 @@ export default function Dashboard() {
             }
             await removeClient(id);
             showToast("🗑️ Client deleted");
+          }}
+          onLoadDemoClients={async (action) => {
+            if (action === "remove") {
+              const demos = clients.filter(c => c.is_demo || c.isDemo);
+              for (const c of demos) {
+                for (const j of scheduledJobs.filter(j => j.clientId === c.id || j.client_id === c.id)) {
+                  try { await removeJob(j.id); } catch {}
+                }
+                try { await removeClient(c.id); } catch {}
+              }
+              showToast(`🗑️ Removed ${demos.length} demo clients`);
+            } else {
+              const demoClients = generateDemoClients();
+              let added = 0;
+              for (const c of demoClients) {
+                try {
+                  c.estimated_duration = calculateDuration(c, scheduleSettings);
+                  await addClient(c);
+                  added++;
+                } catch {}
+              }
+              showToast(`🧪 Loaded ${added} demo clients!`);
+            }
           }}
           isMobile={isMobile}
         />}
