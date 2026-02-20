@@ -2,8 +2,9 @@ import React, { useState, useMemo } from "react";
 import { T } from "../shared";
 import { optimiseRoute, routeSummary } from "../utils/routeOptimiser";
 import { useScheduledJobs } from "../hooks/useScheduledJobs";
+import { getGoogleMapsApiKey, isGoogleMapsKeyConfigured } from "../config/maps";
 
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
+const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
 
 export default function ToolsTab({
   scheduleClients,
@@ -25,7 +26,7 @@ export default function ToolsTab({
   routeData,
   isMobile,
 }) {
-  const apiKeyMissing = !GOOGLE_MAPS_API_KEY || mapsError === "missing_key";
+  const apiKeyMissing = !isGoogleMapsKeyConfigured(GOOGLE_MAPS_API_KEY) || mapsError === "missing_key";
 
   return (
     <>

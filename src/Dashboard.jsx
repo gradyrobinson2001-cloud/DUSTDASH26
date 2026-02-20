@@ -9,6 +9,7 @@ import {
 
 import { supabase, supabaseReady } from "./lib/supabase";
 import { useAuth } from "./auth/AuthProvider";
+import { getGoogleMapsApiKey, isGoogleMapsKeyConfigured } from "./config/maps";
 
 // Data hooks
 import { useClients }          from "./hooks/useClients";
@@ -59,7 +60,7 @@ const EMAILJS_SERVICE_ID           = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID          = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_UNIVERSAL_TEMPLATE_ID= import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY           = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
-const GOOGLE_MAPS_API_KEY          = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+const GOOGLE_MAPS_API_KEY          = getGoogleMapsApiKey();
 
 export default function Dashboard() {
   const { profile, signOut } = useAuth();
@@ -205,7 +206,7 @@ export default function Dashboard() {
       setMapsError("");
       return;
     }
-    if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === "YOUR_API_KEY_HERE") {
+    if (!isGoogleMapsKeyConfigured(GOOGLE_MAPS_API_KEY)) {
       setMapsError("missing_key");
       return;
     }
