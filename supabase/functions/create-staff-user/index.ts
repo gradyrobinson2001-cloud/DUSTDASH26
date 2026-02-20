@@ -1,6 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import * as bcrypt from 'https://deno.land/x/bcrypt@v0.4.1/mod.ts';
+import bcrypt from 'https://esm.sh/bcryptjs@2.4.3';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -75,10 +75,10 @@ serve(async (req) => {
       });
     }
 
-    // ── 5. Hash PIN if provided (bcrypt — matches verify-staff-pin) ───
+    // ── 5. Hash PIN if provided (bcryptjs — pure JS, no Worker needed) ───
     let pin_hash: string | null = null;
     if (pin) {
-      pin_hash = await bcrypt.hash(String(pin));
+      pin_hash = bcrypt.hashSync(String(pin), 10);
     }
 
     // ── 6. Upsert profile row ─────────────────────────────────────────

@@ -4,7 +4,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import * as bcrypt from 'https://deno.land/x/bcrypt@v0.4.1/mod.ts';
+import bcrypt from 'https://esm.sh/bcryptjs@2.4.3';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -69,8 +69,8 @@ serve(async (req: Request) => {
       });
     }
 
-    // Verify PIN against bcrypt hash
-    const valid = await bcrypt.compare(pin, profile.pin_hash);
+    // Verify PIN against bcrypt hash (bcryptjs — pure JS, no Worker needed)
+    const valid = bcrypt.compareSync(pin, profile.pin_hash);
 
     if (!valid) {
       return new Response(JSON.stringify({ error: 'Invalid PIN' }), {
