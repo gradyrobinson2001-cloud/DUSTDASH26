@@ -79,14 +79,7 @@ serve(async (req: Request) => {
       });
     }
 
-    // Generate session for this staff member using Admin API
-    const { data: sessionData, error: sessionError } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'magiclink',
-      email: profile.id + '@staff.internal', // placeholder email linked to auth.users
-    });
-
-    // Alternative: create a signed-in session directly
-    // Since staff accounts are pre-created in auth.users, we sign them in via admin
+    // Look up the staff user's email from auth.users
     const { data: { user }, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(staffId);
 
     if (getUserError || !user) {
@@ -96,24 +89,39 @@ serve(async (req: Request) => {
       });
     }
 
-    // Create a short-lived session token
-    // Note: Supabase admin API for token creation — staff sessions last 8h (working day)
-    const now = Math.floor(Date.now() / 1000);
-    const expiresAt = now + (8 * 60 * 60); // 8 hours
+    // Generate a magic link for the staff user, then extract the token to create a session
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
+      email: user.email!,
+    });
 
-    // Return user data; client sets session via supabase.auth.admin approach
-    // In practice: use supabase.auth.admin.createSession (available in newer SDK versions)
-    // For compatibility, we return a success flag and let the client use a custom token approach
+    if (linkError || !linkData) {
+      return new Response(JSON.stringify({ error: 'Could not generate session link' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Use the OTP token from the generated link to verify and get a real session
+    const { data: sessionData, error: sessionError } = await supabaseAdmin.auth.verifyOtp({
+      token_hash: linkData.properties?.hashed_token,
+      type: 'magiclink',
+    });
+
+    if (sessionError || !sessionData?.session) {
+      return new Response(JSON.stringify({ error: 'Could not create session' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Return real session tokens the client can use with supabase.auth.setSession()
     return new Response(
       JSON.stringify({
         success: true,
         userId: profile.id,
-        // The client will call supabase.auth.signInWithPassword with a service-level generated token
-        // For now, return user metadata for the client to cache in session state
-        user: {
-          id: profile.id,
-          role: profile.role,
-        },
+        access_token: sessionData.session.access_token,
+        refresh_token: sessionData.session.refresh_token,
       }),
       {
         status: 200,

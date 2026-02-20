@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { supabase, supabaseReady } from '../lib/supabase';
 
 const AuthContext = createContext(null);
@@ -161,8 +162,7 @@ export function RequireAdmin({ children }) {
   }
 
   if (!profile || profile.role !== 'admin') {
-    window.location.href = '/login';
-    return null;
+    return <Navigate to="/login" replace />;
   }
 
   return children;

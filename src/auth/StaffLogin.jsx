@@ -55,22 +55,38 @@ export default function StaffLogin({ onAuthenticated, onDemoMode }) {
 
     try {
       // Call the Edge Function to verify PIN and get session tokens
-      const { data, error } = await supabase.functions.invoke('verify-staff-pin', {
+      const { data, error: fnError } = await supabase.functions.invoke('verify-staff-pin', {
         body: { staffId: selectedTeam.id, pin },
       });
 
-      if (error || !data?.access_token) {
-        setError('Incorrect PIN. Please try again.');
+      // Handle Edge Function errors (including error messages in the response body)
+      if (fnError || !data?.success) {
+        const msg = data?.error || 'Incorrect PIN. Please try again.';
+        setError(msg);
         setPin('');
         setLoading(false);
         return;
       }
 
-      // Set the session
-      await supabase.auth.setSession({
+      if (!data.access_token) {
+        setError('Login failed — no session returned. Contact admin.');
+        setPin('');
+        setLoading(false);
+        return;
+      }
+
+      // Set the session with the real tokens from the Edge Function
+      const { error: sessionError } = await supabase.auth.setSession({
         access_token:  data.access_token,
         refresh_token: data.refresh_token,
       });
+
+      if (sessionError) {
+        setError('Session error. Please try again.');
+        setPin('');
+        setLoading(false);
+        return;
+      }
 
       // Fetch full profile
       const { data: prof } = await supabase

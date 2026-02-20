@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { T } from '../shared';
 
 export default function AdminLogin() {
+  const navigate = useNavigate();
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
   const [error,    setError]    = useState('');
@@ -20,8 +22,10 @@ export default function AdminLogin() {
     if (error) {
       setError(error.message === 'Invalid login credentials' ? 'Incorrect email or password.' : error.message);
       setLoading(false);
+    } else {
+      // AuthProvider will pick up the session; navigate to dashboard
+      navigate('/', { replace: true });
     }
-    // On success, AuthProvider picks up the session and RequireAdmin allows navigation to Dashboard
   };
 
   const handleResetRequest = async (e) => {
