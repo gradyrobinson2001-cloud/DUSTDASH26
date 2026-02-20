@@ -151,10 +151,29 @@ export function useScheduledJobs({ staffId } = {}) {
     const payload = toDbJob(updates || {});
     delete payload.id;
     if (Object.keys(payload).length === 0) return;
-    const { error } = await supabase.from('scheduled_jobs').update(payload).eq('id', id);
-    if (error) throw error;
+    let snapshot = null;
+    setScheduledJobs(prev => {
+      snapshot = prev;
+      return prev.map(j => (
+        j.id === id ? mapDbToJob({ ...j, ...updates }) : j
+      ));
+    });
+
+    const { data, error } = await supabase
+      .from('scheduled_jobs')
+      .update(payload)
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      if (snapshot) setScheduledJobs(snapshot);
+      throw error;
+    }
+
+    const updatedJob = mapDbToJob(data);
     setScheduledJobs(prev => prev.map(j => (
-      j.id === id ? mapDbToJob({ ...j, ...updates }) : j
+      j.id === id ? updatedJob : j
     )));
   };
 

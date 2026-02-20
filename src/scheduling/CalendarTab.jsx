@@ -49,14 +49,19 @@ export default function CalendarTab({
     if (!updateJob) return;
     const job = scheduledJobs.find(j => j.id === jobId);
     if (!job) return;
-    const current = job.assigned_staff || [];
-    const updated = current.includes(staffId)
-      ? current.filter(id => id !== staffId)
-      : [...current, staffId];
+    const staffKey = String(staffId);
+    const current = (job.assigned_staff || []).map(String);
+    const isRemoving = current.includes(staffKey);
+    const updated = isRemoving
+      ? current.filter(id => id !== staffKey)
+      : [...current, staffKey];
     try {
       await updateJob(jobId, { assigned_staff: updated });
+      const staffName = staffMembers.find(s => String(s.id) === staffKey)?.full_name || "Staff";
+      showToast?.(isRemoving ? `Unassigned ${staffName}` : `Assigned ${staffName}`);
     } catch (e) {
-      showToast?.(`Error: ${e.message}`);
+      console.error("[calendar:assign-staff] failed", { jobId, staffId, error: e });
+      showToast?.(`Failed to assign staff: ${e.message}`);
     }
   };
 
