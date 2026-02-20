@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthProvider';
 
 // ═══════════════════════════════════════════════════════════
 // ROTA MANAGEMENT TAB — Phase 4
-// CSS grid: Mon–Sun columns × Team A/B rows
+// CSS grid: Mon–Sun columns
 // Auto-populated from scheduled_jobs for the selected week
 // Overrides stored in rota.overrides JSONB
 // "Publish Rota" → sets is_published = true → Realtime push
@@ -60,10 +60,7 @@ export default function RotaTab({ scheduledJobs, scheduleSettings, showToast, is
   const { rotas, publishRota, unpublishRota, saveOverrides, getRotaForTeam } = useRota(weekStart);
 
   const days = weekDays(weekStart);
-  const teams = scheduleSettings?.teams || [
-    { id: 'team_a', name: 'Team A', color: '#4A9E7E' },
-    { id: 'team_b', name: 'Team B', color: '#5B9EC4' },
-  ];
+  const teams = scheduleSettings?.teams || [];
 
   // Build job grid: { [teamId]: { [date]: [jobs] } }
   const grid = useMemo(() => {

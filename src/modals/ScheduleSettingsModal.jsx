@@ -6,13 +6,11 @@ export default function ScheduleSettingsModal({ settings, onSave, onSaveAndRegen
   const [local, setLocal] = useState({ ...settings });
   const [saveAttempted, setSaveAttempted] = useState(false);
 
-  // Validate team names are non-empty
-  const teamErrors = local.teams.map(t => t.name.trim() ? "" : "Team name is required");
   // Validate working hours: end must be after start
   const hoursValid = local.workingHours.start < local.workingHours.end;
-  // jobsPerTeamPerDay must be 1–6
-  const jobsValid = local.jobsPerTeamPerDay >= 1 && local.jobsPerTeamPerDay <= 6;
-  const canSave = teamErrors.every(e => !e) && hoursValid && jobsValid;
+  // jobsPerDay must be 1–12
+  const jobsValid = (local.jobsPerDay || local.jobsPerTeamPerDay || 6) >= 1 && (local.jobsPerDay || local.jobsPerTeamPerDay || 6) <= 12;
+  const canSave = hoursValid && jobsValid;
   const u = (path, value) => {
     const keys = path.split(".");
     setLocal(prev => {
@@ -30,24 +28,6 @@ export default function ScheduleSettingsModal({ settings, onSave, onSaveAndRegen
   return (
     <Modal title="⚙️ Schedule Settings" onClose={onClose} wide>
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-
-        {/* Teams */}
-        <div>
-          <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", display: "block", marginBottom: 10 }}>Teams</label>
-          {local.teams.map((team, i) => (
-            <div key={team.id} style={{ marginBottom: 8 }}>
-              <div style={{ display: "flex", gap: 10 }}>
-                <input type="text" value={team.name}
-                  onChange={e => { const teams = [...local.teams]; teams[i] = { ...teams[i], name: e.target.value }; setLocal({ ...local, teams }); }}
-                  style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: `1.5px solid ${saveAttempted && teamErrors[i] ? "#D4645C" : T.border}`, fontSize: 14 }} />
-                <input type="color" value={team.color}
-                  onChange={e => { const teams = [...local.teams]; teams[i] = { ...teams[i], color: e.target.value }; setLocal({ ...local, teams }); }}
-                  style={{ width: 50, height: 42, borderRadius: 8, border: `1.5px solid ${T.border}`, cursor: "pointer" }} />
-              </div>
-              {saveAttempted && teamErrors[i] && <p style={{ color: "#D4645C", fontSize: 12, marginTop: 4, fontWeight: 600 }}>{teamErrors[i]}</p>}
-            </div>
-          ))}
-        </div>
 
         {/* Working Hours */}
         <div>
@@ -82,12 +62,12 @@ export default function ScheduleSettingsModal({ settings, onSave, onSaveAndRegen
           <p style={{ color: "#D4645C", fontSize: 12, fontWeight: 600, margin: "-12px 0 0" }}>End time must be after start time</p>
         )}
 
-        {/* Jobs Per Team */}
+        {/* Jobs Per Day */}
         <div>
-          <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Jobs Per Team Per Day</label>
-          <input type="number" value={local.jobsPerTeamPerDay} onChange={e => setLocal({ ...local, jobsPerTeamPerDay: Number(e.target.value) })} min={1} max={6}
+          <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Jobs Per Day</label>
+          <input type="number" value={local.jobsPerDay || local.jobsPerTeamPerDay || 6} onChange={e => setLocal({ ...local, jobsPerDay: Number(e.target.value) })} min={1} max={12}
             style={{ width: 100, padding: "10px 14px", borderRadius: 8, border: `1.5px solid ${saveAttempted && !jobsValid ? "#D4645C" : T.border}`, fontSize: 14 }} />
-          {saveAttempted && !jobsValid && <p style={{ color: "#D4645C", fontSize: 12, marginTop: 4, fontWeight: 600 }}>Must be between 1 and 6</p>}
+          {saveAttempted && !jobsValid && <p style={{ color: "#D4645C", fontSize: 12, marginTop: 4, fontWeight: 600 }}>Must be between 1 and 12</p>}
         </div>
 
         {/* Area Schedule */}

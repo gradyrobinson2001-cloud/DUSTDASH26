@@ -83,30 +83,29 @@ export function calcPayrollBreakdown({
 }
 
 /**
- * Aggregate actual_duration (minutes) from completed jobs for a staff member's team
+ * Aggregate actual_duration (minutes) from completed jobs for a staff member
  * in a given week.
  *
  * @param {Array}  jobs         — all scheduled_jobs rows
- * @param {string} teamId       — e.g. 'team_a'
+ * @param {string} staffId      — profile ID of the staff member
  * @param {string} weekStart    — 'YYYY-MM-DD' (Monday)
  * @returns {{ hoursWorked, completedJobs, scheduledJobs }}
  */
-export function calcHoursFromJobs(jobs, teamId, weekStart) {
+export function calcHoursFromJobs(jobs, staffId, weekStart) {
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 6);
   const weekEndStr = weekEnd.toISOString().split('T')[0];
 
-  const teamJobs = jobs.filter(j => {
-    const jTeam = j.team_id || j.teamId;
+  const staffJobs = jobs.filter(j => {
     const jDate = j.date;
-    const jStatus = j.job_status || j.jobStatus;
-    return jTeam === teamId
+    const assignedStaff = j.assigned_staff || [];
+    return assignedStaff.includes(staffId)
       && jDate >= weekStart
       && jDate <= weekEndStr
       && !j.is_break && !j.isBreak;
   });
 
-  const completedJobs = teamJobs.filter(j =>
+  const completedJobs = staffJobs.filter(j =>
     (j.job_status || j.jobStatus) === 'completed'
   );
 
@@ -117,7 +116,7 @@ export function calcHoursFromJobs(jobs, teamId, weekStart) {
   return {
     hoursWorked: Math.round(totalActualMins / 60 * 100) / 100,
     completedJobs: completedJobs.length,
-    scheduledJobs: teamJobs.length,
+    scheduledJobs: staffJobs.length,
     totalMinutes: totalActualMins,
   };
 }

@@ -12,7 +12,7 @@ export function usePayroll(weekStart) {
     let mounted = true;
     const fetch = async () => {
       const [recRes, slipRes] = await Promise.all([
-        supabase.from('payroll_records').select('*, profiles(full_name, team_id)').order('created_at', { ascending: false }),
+        supabase.from('payroll_records').select('*, profiles(full_name)').order('created_at', { ascending: false }),
         supabase.from('payslips').select('*').order('created_at', { ascending: false }),
       ]);
       if (!mounted) return;

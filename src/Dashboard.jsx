@@ -21,6 +21,7 @@ import { usePricing }          from "./hooks/usePricing";
 import { useTemplates }        from "./hooks/useTemplates";
 import { useScheduleSettings } from "./hooks/useScheduleSettings";
 import { usePhotos }           from "./hooks/usePhotos";
+import { useProfiles }         from "./hooks/useProfiles";
 
 import { Toast, Modal } from "./components/ui";
 
@@ -67,16 +68,17 @@ export default function Dashboard() {
   const { clients,  addClient,  updateClient,  removeClient }          = useClients();
   const { enquiries, setEnquiries, addEnquiry, updateEnquiry, removeEnquiry } = useEnquiries();
   const { quotes,   setQuotes,  addQuote,    updateQuote }             = useQuotes();
-  const { scheduledJobs, setScheduledJobs, addJob, updateJob: updateJobDB, removeJob, bulkUpsertJobs } = useScheduledJobs();
+  const { scheduledJobs, setScheduledJobs, addJob, updateJob: updateJobDB, removeJob, bulkUpsertJobs, publishWeek } = useScheduledJobs();
   const { invoices, setInvoices, addInvoice: addInvoiceDB, updateInvoice } = useInvoices();
   const { emailHistory, setEmailHistory, addEmailHistory }             = useEmailHistory();
   const { pricing,  setPricing }                                        = usePricing();
   const { templates, addTemplate: addTemplateDB, removeTemplate: removeTemplateDB, saveAllTemplates } = useTemplates();
   const { scheduleSettings, setScheduleSettings }                      = useScheduleSettings();
   const { photos,  uploadPhoto }                                        = usePhotos();
+  const { staffMembers }                                                = useProfiles();
 
   // scheduleClients = active clients with scheduling info (subset of clients)
-  const scheduleClients = clients.filter(c => c.status === "active" || c.assigned_team);
+  const scheduleClients = clients.filter(c => c.status === "active");
 
   // ─── UI State ───
   const [page, setPage]               = useState("inbox");
@@ -526,11 +528,9 @@ export default function Dashboard() {
       }
       return { totalDistance, totalDuration, legs, jobs: teamJobs };
     };
-    const [teamARoute, teamBRoute] = await Promise.all([
-      calc(jobs.filter(j => j.teamId === "team_a" || j.team_id === "team_a").sort((a,b) => (a.startTime||a.start_time).localeCompare(b.startTime||b.start_time))),
-      calc(jobs.filter(j => j.teamId === "team_b" || j.team_id === "team_b").sort((a,b) => (a.startTime||a.start_time).localeCompare(b.startTime||b.start_time))),
-    ]);
-    setRouteData({ date, teamA: teamARoute, teamB: teamBRoute });
+    const allJobsSorted = jobs.sort((a,b) => (a.startTime||a.start_time).localeCompare(b.startTime||b.start_time));
+    const allRoute = await calc(allJobsSorted);
+    setRouteData({ date, teamA: allRoute, teamB: { totalDistance: 0, totalDuration: 0, legs: [], jobs: [] } });
   };
 
   const drawRouteOnMap = useCallback(async () => {
@@ -559,46 +559,42 @@ export default function Dashboard() {
         resolve();
       });
     });
-    const teamA = scheduleSettings.teams?.find(t => t.id === "team_a");
-    const teamB = scheduleSettings.teams?.find(t => t.id === "team_b");
-    await drawTeamRoute(routeData.teamA, teamA?.color || "#4A9E7E");
-    await drawTeamRoute(routeData.teamB, teamB?.color || "#5B9EC4");
+    await drawTeamRoute(routeData.teamA, "#4A9E7E");
+    if (routeData.teamB?.jobs?.length > 0) await drawTeamRoute(routeData.teamB, "#5B9EC4");
   }, [routeData, scheduleClients, scheduleSettings]);
 
   const calculateCalendarTravelTimes = useCallback(async () => {
     if (!mapsLoaded || scheduledJobs.length === 0) return;
     const newTimes = {};
     for (const date of weekDates.slice(0, 5)) {
-      for (const team of (scheduleSettings.teams || [])) {
-        const teamJobs = scheduledJobs
-          .filter(j => j.date === date && (j.teamId === team.id || j.team_id === team.id) && !j.isBreak && !j.is_break)
-          .sort((a,b) => (a.startTime||a.start_time).localeCompare(b.startTime||b.start_time));
-        if (teamJobs.length < 2) continue;
-        const key = `${date}_${team.id}`;
-        newTimes[key] = [];
-        for (let i = 0; i < teamJobs.length - 1; i++) {
-          const fc = scheduleClients.find(c => c.id === (teamJobs[i].clientId || teamJobs[i].client_id));
-          const tc = scheduleClients.find(c => c.id === (teamJobs[i+1].clientId || teamJobs[i+1].client_id));
-          if (fc && tc) {
-            try {
-              if (window.google?.maps) {
-                const svc = new window.google.maps.DistanceMatrixService();
-                const r = await new Promise((resolve) => {
-                  svc.getDistanceMatrix({ origins: [fc.address||`${fc.suburb}, QLD, Australia`], destinations: [tc.address||`${tc.suburb}, QLD, Australia`], travelMode: window.google.maps.TravelMode.DRIVING, unitSystem: window.google.maps.UnitSystem.METRIC }, (res, status) => {
-                    if (status==="OK"&&res.rows[0]?.elements[0]?.status==="OK") { const el=res.rows[0].elements[0]; resolve({distance:(el.distance.value/1000).toFixed(1),duration:Math.round(el.duration.value/60)}); }
-                    else { resolve({distance:"?",duration:"?"}); }
-                  });
+      const dayJobs = scheduledJobs
+        .filter(j => j.date === date && !j.isBreak && !j.is_break)
+        .sort((a,b) => (a.startTime||a.start_time).localeCompare(b.startTime||b.start_time));
+      if (dayJobs.length < 2) continue;
+      const key = `${date}_default`;
+      newTimes[key] = [];
+      for (let i = 0; i < dayJobs.length - 1; i++) {
+        const fc = scheduleClients.find(c => c.id === (dayJobs[i].clientId || dayJobs[i].client_id));
+        const tc = scheduleClients.find(c => c.id === (dayJobs[i+1].clientId || dayJobs[i+1].client_id));
+        if (fc && tc) {
+          try {
+            if (window.google?.maps) {
+              const svc = new window.google.maps.DistanceMatrixService();
+              const r = await new Promise((resolve) => {
+                svc.getDistanceMatrix({ origins: [fc.address||`${fc.suburb}, QLD, Australia`], destinations: [tc.address||`${tc.suburb}, QLD, Australia`], travelMode: window.google.maps.TravelMode.DRIVING, unitSystem: window.google.maps.UnitSystem.METRIC }, (res, status) => {
+                  if (status==="OK"&&res.rows[0]?.elements[0]?.status==="OK") { const el=res.rows[0].elements[0]; resolve({distance:(el.distance.value/1000).toFixed(1),duration:Math.round(el.duration.value/60)}); }
+                  else { resolve({distance:"?",duration:"?"}); }
                 });
-                newTimes[key].push({ from: teamJobs[i].clientId||teamJobs[i].client_id, to: teamJobs[i+1].clientId||teamJobs[i+1].client_id, ...r });
-              }
-            } catch { newTimes[key].push({ distance: "?", duration: "?" }); }
-          }
+              });
+              newTimes[key].push({ from: dayJobs[i].clientId||dayJobs[i].client_id, to: dayJobs[i+1].clientId||dayJobs[i+1].client_id, ...r });
+            }
+          } catch { newTimes[key].push({ distance: "?", duration: "?" }); }
         }
       }
     }
     setCalendarTravelTimes(newTimes);
     showToast("✅ Travel times calculated");
-  }, [mapsLoaded, scheduledJobs, scheduleClients, scheduleSettings, weekDates, showToast]);
+  }, [mapsLoaded, scheduledJobs, scheduleClients, weekDates, showToast]);
 
   // ─── Derived state ───
   const archivedCount         = enquiries.filter(e => e.archived).length;
@@ -752,7 +748,7 @@ export default function Dashboard() {
         {page === "payments" && <PaymentsTab scheduledJobs={scheduledJobs} setScheduledJobs={setScheduledJobs} scheduleClients={scheduleClients} invoices={invoices} setInvoices={setInvoices} paymentFilter={paymentFilter} setPaymentFilter={setPaymentFilter} setShowInvoiceModal={setShowInvoiceModal} showToast={showToast} isMobile={isMobile} />}
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} showToast={showToast} isMobile={isMobile} />}
         {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} isMobile={isMobile} />}
-        {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} />}
+        {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} />}
         {page === "rota"     && <RotaTab scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} profile={profile} showToast={showToast} isMobile={isMobile} />}
         {page === "clients"  && <ClientsTab
           clients={clients}
@@ -775,7 +771,7 @@ export default function Dashboard() {
           }}
           isMobile={isMobile}
         />}
-        {page === "staff"    && <StaffTab scheduleSettings={scheduleSettings} showToast={showToast} isMobile={isMobile} />}
+        {page === "staff"    && <StaffTab showToast={showToast} isMobile={isMobile} />}
         {page === "templates"&& <TemplatesTab templates={templates} copyTemplate={copyTemplate} removeTemplate={removeTemplate} setAddTemplateModal={setAddTemplateModal} isMobile={isMobile} />}
         {page === "form"     && <FormTab showToast={showToast} isMobile={isMobile} />}
         {page === "pricing"  && <PricingTab pricing={pricing} setEditPriceModal={setEditPriceModal} setAddServiceModal={setAddServiceModal} removeService={removeService} isMobile={isMobile} />}

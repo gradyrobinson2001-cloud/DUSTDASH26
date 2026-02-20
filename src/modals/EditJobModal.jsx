@@ -6,7 +6,6 @@ export default function EditJobModal({ job, clients, settings, onSave, onDelete,
   const [local, setLocal] = useState({
     date: job.date || "",
     clientId: job.clientId || "",
-    teamId: job.teamId || settings.teams[0]?.id,
     startTime: job.startTime || "08:00",
     duration: job.duration || 120,
     status: job.status || "scheduled",
@@ -21,7 +20,7 @@ export default function EditJobModal({ job, clients, settings, onSave, onDelete,
     const [h, m] = local.startTime.split(":").map(Number);
     const endMins = h * 60 + m + local.duration;
     const endTime = `${String(Math.floor(endMins / 60)).padStart(2, "0")}:${String(endMins % 60).padStart(2, "0")}`;
-    onSave({ date: local.date, clientId: local.clientId, clientName: client?.name || "Unknown", suburb: client?.suburb || "", teamId: local.teamId, startTime: local.startTime, endTime, duration: local.duration, status: local.status, isDemo: client?.isDemo || false });
+    onSave({ date: local.date, clientId: local.clientId, clientName: client?.name || "Unknown", suburb: client?.suburb || "", startTime: local.startTime, endTime, duration: local.duration, status: local.status, isDemo: client?.isDemo || false });
     onClose();
   };
 
@@ -47,23 +46,14 @@ export default function EditJobModal({ job, clients, settings, onSave, onDelete,
           </select>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>TEAM</label>
-            <select value={local.teamId} onChange={e => u("teamId", e.target.value)}
-              style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
-              {settings.teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>STATUS</label>
-            <select value={local.status} onChange={e => u("status", e.target.value)}
-              style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
-              <option value="scheduled">Scheduled</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>STATUS</label>
+          <select value={local.status} onChange={e => u("status", e.target.value)}
+            style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
+            <option value="scheduled">Scheduled</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

@@ -10,7 +10,7 @@ export function useProfiles() {
     if (!supabaseReady) { setLoading(false); return; }
     let mounted = true;
     const fetch = async () => {
-      const { data, error } = await supabase.from('profiles').select('id, full_name, email, role, team_id, hourly_rate, employment_type, is_active, tfn_last4').order('full_name');
+      const { data, error } = await supabase.from('profiles').select('id, full_name, email, role, hourly_rate, employment_type, is_active, tfn_last4').order('full_name');
       if (!mounted) return;
       if (error) setError(error); else setProfiles(data ?? []);
       setLoading(false);

@@ -47,15 +47,12 @@ export default function ClientsTab({
 }) {
   const [sortBy,        setSortBy]       = useState("name");
   const [filterStatus,  setFilterStatus] = useState("all");
-  const [filterTeam,    setFilterTeam]   = useState("all");
   const [filterSuburb,  setFilterSuburb] = useState("all");
   const [expandedId,    setExpandedId]   = useState(null);
   const [editingId,     setEditingId]    = useState(null); // null | "new" | client.id
   const [showFilters,   setShowFilters]  = useState(false);
 
-  const settings = scheduleSettings || {
-    teams: [{ id: "team_a", name: "Team A" }, { id: "team_b", name: "Team B" }],
-  };
+  const settings = scheduleSettings || {};
   const allSuburbs = [...new Set(clients.map(c => c.suburb).filter(Boolean))].sort();
 
   // ── Filter ──────────────────────────────────────────────
@@ -72,10 +69,9 @@ export default function ClientsTab({
       );
     }
     if (filterStatus !== "all") list = list.filter(c => c.status === filterStatus);
-    if (filterTeam   !== "all") list = list.filter(c => (c.assigned_team || c.assignedTeam) === filterTeam);
     if (filterSuburb !== "all") list = list.filter(c => c.suburb === filterSuburb);
     return list;
-  }, [clients, clientSearch, filterStatus, filterTeam, filterSuburb]);
+  }, [clients, clientSearch, filterStatus, filterSuburb]);
 
   // ── Sort ────────────────────────────────────────────────
   const sorted = useMemo(() => {
@@ -93,7 +89,7 @@ export default function ClientsTab({
 
   const activeCount   = clients.filter(c => c.status === "active").length;
   const demoCount     = clients.filter(c => c.is_demo || c.isDemo).length;
-  const activeFilters = [filterStatus !== "all", filterTeam !== "all", filterSuburb !== "all"].filter(Boolean).length;
+  const activeFilters = [filterStatus !== "all", filterSuburb !== "all"].filter(Boolean).length;
 
   return (
     <div>
@@ -154,16 +150,12 @@ export default function ClientsTab({
             { value: "paused", label: "Paused" },
             { value: "cancelled", label: "Cancelled" },
           ]} />
-          <FSelect label="Team" value={filterTeam} onChange={setFilterTeam} options={[
-            { value: "all", label: "All Teams" },
-            ...settings.teams.map(t => ({ value: t.id, label: t.name })),
-          ]} />
           <FSelect label="Suburb" value={filterSuburb} onChange={setFilterSuburb} options={[
             { value: "all", label: "All Suburbs" },
             ...allSuburbs.map(s => ({ value: s, label: s })),
           ]} />
           {activeFilters > 0 && (
-            <button onClick={() => { setFilterStatus("all"); setFilterTeam("all"); setFilterSuburb("all"); }}
+            <button onClick={() => { setFilterStatus("all"); setFilterSuburb("all"); }}
               style={{ alignSelf: "flex-end", padding: "8px 12px", borderRadius: T.radiusSm, border: `1.5px solid ${T.danger}`, background: T.dangerLight, color: T.danger, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
               Clear Filters
             </button>
@@ -180,7 +172,6 @@ export default function ClientsTab({
         {sorted.map(c => {
           const isExpanded = expandedId === c.id;
           const isEditing  = editingId  === c.id;
-          const team       = settings.teams.find(t => t.id === (c.assigned_team || c.assignedTeam));
           const dur        = c.custom_duration || c.customDuration || c.estimated_duration || c.estimatedDuration;
           const initials   = (c.name || "?").split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
           const isDemo     = c.is_demo || c.isDemo;
@@ -207,7 +198,7 @@ export default function ClientsTab({
                 onClick={() => setExpandedId(isExpanded ? null : c.id)}
                 style={{ padding: isMobile ? "12px 14px" : "14px 18px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", flexWrap: "wrap" }}
               >
-                <div style={{ width: 42, height: 42, borderRadius: 11, background: isDemo ? T.accentLight : `linear-gradient(135deg, ${team?.color || T.primary}, ${T.blue})`, display: "flex", alignItems: "center", justifyContent: "center", color: isDemo ? "#8B6914" : "#fff", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 11, background: isDemo ? T.accentLight : `linear-gradient(135deg, ${T.primary}, ${T.blue})`, display: "flex", alignItems: "center", justifyContent: "center", color: isDemo ? "#8B6914" : "#fff", fontWeight: 800, fontSize: 14, flexShrink: 0 }}>
                   {initials}
                 </div>
 
@@ -219,7 +210,6 @@ export default function ClientsTab({
                   </div>
                   <div style={{ fontSize: 12, color: T.textMuted, marginTop: 2 }}>
                     📍 {c.suburb}
-                    {team && <span style={{ marginLeft: 8, color: team.color, fontWeight: 600 }}>· {team.name}</span>}
                     {c.frequency && <span style={{ marginLeft: 8 }}>· {c.frequency.charAt(0).toUpperCase() + c.frequency.slice(1)}</span>}
                     {(c.bedrooms || c.bathrooms) && <span style={{ marginLeft: 8 }}>· 🛏{c.bedrooms || 0} 🚿{c.bathrooms || 0}</span>}
                   </div>
@@ -268,7 +258,6 @@ export default function ClientsTab({
                       <DetailRow icon="📅" label="Frequency"   value={c.frequency ? c.frequency.charAt(0).toUpperCase() + c.frequency.slice(1) : "—"} />
                       <DetailRow icon="📆" label="Pref. day"   value={(c.preferred_day || c.preferredDay)?.charAt(0).toUpperCase() + (c.preferred_day || c.preferredDay || "monday").slice(1)} />
                       <DetailRow icon="🕗" label="Pref. time"  value={c.preferred_time || c.preferredTime || "Anytime"} />
-                      <DetailRow icon="👥" label="Team"        value={team?.name || "—"} color={team?.color} />
                     </DetailSection>
 
                     {/* Notes */}
@@ -380,7 +369,6 @@ function ClientForm({ client, settings, onSave, onDelete, onClose, isNew, isMobi
     frequency:      client.frequency      || "fortnightly",
     preferred_day:  client.preferred_day  || client.preferredDay  || "monday",
     preferred_time: client.preferred_time || client.preferredTime || "anytime",
-    assigned_team:  client.assigned_team  || client.assignedTeam  || settings.teams[0]?.id || "",
     custom_duration:client.custom_duration || client.customDuration || null,
     notes:          client.notes          || "",
     access_notes:   client.access_notes   || client.accessNotes   || "",
@@ -463,7 +451,7 @@ function ClientForm({ client, settings, onSave, onDelete, onClose, isNew, isMobi
       </div>
 
       {/* Schedule */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12, marginTop: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: 12, marginTop: 16 }}>
         <div>
           <FLabel>FREQUENCY</FLabel>
           <select value={local.frequency} onChange={e => u("frequency", e.target.value)} style={inp}>
@@ -486,12 +474,6 @@ function ClientForm({ client, settings, onSave, onDelete, onClose, isNew, isMobi
             <option value="anytime">Anytime</option>
             <option value="morning">Morning</option>
             <option value="afternoon">Afternoon</option>
-          </select>
-        </div>
-        <div>
-          <FLabel>TEAM</FLabel>
-          <select value={local.assigned_team} onChange={e => u("assigned_team", e.target.value)} style={inp}>
-            {settings.teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </div>
       </div>

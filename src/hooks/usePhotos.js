@@ -19,12 +19,12 @@ export function usePhotos() {
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, []);
 
-  const uploadPhoto = async ({ jobId, clientId, date, teamId, type, file, uploadedBy }) => {
+  const uploadPhoto = async ({ jobId, clientId, date, type, file, uploadedBy }) => {
     if (!supabaseReady) throw new Error('Supabase not configured');
-    const path = `${teamId}/${jobId}/${Date.now()}-${type}.jpg`;
+    const path = `${jobId}/${Date.now()}-${type}.jpg`;
     const { error: uploadError } = await supabase.storage.from('job-photos').upload(path, file, { contentType: 'image/jpeg', upsert: false });
     if (uploadError) throw uploadError;
-    const { data, error } = await supabase.from('photos').insert({ job_id: jobId, client_id: clientId, date, team_id: teamId, type, storage_path: path, uploaded_by: uploadedBy }).select().single();
+    const { data, error } = await supabase.from('photos').insert({ job_id: jobId, client_id: clientId, date, type, storage_path: path, uploaded_by: uploadedBy }).select().single();
     if (error) throw error;
     return data;
   };

@@ -18,7 +18,6 @@ export default function EditScheduleClientModal({ client, settings, onSave, onDe
     frequency: client.frequency || "fortnightly",
     preferredDay: client.preferredDay || "monday",
     preferredTime: client.preferredTime || "anytime",
-    assignedTeam: client.assignedTeam || settings.teams[0]?.id,
     customDuration: client.customDuration || null,
     notes: client.notes || "",
     accessNotes: client.accessNotes || "",
@@ -97,7 +96,7 @@ export default function EditScheduleClientModal({ client, settings, onSave, onDe
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div>
             <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>FREQUENCY</label>
             <select value={local.frequency} onChange={e => u("frequency", e.target.value)}
@@ -114,13 +113,6 @@ export default function EditScheduleClientModal({ client, settings, onSave, onDe
               {["monday", "tuesday", "wednesday", "thursday", "friday"].map(d => (
                 <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>
               ))}
-            </select>
-          </div>
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, display: "block", marginBottom: 6 }}>TEAM</label>
-            <select value={local.assignedTeam} onChange={e => u("assignedTeam", e.target.value)}
-              style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
-              {settings.teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </div>
         </div>

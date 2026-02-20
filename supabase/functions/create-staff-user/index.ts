@@ -1,6 +1,5 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import bcrypt from 'https://esm.sh/bcryptjs@2.4.3';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -55,7 +54,7 @@ serve(async (req) => {
     }
 
     // ── 3. Parse & validate body ──────────────────────────────────────
-    const { email, full_name, pin, team_id, employment_type, hourly_rate, role, siteUrl } = await req.json();
+    const { email, full_name, employment_type, hourly_rate, role, siteUrl } = await req.json();
     if (!email || !full_name) {
       return new Response(JSON.stringify({ error: 'email and full_name are required' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -76,22 +75,14 @@ serve(async (req) => {
 
     const userId = newUser.user!.id;
 
-    // ── 5. Hash PIN if provided (bcryptjs — pure JS, no Worker needed) ───
-    let pin_hash: string | null = null;
-    if (pin) {
-      pin_hash = bcrypt.hashSync(String(pin), 10);
-    }
-
-    // ── 6. Upsert profile row ─────────────────────────────────────────
+    // ── 5. Upsert profile row ─────────────────────────────────────────
     const { error: profileError } = await adminClient.from('profiles').upsert({
       id:              userId,
       email,
       full_name,
       role:            role || 'staff',
-      team_id:         team_id || null,
       employment_type: employment_type || 'casual',
       hourly_rate:     Number(hourly_rate) || 0,
-      pin_hash,
       is_active:       true,
     });
 
@@ -102,7 +93,7 @@ serve(async (req) => {
       });
     }
 
-    // ── 7. Generate invite link (returned to frontend — email sent via EmailJS) ─
+    // ── 6. Generate invite link (email sent via EmailJS on frontend) ─
     const redirectBase = siteUrl || req.headers.get('origin') || supabaseUrl;
     const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
       type: 'invite',

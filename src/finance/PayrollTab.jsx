@@ -48,10 +48,7 @@ export default function PayrollTab({ showToast, isMobile }) {
       if (existing) return { staff, existing, draft: null };
 
       // Auto-calculate hours from jobs
-      const teamId = staff.team_id;
-      const hoursCalc = teamId
-        ? calcHoursFromJobs(scheduledJobs, teamId, weekStart)
-        : { hoursWorked: 0, completedJobs: 0, scheduledJobs: 0 };
+      const hoursCalc = calcHoursFromJobs(scheduledJobs, staff.id, weekStart);
 
       const ov = overrides[staff.id] || {};
       const hoursWorked    = ov.hoursWorked    ?? hoursCalc.hoursWorked;
@@ -206,7 +203,7 @@ export default function PayrollTab({ showToast, isMobile }) {
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 15, color: T.text }}>{staff.full_name}</div>
                   <div style={{ fontSize: 12, color: T.textMuted }}>
-                    {staff.employment_type || 'casual'} · ${staff.hourly_rate || 0}/hr · {staff.team_id || '—'}
+                    {staff.employment_type || 'casual'} · ${staff.hourly_rate || 0}/hr
                     {isProcessed && <span style={{ color: T.primaryDark, fontWeight: 700, marginLeft: 8 }}>✅ Processed</span>}
                   </div>
                 </div>

@@ -16,9 +16,6 @@ export const SERVICED_AREAS = [
   "Buderim", "Alexandra Headland", "Mooloolaba", "Mountain Creek", "Minyama"
 ];
 
-// ─── Cleaner Portal PIN ───
-export const CLEANER_PIN = import.meta.env.VITE_CLEANER_PIN || "1234";
-
 // ─── Payment tracking ───
 export function loadPayments() {
   try {
@@ -602,10 +599,6 @@ export const ICON_OPTIONS = ["🧹", "🧽", "🪣", "🧴", "✨", "🏠", "�
 // ═══════════════════════════════════════════════════════════
 
 export const DEFAULT_SCHEDULE_SETTINGS = {
-  teams: [
-    { id: "team_a", name: "Team A", color: "#4A9E7E" },
-    { id: "team_b", name: "Team B", color: "#5B9EC4" },
-  ],
   workingHours: {
     start: "08:00",
     end: "16:00",
@@ -626,7 +619,7 @@ export const DEFAULT_SCHEDULE_SETTINGS = {
     thursday: ["Twin Waters", "Mountain Creek"],
     friday: ["Forest Glen", "Mons"],
   },
-  jobsPerTeamPerDay: 3,
+  jobsPerDay: 6,
 };
 
 export function loadScheduleSettings() {
@@ -829,9 +822,6 @@ export function generateDemoClients(count = 45) {
     };
     const preferredDay = dayMap[suburb] || "monday";
     
-    // Alternate teams based on index
-    const team = i % 2 === 0 ? "team_a" : "team_b";
-    
     clients.push({
       id: `demo_client_${i + 1}`,
       name,
@@ -846,7 +836,6 @@ export function generateDemoClients(count = 45) {
       frequency,
       preferredDay,
       preferredTime: ["morning", "afternoon", "anytime"][Math.floor(Math.random() * 3)],
-      assignedTeam: team,
       estimatedDuration: null, // Will be calculated
       customDuration: null, // Manual override
       status: "active",
@@ -908,7 +897,7 @@ export function generateScheduleForClients(clients, startDate, endDate, settings
     const jobCount = schedule.filter(s => s.type === "job").length;
     
     // Check if team is at capacity
-    if (jobCount >= settings.jobsPerTeamPerDay) {
+    if (jobCount >= (settings.jobsPerDay || settings.jobsPerTeamPerDay || 6)) {
       return null;
     }
     
@@ -987,11 +976,11 @@ export function generateScheduleForClients(clients, startDate, endDate, settings
       // For fortnightly, skip every other occurrence
       if (client.frequency === "fortnightly" && scheduledCount === 1) continue;
       
-      // Try to get a slot for this client's assigned team
-      const slot = getNextSlot(dateStr, client.assignedTeam, duration);
+      // Try to get a slot for this date
+      const slot = getNextSlot(dateStr, "default", duration);
       
       if (slot) {
-        addToSchedule(dateStr, client.assignedTeam, slot);
+        addToSchedule(dateStr, "default", slot);
         
         jobs.push({
           id: `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -999,7 +988,6 @@ export function generateScheduleForClients(clients, startDate, endDate, settings
           clientId: client.id,
           clientName: client.name,
           suburb: client.suburb,
-          teamId: client.assignedTeam,
           startTime: minsToTime(slot.start),
           endTime: minsToTime(slot.end),
           duration,
@@ -1029,7 +1017,6 @@ export function generateScheduleForClients(clients, startDate, endDate, settings
         clientId: null,
         clientName: "🍴 Break",
         suburb: "",
-        teamId: teamId.replace("_", ""), // Fix: team_a -> team_a
         startTime: minsToTime(breakSlot.start),
         endTime: minsToTime(breakSlot.end),
         duration: breakDuration,

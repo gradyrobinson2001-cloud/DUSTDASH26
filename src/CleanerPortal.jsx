@@ -3,25 +3,24 @@ import StaffLogin from './auth/StaffLogin';
 import { useScheduledJobs } from './hooks/useScheduledJobs';
 import { useClients } from './hooks/useClients';
 import { usePhotos } from './hooks/usePhotos';
-import { useRota } from './hooks/useRota';
 import { supabase, supabaseReady } from './lib/supabase';
-import { T, loadScheduleSettings } from './shared';
+import { T } from './shared';
 
 // ═══════════════════════════════════════════════════════════
-// STAFF PORTAL — Phase 3 rebuild
-// Auth: StaffLogin (PIN → Edge Function → Supabase session)
-// Data: Supabase Realtime (no more 30s polling)
-// Photos: Supabase Storage (no more IndexedDB)
-// Tabs: Today | Rota | Payslips
+// STAFF PORTAL
+// Auth: StaffLogin (email + password → Supabase session)
+// Data: Supabase Realtime — filters by assigned_staff + is_published
+// Photos: Supabase Storage
+// Tabs: Today | Payslips
 // ═══════════════════════════════════════════════════════════
 
 // ─── Demo data ───────────────────────────────────────────
 const TODAY = new Date().toISOString().split('T')[0];
 
 const DEMO_JOBS = [
-  { id: 'demo_1', client_id: 'dc1', client_name: 'Sarah Mitchell', suburb: 'Buderim',   date: TODAY, start_time: '08:00', end_time: '10:15', duration: 135, team_id: 'team_a', job_status: 'scheduled', bedrooms: 3, bathrooms: 2, living: 1, kitchen: 1, extras: ['oven'] },
-  { id: 'demo_2', client_id: 'dc2', client_name: 'James Cooper',   suburb: 'Maroochydore', date: TODAY, start_time: '10:45', end_time: '12:45', duration: 120, team_id: 'team_a', job_status: 'scheduled', bedrooms: 4, bathrooms: 2, living: 2, kitchen: 1, extras: [] },
-  { id: 'demo_3', client_id: 'dc3', client_name: 'Emma Collins',   suburb: 'Mooloolaba', date: TODAY, start_time: '13:30', end_time: '15:30', duration: 120, team_id: 'team_a', job_status: 'scheduled', bedrooms: 2, bathrooms: 1, living: 1, kitchen: 1, extras: ['windows'] },
+  { id: 'demo_1', client_id: 'dc1', client_name: 'Sarah Mitchell', suburb: 'Buderim',   date: TODAY, start_time: '08:00', end_time: '10:15', duration: 135, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 3, bathrooms: 2, living: 1, kitchen: 1, extras: ['oven'] },
+  { id: 'demo_2', client_id: 'dc2', client_name: 'James Cooper',   suburb: 'Maroochydore', date: TODAY, start_time: '10:45', end_time: '12:45', duration: 120, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 4, bathrooms: 2, living: 2, kitchen: 1, extras: [] },
+  { id: 'demo_3', client_id: 'dc3', client_name: 'Emma Collins',   suburb: 'Mooloolaba', date: TODAY, start_time: '13:30', end_time: '15:30', duration: 120, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 2, bathrooms: 1, living: 1, kitchen: 1, extras: ['windows'] },
 ];
 
 const DEMO_CLIENTS = [
@@ -52,35 +51,32 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // ─── Component ────────────────────────────────────────────
 export default function CleanerPortal() {
-  const [profile,      setProfile]      = useState(null); // {id, full_name, team_id, role}
+  const [profile,      setProfile]      = useState(null);
   const [demoMode,     setDemoMode]     = useState(false);
-  const [activeTab,    setActiveTab]    = useState('today'); // 'today' | 'rota' | 'payslips'
+  const [activeTab,    setActiveTab]    = useState('today');
   const [selectedDate, setSelectedDate] = useState(TODAY);
   const [expandedJob,  setExpandedJob]  = useState(null);
   const [photoType,    setPhotoType]    = useState('before');
   const [toast,        setToast]        = useState(null);
   const [activeTimers, setActiveTimers] = useState({});
-  const [localPhotos,  setLocalPhotos]  = useState({}); // jobId → { before: [], after: [] }
+  const [localPhotos,  setLocalPhotos]  = useState({});
   const [payslips,     setPayslips]     = useState([]);
-  const [settings,     setSettings]     = useState(() => loadScheduleSettings());
 
   const timerRefs = useRef({});
   const cameraRef = useRef(null);
   const fileRef   = useRef(null);
-  const uploadJobRef = useRef(null); // tracks which job + type the file input is for
+  const uploadJobRef = useRef(null);
 
-  const teamId = demoMode ? 'team_a' : profile?.team_id;
+  const staffId = demoMode ? 'demo' : profile?.id;
 
   // ── Hooks ──────────────────────────────────────────────
-  const { scheduledJobs, updateJob } = useScheduledJobs(teamId ? { teamId } : {});
+  // For staff portal: useScheduledJobs filters by assigned_staff + is_published
+  const { scheduledJobs, updateJob } = useScheduledJobs(staffId ? { staffId } : {});
   const { clients }                   = useClients();
   const { photos: supaPhotos, uploadPhoto, getSignedUrl } = usePhotos();
 
-  // Week for rota tab
+  // Week for date strip
   const weekDates = weekDays(selectedDate);
-  const weekStart = weekDates[0];
-  const { getRotaForTeam } = useRota(weekStart);
-  const rota = getRotaForTeam(teamId);
 
   // ── Active jobs for selected date ──────────────────────
   const allJobs = demoMode ? DEMO_JOBS : scheduledJobs;
@@ -89,8 +85,7 @@ export default function CleanerPortal() {
   const dayJobs = allJobs
     .filter(j => {
       const jDate = j.date;
-      const jTeam = j.team_id || j.teamId;
-      return jDate === selectedDate && jTeam === teamId && !j.is_break && !j.isBreak;
+      return jDate === selectedDate && !j.is_break && !j.isBreak;
     })
     .sort((a, b) => (a.start_time || a.startTime || '').localeCompare(b.start_time || b.startTime || ''));
 
@@ -170,10 +165,10 @@ export default function CleanerPortal() {
     }
 
     if (!demoMode) {
-      try { await updateJob(jobId, updates); } catch (e) { showToast('❌ Update failed'); return; }
+      try { await updateJob(jobId, updates); } catch (e) { showToast('Update failed'); return; }
     }
 
-    showToast(newStatus === 'in_progress' ? '⏱️ Timer started!' : '✅ Job completed!');
+    showToast(newStatus === 'in_progress' ? 'Timer started!' : 'Job completed!');
   }, [allJobs, demoMode, updateJob, showToast]);
 
   // ── Photo upload ──────────────────────────────────────
@@ -187,7 +182,6 @@ export default function CleanerPortal() {
 
     for (const file of files) {
       if (demoMode) {
-        // Demo: use object URL locally
         const url = URL.createObjectURL(file);
         setLocalPhotos(prev => ({
           ...prev,
@@ -197,7 +191,7 @@ export default function CleanerPortal() {
             [type]: [...(prev[jobId]?.[type] || []), { url, uploaded_at: new Date().toISOString() }],
           },
         }));
-        showToast(`✅ ${type === 'before' ? 'Before' : 'After'} photo added!`);
+        showToast(`${type === 'before' ? 'Before' : 'After'} photo added!`);
         continue;
       }
 
@@ -206,28 +200,23 @@ export default function CleanerPortal() {
           jobId,
           clientId:   job?.client_id || job?.clientId,
           date:        selectedDate,
-          teamId:      teamId,
           type,
           file,
           uploadedBy: profile?.id,
         });
-        showToast(`✅ ${type === 'before' ? 'Before' : 'After'} photo uploaded!`);
+        showToast(`${type === 'before' ? 'Before' : 'After'} photo uploaded!`);
       } catch (err) {
         console.error('Photo upload failed:', err);
-        showToast('❌ Upload failed. Try again.');
+        showToast('Upload failed. Try again.');
       }
     }
     e.target.value = '';
-  }, [allJobs, demoMode, selectedDate, teamId, profile, uploadPhoto, showToast]);
+  }, [allJobs, demoMode, selectedDate, profile, uploadPhoto, showToast]);
 
   // ── Weekly hours summary ───────────────────────────────
   const weeklyStats = (() => {
-    const teamJobs = allJobs.filter(j => {
-      const jTeam = j.team_id || j.teamId;
-      return jTeam === teamId && !j.is_break && !j.isBreak;
-    });
     return weekDates.map((d, i) => {
-      const dJobs = teamJobs.filter(j => j.date === d);
+      const dJobs = allJobs.filter(j => j.date === d && !j.is_break && !j.isBreak);
       const done  = dJobs.filter(j => (j.job_status || j.jobStatus) === 'completed');
       const mins  = done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
       return { label: DAY_LABELS[i], date: d, jobs: dJobs.length, done: done.length, hours: Math.round(mins / 60 * 10) / 10 };
@@ -249,10 +238,8 @@ export default function CleanerPortal() {
     setLocalPhotos({});
   };
 
-  // ── Team display name ──────────────────────────────────
-  const teamSettings = settings?.teams?.find(t => t.id === teamId);
-  const teamColor = teamSettings?.color || T.primary;
-  const teamName  = demoMode ? 'Team A (Demo)' : (teamSettings?.name || profile?.full_name || 'My Team');
+  const teamColor = T.primary;
+  const displayName = demoMode ? 'Demo Staff' : (profile?.full_name || 'Staff');
 
   // ══════════════════════════════════════════════════════
   // ── AUTH SCREEN ────────────────────────────────────────
@@ -263,7 +250,7 @@ export default function CleanerPortal() {
         onAuthenticated={(prof) => { setProfile(prof); }}
         onDemoMode={() => {
           setDemoMode(true);
-          setProfile({ id: 'demo', full_name: 'Team A', team_id: 'team_a', role: 'staff' });
+          setProfile({ id: 'demo', full_name: 'Demo Staff', role: 'staff' });
         }}
       />
     );
@@ -279,12 +266,12 @@ export default function CleanerPortal() {
       <div style={{ background: teamColor, padding: '16px 20px', color: '#fff', position: 'sticky', top: 0, zIndex: 30 }}>
         {demoMode && (
           <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: '4px 12px', fontSize: 11, fontWeight: 700, textAlign: 'center', marginBottom: 10 }}>
-            🧪 Demo Mode
+            Demo Mode
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>🫧 {teamName}</div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{displayName}</div>
             {activeTab === 'today' && (
               <div style={{ fontSize: 12, opacity: 0.9 }}>{todayStats.done}/{todayStats.total} jobs · {fmtMins(todayStats.mins)}</div>
             )}
@@ -297,7 +284,7 @@ export default function CleanerPortal() {
           </button>
         </div>
 
-        {/* Week strip — shown only on Today tab */}
+        {/* Week strip */}
         {activeTab === 'today' && (
           <div style={{ display: 'flex', gap: 4, overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: 2 }}>
             {weekDates.map((d, i) => {
@@ -320,7 +307,7 @@ export default function CleanerPortal() {
                 >
                   <div style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{DAY_LABELS[i]}</div>
                   <div style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.3 }}>
-                    {allDone ? '✅' : isToday ? '•' : stat.jobs > 0 ? stat.jobs : '–'}
+                    {allDone ? '✓' : isToday ? '•' : stat.jobs > 0 ? stat.jobs : '–'}
                   </div>
                 </button>
               );
@@ -340,9 +327,8 @@ export default function CleanerPortal() {
       {/* ── Tab Bar ────────────────────────────────────── */}
       <div style={{ display: 'flex', background: '#fff', borderBottom: `1px solid ${T.border}`, position: 'sticky', top: activeTab === 'today' ? 120 : 76, zIndex: 20 }}>
         {[
-          { id: 'today',   label: '📋 Today' },
-          { id: 'rota',    label: '📅 Rota' },
-          { id: 'payslips', label: '💵 Payslips' },
+          { id: 'today',    label: 'Today' },
+          { id: 'payslips', label: 'Payslips' },
         ].map(tab => (
           <button
             key={tab.id}
@@ -427,14 +413,14 @@ export default function CleanerPortal() {
                                 {freq}
                               </span>
                             )}
-                            {isDone   && <span>✅</span>}
-                            {isRunning && <span>⏱️</span>}
+                            {isDone   && <span>✓ Done</span>}
+                            {isRunning && <span>In Progress</span>}
                           </div>
                           <div style={{ fontSize: 18, fontWeight: 800, color: T.text }}>{job.client_name || job.clientName}</div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontSize: 16, fontWeight: 700, color: teamColor }}>{startT}</div>
-                          <div style={{ fontSize: 12, color: T.textMuted }}>⏱ {fmtMins(job.duration)}</div>
+                          <div style={{ fontSize: 12, color: T.textMuted }}>{fmtMins(job.duration)}</div>
                         </div>
                       </div>
 
@@ -450,20 +436,20 @@ export default function CleanerPortal() {
                       {isDone && actualDur && (
                         <div style={{ background: teamColor, color: '#fff', borderRadius: T.radiusSm, padding: '6px 12px', textAlign: 'center', marginBottom: 10, fontSize: 13, fontWeight: 600 }}>
                           Done in {fmtMins(actualDur)}
-                          {actualDur < job.duration && <span> · {job.duration - actualDur}min early 🎉</span>}
+                          {actualDur < job.duration && <span> · {job.duration - actualDur}min early</span>}
                           {actualDur > job.duration && <span> · {actualDur - job.duration}min over</span>}
                         </div>
                       )}
 
                       {/* Address */}
-                      <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 8 }}>📍 {address}</div>
+                      <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 8 }}>{address}</div>
 
                       {/* Rooms */}
                       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                        {(job.bedrooms  || client?.bedrooms)  && <span style={{ fontSize: 13 }}>🛏 {job.bedrooms  || client.bedrooms} bed</span>}
-                        {(job.bathrooms || client?.bathrooms) && <span style={{ fontSize: 13 }}>🚿 {job.bathrooms || client.bathrooms} bath</span>}
-                        {(job.living    || client?.living)    && <span style={{ fontSize: 13 }}>🛋 {job.living    || client.living} living</span>}
-                        {(job.kitchen   || client?.kitchen)   && <span style={{ fontSize: 13 }}>🍳 {job.kitchen   || client.kitchen} kitchen</span>}
+                        {(job.bedrooms  || client?.bedrooms)  && <span style={{ fontSize: 13 }}>{job.bedrooms  || client.bedrooms} bed</span>}
+                        {(job.bathrooms || client?.bathrooms) && <span style={{ fontSize: 13 }}>{job.bathrooms || client.bathrooms} bath</span>}
+                        {(job.living    || client?.living)    && <span style={{ fontSize: 13 }}>{job.living    || client.living} living</span>}
+                        {(job.kitchen   || client?.kitchen)   && <span style={{ fontSize: 13 }}>{job.kitchen   || client.kitchen} kitchen</span>}
                       </div>
 
                       {/* Extras */}
@@ -471,25 +457,23 @@ export default function CleanerPortal() {
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                           {extras.map(ex => (
                             <span key={ex} style={{ padding: '3px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: T.accentLight, color: '#8B6914' }}>
-                              ✨ {ex === 'oven' ? 'Oven Clean' : ex === 'windows' ? 'Windows' : ex}
+                              {ex === 'oven' ? 'Oven Clean' : ex === 'windows' ? 'Windows' : ex}
                             </span>
                           ))}
                         </div>
                       )}
                     </div>
 
-                    {/* Access & notes — always visible */}
+                    {/* Access & notes */}
                     {(accessNote || clientNote) && (
                       <div style={{ padding: '10px 16px', background: '#FFFDF5', borderBottom: `1px solid ${T.border}` }}>
                         {accessNote && (
                           <div style={{ display: 'flex', gap: 8, marginBottom: clientNote ? 6 : 0 }}>
-                            <span>🔑</span>
                             <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{accessNote}</span>
                           </div>
                         )}
                         {clientNote && (
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <span>📝</span>
                             <span style={{ fontSize: 13, color: T.textMuted }}>{clientNote}</span>
                           </div>
                         )}
@@ -499,7 +483,6 @@ export default function CleanerPortal() {
                     {/* Action buttons */}
                     <div style={{ padding: '14px 16px' }}>
                       <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-                        {/* Navigate */}
                         <button
                           onClick={() => {
                             const dest = encodeURIComponent(address);
@@ -507,14 +490,13 @@ export default function CleanerPortal() {
                           }}
                           style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: 'none', background: T.blue, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                         >
-                          🗺️ Navigate
+                          Navigate
                         </button>
-                        {/* Photos toggle */}
                         <button
                           onClick={() => setExpandedJob(isExp ? null : job.id)}
                           style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: isExp ? T.primaryLight : '#fff', color: T.text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                         >
-                          📸 Photos ({photos.before.length + photos.after.length})
+                          Photos ({photos.before.length + photos.after.length})
                         </button>
                       </div>
 
@@ -524,7 +506,7 @@ export default function CleanerPortal() {
                           onClick={() => updateJobStatus(job.id, 'in_progress')}
                           style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, border: 'none', background: T.accent, color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer' }}
                         >
-                          ▶️ Arrived — Start Timer
+                          Arrived — Start Timer
                         </button>
                       )}
                       {isRunning && (
@@ -532,17 +514,17 @@ export default function CleanerPortal() {
                           onClick={() => updateJobStatus(job.id, 'completed')}
                           style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, border: 'none', background: teamColor, color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer' }}
                         >
-                          ✅ Finished — Stop Timer
+                          Finished — Stop Timer
                         </button>
                       )}
                       {isDone && (
                         <div style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, background: T.primaryLight, color: T.primaryDark, fontSize: 14, fontWeight: 700, textAlign: 'center' }}>
-                          ✅ Job Complete
+                          Job Complete
                         </div>
                       )}
                     </div>
 
-                    {/* Photos panel (expandable) */}
+                    {/* Photos panel */}
                     {isExp && (
                       <div style={{ padding: '0 16px 16px', borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
                         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -578,13 +560,13 @@ export default function CleanerPortal() {
                             onClick={() => { uploadJobRef.current = { jobId: job.id, type: photoType }; cameraRef.current?.click(); }}
                             style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: 'none', background: teamColor, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                           >
-                            📷 Camera
+                            Camera
                           </button>
                           <button
                             onClick={() => { uploadJobRef.current = { jobId: job.id, type: photoType }; fileRef.current?.click(); }}
                             style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', color: T.text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                           >
-                            📁 Upload
+                            Upload
                           </button>
                         </div>
                       </div>
@@ -594,22 +576,6 @@ export default function CleanerPortal() {
               })}
             </div>
           )}
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════
-          ROTA TAB
-      ══════════════════════════════════════════════════ */}
-      {activeTab === 'rota' && (
-        <div style={{ padding: 16 }}>
-          <RotaView
-            weekDates={weekDates}
-            teamId={teamId}
-            allJobs={allJobs}
-            rota={rota}
-            teamColor={teamColor}
-            onSelectDate={(d) => { setSelectedDate(d); setActiveTab('today'); }}
-          />
         </div>
       )}
 
@@ -637,101 +603,6 @@ export default function CleanerPortal() {
 }
 
 // ══════════════════════════════════════════════════════════
-// ROTA VIEW COMPONENT
-// ══════════════════════════════════════════════════════════
-function RotaView({ weekDates, teamId, allJobs, rota, teamColor, onSelectDate }) {
-  const isPublished = rota?.is_published;
-  const overrides   = rota?.overrides || {};
-
-  const teamJobs = allJobs.filter(j => {
-    const jTeam = j.team_id || j.teamId;
-    return jTeam === teamId && !j.is_break && !j.isBreak;
-  });
-
-  const weekTotal = weekDates.reduce((sum, d) => {
-    const dayDone = teamJobs.filter(j => j.date === d && (j.job_status || j.jobStatus) === 'completed');
-    return sum + dayDone.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
-  }, 0);
-
-  if (!isPublished) {
-    return (
-      <div style={{ background: '#fff', borderRadius: T.radius, padding: 40, textAlign: 'center', boxShadow: T.shadow }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>📅</div>
-        <div style={{ fontWeight: 700, color: T.text, marginBottom: 6 }}>Rota not yet published</div>
-        <div style={{ fontSize: 13, color: T.textMuted }}>Your rota for this week hasn't been published yet. Check back soon.</div>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <div style={{ fontWeight: 800, color: T.text }}>Week of {weekDates[0]}</div>
-        <div style={{ fontSize: 13, color: teamColor, fontWeight: 700 }}>
-          Total: {Math.round(weekTotal / 60 * 10) / 10}h worked
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {weekDates.map((d, i) => {
-          const dJobs = teamJobs.filter(j => j.date === d);
-          const totalMins = dJobs.reduce((s, j) => s + (j.duration || 0), 0);
-          const done = dJobs.filter(j => (j.job_status || j.jobStatus) === 'completed').length;
-          const travelNote = overrides[`travel_${d}`];
-          const isToday = d === TODAY;
-
-          return (
-            <div
-              key={d}
-              onClick={() => dJobs.length > 0 && onSelectDate(d)}
-              style={{
-                background: '#fff', borderRadius: T.radius, overflow: 'hidden',
-                boxShadow: T.shadow,
-                border: isToday ? `2px solid ${teamColor}` : '2px solid transparent',
-                cursor: dJobs.length > 0 ? 'pointer' : 'default',
-              }}
-            >
-              <div style={{ padding: '12px 16px', background: isToday ? `${teamColor}10` : '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: isToday ? teamColor : T.text }}>
-                    {DAY_LABELS[i]} {isToday ? '(Today)' : ''}
-                  </div>
-                  <div style={{ fontSize: 11, color: T.textMuted }}>{d}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  {dJobs.length > 0 ? (
-                    <>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{dJobs.length} jobs · {fmtMins(totalMins)}</div>
-                      <div style={{ fontSize: 11, color: teamColor }}>{done}/{dJobs.length} done</div>
-                    </>
-                  ) : (
-                    <div style={{ fontSize: 12, color: T.textLight }}>Day off</div>
-                  )}
-                </div>
-              </div>
-
-              {dJobs.length > 0 && (
-                <div style={{ padding: '0 16px 12px' }}>
-                  {dJobs.map(j => (
-                    <div key={j.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: `1px solid ${T.borderLight}` }}>
-                      <span style={{ fontSize: 13, color: T.text, fontWeight: 600 }}>{j.client_name || j.clientName}</span>
-                      <span style={{ fontSize: 12, color: T.textMuted }}>{j.start_time || j.startTime} · {fmtMins(j.duration)}</span>
-                    </div>
-                  ))}
-                  {travelNote && (
-                    <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>🚗 {travelNote}</div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════
 // PAYSLIPS VIEW COMPONENT
 // ══════════════════════════════════════════════════════════
 function PayslipsView({ payslips, demoMode, teamColor }) {
@@ -742,7 +613,7 @@ function PayslipsView({ payslips, demoMode, teamColor }) {
       <div style={{ background: '#fff', borderRadius: T.radius, padding: 40, textAlign: 'center', boxShadow: T.shadow }}>
         <div style={{ fontSize: 48, marginBottom: 12 }}>💵</div>
         <div style={{ fontWeight: 700, color: T.text, marginBottom: 6 }}>Payslips not available in demo</div>
-        <div style={{ fontSize: 13, color: T.textMuted }}>Sign in with your staff PIN to view your payslips.</div>
+        <div style={{ fontSize: 13, color: T.textMuted }}>Sign in with your email and password to view your payslips.</div>
       </div>
     );
   }
@@ -792,7 +663,7 @@ function PayslipsView({ payslips, demoMode, teamColor }) {
                   }}
                   style={{ width: '100%', marginTop: 12, padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${teamColor}`, background: '#fff', color: teamColor, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                 >
-                  📄 View Payslip PDF
+                  View Payslip PDF
                 </button>
               )}
             </div>

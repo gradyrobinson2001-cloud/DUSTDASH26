@@ -78,16 +78,14 @@ export default function PhotosTab({
             const jobPhotos = datePhotos.filter(p => p.jobId === jobId);
             const beforePhoto = jobPhotos.find(p => p.type === "before");
             const afterPhoto = jobPhotos.find(p => p.type === "after");
-            const team = scheduleSettings.teams.find(t => t.id === job?.teamId);
-
             return (
               <div key={jobId} style={{ background: "#fff", borderRadius: T.radius, padding: "20px", boxShadow: T.shadow }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: team?.color || T.primary }} />
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: T.primary }} />
                     <div>
                       <div style={{ fontWeight: 700, fontSize: 15, color: T.text }}>{job?.clientName || "Unknown Job"}</div>
-                      <div style={{ fontSize: 12, color: T.textMuted }}>{job?.suburb} · {team?.name}</div>
+                      <div style={{ fontSize: 12, color: T.textMuted }}>{job?.suburb}</div>
                     </div>
                   </div>
                   <div style={{ fontSize: 12, color: T.textLight }}>{job?.startTime} - {job?.endTime}</div>

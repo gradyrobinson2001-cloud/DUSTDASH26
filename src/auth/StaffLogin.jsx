@@ -1,122 +1,86 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { T } from '../shared';
 
-// Staff PIN login component — used inside CleanerPortal before auth
+// Staff login component — email + password
 // Returns onAuthenticated(profile) when successful
 export default function StaffLogin({ onAuthenticated, onDemoMode }) {
-  const [teams,        setTeams]        = useState([]);
-  const [selectedTeam, setSelectedTeam] = useState(null);
-  const [pin,          setPin]          = useState('');
-  const [error,        setError]        = useState('');
-  const [loading,      setLoading]      = useState(false);
-  const [loadingTeams, setLoadingTeams] = useState(true);
+  const [email,    setEmail]    = useState('');
+  const [password, setPassword] = useState('');
+  const [error,    setError]    = useState('');
+  const [loading,  setLoading]  = useState(false);
 
-  // Load available staff teams from profiles
-  useEffect(() => {
-    async function loadTeams() {
-      if (!supabaseReady) { setLoadingTeams(false); return; }
-      // Staff profiles are publicly listed (team name only — no sensitive data)
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, full_name, team_id')
-        .eq('role', 'staff')
-        .eq('is_active', true)
-        .order('full_name');
-      if (!error && data) setTeams(data);
-      setLoadingTeams(false);
-    }
-    loadTeams();
-  }, []);
-
-  const handlePinInput = (digit) => {
-    if (pin.length < 6) setPin(prev => prev + digit);
-  };
-
-  const handleBackspace = () => setPin(prev => prev.slice(0, -1));
-
-  const handleSubmit = async () => {
-    if (!selectedTeam) { setError('Please select your team first.'); return; }
-    if (pin.length < 4) { setError('PIN must be at least 4 digits.'); return; }
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) { setError('Please enter your email.'); return; }
+    if (!password)     { setError('Please enter your password.'); return; }
     setLoading(true);
     setError('');
 
     if (!supabaseReady) {
-      // Dev fallback: accept PIN "1234"
-      if (pin === '1234') {
-        onAuthenticated({ id: 'dev', full_name: selectedTeam.full_name, team_id: selectedTeam.team_id, role: 'staff' });
+      // Dev fallback
+      if (password === '1234') {
+        onAuthenticated({ id: 'dev', full_name: email.split('@')[0], role: 'staff' });
       } else {
-        setError('Incorrect PIN. (Dev mode: use 1234)');
-        setPin('');
+        setError('Incorrect password. (Dev mode: use 1234)');
       }
       setLoading(false);
       return;
     }
 
     try {
-      // Call the Edge Function to verify PIN and get session tokens
-      const { data, error: fnError } = await supabase.functions.invoke('verify-staff-pin', {
-        body: { staffId: selectedTeam.id, pin },
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
       });
 
-      // Handle Edge Function errors (including error messages in the response body)
-      if (fnError || !data?.success) {
-        const msg = data?.error || 'Incorrect PIN. Please try again.';
-        setError(msg);
-        setPin('');
+      if (authError) {
+        setError(authError.message === 'Invalid login credentials'
+          ? 'Incorrect email or password.'
+          : authError.message);
         setLoading(false);
         return;
       }
 
-      if (!data.access_token) {
-        setError('Login failed — no session returned. Contact admin.');
-        setPin('');
-        setLoading(false);
-        return;
-      }
-
-      // Set the session with the real tokens from the Edge Function
-      const { error: sessionError } = await supabase.auth.setSession({
-        access_token:  data.access_token,
-        refresh_token: data.refresh_token,
-      });
-
-      if (sessionError) {
-        setError('Session error. Please try again.');
-        setPin('');
+      if (!data.user) {
+        setError('Login failed. Please try again.');
         setLoading(false);
         return;
       }
 
       // Fetch full profile
-      const { data: prof } = await supabase
+      const { data: prof, error: profErr } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', selectedTeam.id)
+        .eq('id', data.user.id)
         .single();
+
+      if (profErr || !prof) {
+        setError('Account found but no staff profile. Contact admin.');
+        setLoading(false);
+        return;
+      }
+
+      if (prof.role !== 'staff') {
+        setError('This login is for staff only. Admins use /login.');
+        await supabase.auth.signOut();
+        setLoading(false);
+        return;
+      }
+
+      if (!prof.is_active) {
+        setError('Your account is inactive. Contact admin.');
+        await supabase.auth.signOut();
+        setLoading(false);
+        return;
+      }
 
       onAuthenticated(prof);
     } catch (err) {
       setError('Login failed. Please try again.');
-      setPin('');
     }
     setLoading(false);
   };
-
-  const PinDot = ({ filled }) => (
-    <div style={{ width: 14, height: 14, borderRadius: '50%', background: filled ? T.primary : 'transparent', border: `2px solid ${filled ? T.primary : T.border}`, transition: 'all 0.15s' }} />
-  );
-
-  const PadBtn = ({ label, onClick, style = {} }) => (
-    <button
-      onClick={onClick}
-      style={{ padding: '16px', borderRadius: 12, background: T.card, border: `1px solid ${T.border}`, color: T.text, fontSize: 20, fontWeight: 600, cursor: 'pointer', transition: 'background 0.1s', ...style }}
-      onMouseDown={e => e.currentTarget.style.background = T.border}
-      onMouseUp={e => e.currentTarget.style.background = T.card}
-    >
-      {label}
-    </button>
-  );
 
   return (
     <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -124,55 +88,64 @@ export default function StaffLogin({ onAuthenticated, onDemoMode }) {
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div style={{ fontSize: 36, marginBottom: 8 }}>🫧</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: T.text }}>Staff Portal</div>
-          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4 }}>Select your team and enter your PIN</div>
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4 }}>Sign in with your email and password</div>
         </div>
 
-        {/* Team selector */}
-        {loadingTeams ? (
-          <div style={{ textAlign: 'center', color: T.textMuted, padding: 16, fontSize: 14 }}>Loading teams…</div>
-        ) : teams.length === 0 ? (
-          <div style={{ textAlign: 'center', color: T.textMuted, padding: 16, fontSize: 13 }}>
-            No staff accounts found.<br />
-            <a href="/login" style={{ color: T.primary }}>Admin login →</a>
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 5 }}>
+              Email
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => { setEmail(e.target.value); setError(''); }}
+              placeholder="your.email@example.com"
+              autoComplete="email"
+              style={{
+                width: '100%', padding: '12px 14px', borderRadius: 10,
+                border: `1.5px solid ${T.border}`, fontSize: 15, boxSizing: 'border-box',
+                background: T.bg, color: T.text,
+              }}
+            />
           </div>
-        ) : (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-            {teams.map(t => (
-              <button
-                key={t.id}
-                onClick={() => { setSelectedTeam(t); setPin(''); setError(''); }}
-                style={{ flex: 1, padding: '10px 8px', borderRadius: 10, border: `2px solid ${selectedTeam?.id === t.id ? T.primary : T.border}`, background: selectedTeam?.id === t.id ? T.primaryLight || '#1a2a3a' : T.bg, color: T.text, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
-              >
-                {t.full_name}
-              </button>
-            ))}
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 5 }}>
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={e => { setPassword(e.target.value); setError(''); }}
+              placeholder="Enter your password"
+              autoComplete="current-password"
+              style={{
+                width: '100%', padding: '12px 14px', borderRadius: 10,
+                border: `1.5px solid ${T.border}`, fontSize: 15, boxSizing: 'border-box',
+                background: T.bg, color: T.text,
+              }}
+            />
           </div>
-        )}
 
-        {/* PIN display */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginBottom: 24 }}>
-          {[0,1,2,3,4,5].map(i => <PinDot key={i} filled={i < pin.length} />)}
-        </div>
+          {error && (
+            <div style={{ textAlign: 'center', color: '#D4645C', fontSize: 13, marginBottom: 14 }}>{error}</div>
+          )}
 
-        {/* Numpad */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
-          {[1,2,3,4,5,6,7,8,9].map(d => (
-            <PadBtn key={d} label={d} onClick={() => handlePinInput(String(d))} />
-          ))}
-          <PadBtn label="⌫" onClick={handleBackspace} style={{ color: T.textMuted }} />
-          <PadBtn label="0" onClick={() => handlePinInput('0')} />
-          <PadBtn
-            label={loading ? '…' : '→'}
-            onClick={handleSubmit}
-            style={{ background: T.primary, color: '#fff', border: 'none' }}
-          />
-        </div>
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              width: '100%', padding: '14px', borderRadius: 10, border: 'none',
+              background: T.primary, color: '#fff', fontSize: 16, fontWeight: 800,
+              cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1,
+            }}
+          >
+            {loading ? 'Signing in…' : 'Sign In'}
+          </button>
+        </form>
 
-        {error && (
-          <div style={{ textAlign: 'center', color: '#D4645C', fontSize: 13, marginBottom: 12 }}>{error}</div>
-        )}
-
-        <div style={{ textAlign: 'center', marginTop: 8 }}>
+        <div style={{ textAlign: 'center', marginTop: 16 }}>
           <button
             onClick={onDemoMode}
             style={{ background: 'none', border: 'none', color: T.textMuted, fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}

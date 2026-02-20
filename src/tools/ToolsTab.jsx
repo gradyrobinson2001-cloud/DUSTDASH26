@@ -167,33 +167,29 @@ export default function ToolsTab({
 
         {/* Route Summary Cards */}
         {routeData && (
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, marginBottom: 20 }}>
-            {[{ key: "teamA", idx: 0 }, { key: "teamB", idx: 1 }].map(({ key, idx }) => {
-              const team = scheduleSettings.teams[idx];
-              const route = routeData[key];
-              return (
-                <div key={key} style={{ padding: "16px 20px", background: `${team?.color}15`, borderRadius: T.radius, borderLeft: `4px solid ${team?.color}` }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 8 }}>{team?.name || `Team ${idx === 0 ? "A" : "B"}`}</div>
-                  <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
-                    <span style={{ color: T.textMuted }}>🚗 <strong style={{ color: T.text }}>{route.totalDistance.toFixed(1)} km</strong></span>
-                    <span style={{ color: T.textMuted }}>⏱️ <strong style={{ color: T.text }}>{route.totalDuration} mins</strong></span>
-                    <span style={{ color: T.textMuted }}>📍 <strong style={{ color: T.text }}>{route.jobs?.length || 0} stops</strong></span>
-                  </div>
-                  {route.legs?.length > 0 && (
-                    <div style={{ marginTop: 12, fontSize: 12 }}>
-                      {route.legs.map((leg, i) => (
-                        <div key={i} style={{ padding: "6px 0", borderBottom: i < route.legs.length - 1 ? `1px solid ${T.border}` : "none" }}>
-                          <span style={{ color: T.text }}>{leg.from.clientName}</span>
-                          <span style={{ color: T.textLight }}> → </span>
-                          <span style={{ color: T.text }}>{leg.to.clientName}</span>
-                          <span style={{ color: T.textMuted, marginLeft: 8 }}>{leg.distanceText} · {leg.durationText}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+          <div style={{ marginBottom: 20 }}>
+            {routeData.teamA?.jobs?.length > 0 && (
+              <div style={{ padding: "16px 20px", background: `${T.primary}15`, borderRadius: T.radius, borderLeft: `4px solid ${T.primary}` }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 8 }}>Route Summary</div>
+                <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
+                  <span style={{ color: T.textMuted }}>🚗 <strong style={{ color: T.text }}>{routeData.teamA.totalDistance.toFixed(1)} km</strong></span>
+                  <span style={{ color: T.textMuted }}>⏱️ <strong style={{ color: T.text }}>{routeData.teamA.totalDuration} mins</strong></span>
+                  <span style={{ color: T.textMuted }}>📍 <strong style={{ color: T.text }}>{routeData.teamA.jobs?.length || 0} stops</strong></span>
                 </div>
-              );
-            })}
+                {routeData.teamA.legs?.length > 0 && (
+                  <div style={{ marginTop: 12, fontSize: 12 }}>
+                    {routeData.teamA.legs.map((leg, i) => (
+                      <div key={i} style={{ padding: "6px 0", borderBottom: i < routeData.teamA.legs.length - 1 ? `1px solid ${T.border}` : "none" }}>
+                        <span style={{ color: T.text }}>{leg.from.clientName}</span>
+                        <span style={{ color: T.textLight }}> → </span>
+                        <span style={{ color: T.text }}>{leg.to.clientName}</span>
+                        <span style={{ color: T.textMuted, marginLeft: 8 }}>{leg.distanceText} · {leg.durationText}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -220,12 +216,10 @@ export default function ToolsTab({
         {/* Legend */}
         {mapsLoaded && routeData && (
           <div style={{ display: "flex", gap: 20, marginTop: 16, justifyContent: "center" }}>
-            {scheduleSettings.teams.map(team => (
-              <div key={team.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 24, height: 4, borderRadius: 2, background: team.color }} />
-                <span style={{ fontSize: 12, color: T.textMuted }}>{team.name}</span>
-              </div>
-            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 24, height: 4, borderRadius: 2, background: T.primary }} />
+              <span style={{ fontSize: 12, color: T.textMuted }}>Route</span>
+            </div>
           </div>
         )}
       </div>
@@ -247,24 +241,17 @@ export default function ToolsTab({
 function RouteOptimiser({ scheduleClients, scheduledJobs, scheduleSettings, isMobile }) {
   const TODAY = new Date().toISOString().split("T")[0];
   const [optimDate,   setOptimDate]   = useState(TODAY);
-  const [optimTeam,   setOptimTeam]   = useState("team_a");
   const [optimised,   setOptimised]   = useState(null); // null | optimisedJobs[]
   const [applying,    setApplying]    = useState(false);
   const [applied,     setApplied]     = useState(false);
 
   const { updateJob } = useScheduledJobs();
 
-  const teams = scheduleSettings?.teams || [
-    { id: "team_a", name: "Team A", color: T.primary },
-    { id: "team_b", name: "Team B", color: T.blue },
-  ];
-
   const dayJobs = useMemo(() => scheduledJobs.filter(j => {
-    const jTeam = j.team_id || j.teamId;
-    return j.date === optimDate && jTeam === optimTeam && !j.is_break && !j.isBreak;
-  }), [scheduledJobs, optimDate, optimTeam]);
+    return j.date === optimDate && !j.is_break && !j.isBreak;
+  }), [scheduledJobs, optimDate]);
 
-  const teamColor = teams.find(t => t.id === optimTeam)?.color || T.primary;
+  const teamColor = T.primary;
 
   const handleOptimise = () => {
     setApplied(false);
@@ -305,13 +292,6 @@ function RouteOptimiser({ scheduleClients, scheduledJobs, scheduleSettings, isMo
           <input type="date" value={optimDate} onChange={e => { setOptimDate(e.target.value); setOptimised(null); setApplied(false); }}
             style={{ padding: "10px 12px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, fontSize: 14, color: T.text }} />
         </div>
-        <div>
-          <label style={labelSt}>TEAM</label>
-          <select value={optimTeam} onChange={e => { setOptimTeam(e.target.value); setOptimised(null); setApplied(false); }}
-            style={{ padding: "10px 12px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, fontSize: 14, color: T.text }}>
-            {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        </div>
         <button
           onClick={handleOptimise}
           disabled={dayJobs.length < 2}
@@ -337,7 +317,7 @@ function RouteOptimiser({ scheduleClients, scheduledJobs, scheduleSettings, isMo
 
       {dayJobs.length === 0 && (
         <div style={{ textAlign: "center", padding: 24, color: T.textLight, fontSize: 14 }}>
-          No jobs on {optimDate} for {teams.find(t => t.id === optimTeam)?.name}
+          No jobs on {optimDate}
         </div>
       )}
 
