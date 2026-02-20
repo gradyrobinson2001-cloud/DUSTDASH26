@@ -67,6 +67,49 @@ function fmtWeekRange(monday) {
 }
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+function normalizeText(v) {
+  return String(v || '').trim().toLowerCase();
+}
+
+function normalizePhone(v) {
+  return String(v || '').replace(/\D/g, '');
+}
+
+function resolveClientProfile(job, clients) {
+  const list = Array.isArray(clients) ? clients : [];
+  if (!list.length) return null;
+
+  const clientId = job?.client_id || job?.clientId;
+  if (clientId) {
+    const byId = list.find(c => String(c.id) === String(clientId));
+    if (byId) return byId;
+  }
+
+  const jobEmail = normalizeText(job?.email);
+  if (jobEmail) {
+    const byEmail = list.find(c => normalizeText(c?.email) === jobEmail);
+    if (byEmail) return byEmail;
+  }
+
+  const jobPhone = normalizePhone(job?.phone);
+  if (jobPhone) {
+    const byPhone = list.find(c => normalizePhone(c?.phone) === jobPhone);
+    if (byPhone) return byPhone;
+  }
+
+  const jobName = normalizeText(job?.client_name || job?.clientName);
+  const jobSuburb = normalizeText(job?.suburb);
+  if (jobName) {
+    const byNameSuburb = list.find(c =>
+      normalizeText(c?.name) === jobName &&
+      (!jobSuburb || normalizeText(c?.suburb) === jobSuburb)
+    );
+    if (byNameSuburb) return byNameSuburb;
+  }
+
+  return null;
+}
+
 // ─── Component ────────────────────────────────────────────
 export default function CleanerPortal() {
   const [profile,      setProfile]      = useState(null);
@@ -90,7 +133,7 @@ export default function CleanerPortal() {
   // ── Hooks ──────────────────────────────────────────────
   // For staff portal: useScheduledJobs filters by assigned_staff + is_published
   const { scheduledJobs, updateJob } = useScheduledJobs(staffId ? { staffId } : {});
-  const { clients }                   = useClients();
+  const { clients, loading: clientsLoading } = useClients();
   const { photos: supaPhotos, uploadPhoto, getSignedUrl } = usePhotos();
 
   // Week for date strip
@@ -420,8 +463,7 @@ export default function CleanerPortal() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {dayJobs.map((job, idx) => {
-                const clientId   = job.client_id || job.clientId;
-                const client     = allClients.find(c => String(c.id) === String(clientId));
+                const client     = resolveClientProfile(job, allClients);
                 const photos     = localPhotos[job.id] || { before: [], after: [] };
                 const isExp      = expandedJob === job.id;
                 const status     = job.status || job.job_status || job.jobStatus || 'scheduled';
@@ -443,6 +485,9 @@ export default function CleanerPortal() {
                 const bathrooms  = job?.bathrooms ?? client?.bathrooms;
                 const living     = job?.living ?? client?.living;
                 const kitchen    = job?.kitchen ?? client?.kitchen;
+                const hasJobSnapshot =
+                  Boolean(job?.address || job?.email || job?.phone || job?.notes || job?.access_notes || job?.accessNotes) ||
+                  [bedrooms, bathrooms, living, kitchen].some(v => v !== null && v !== undefined);
                 const mapsDestination = client?.lat && client?.lng
                   ? `${client.lat},${client.lng}`
                   : address;
@@ -522,9 +567,9 @@ export default function CleanerPortal() {
                         {freq && <span style={{ fontSize: 13 }}>{freq}</span>}
                         {preferredDay && <span style={{ fontSize: 13 }}>pref: {preferredDay}</span>}
                         {preferredTime && <span style={{ fontSize: 13 }}>{preferredTime}</span>}
-                        {!client && (
+                        {!client && !clientsLoading && !hasJobSnapshot && (
                           <span style={{ fontSize: 12, color: T.danger }}>
-                            Client profile missing - using job snapshot only
+                            Client profile unavailable for this job
                           </span>
                         )}
                       </div>

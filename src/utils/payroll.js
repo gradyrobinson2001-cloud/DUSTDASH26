@@ -98,25 +98,42 @@ export function calcHoursFromJobs(jobs, staffId, weekStart) {
 
   const staffJobs = jobs.filter(j => {
     const jDate = j.date;
-    const assignedStaff = j.assigned_staff || [];
-    return assignedStaff.includes(staffId)
+    const assignedStaff = Array.isArray(j.assigned_staff) ? j.assigned_staff.map(String) : [];
+    const isPublished = Boolean(j.is_published ?? j.isPublished ?? false);
+    return assignedStaff.includes(String(staffId))
+      && isPublished
       && jDate >= weekStart
       && jDate <= weekEndStr
       && !j.is_break && !j.isBreak;
   });
 
-  const completedJobs = staffJobs.filter(j =>
-    (j.job_status || j.jobStatus) === 'completed'
+  const completedJobs = staffJobs.filter(j => {
+    const status = j.status || j.job_status || j.jobStatus;
+    return status === 'completed';
+  });
+
+  const totalScheduledMins = staffJobs.reduce(
+    (sum, j) => sum + (j.duration || 0), 0
   );
 
   const totalActualMins = completedJobs.reduce(
     (sum, j) => sum + (j.actual_duration || j.actualDuration || j.duration || 0), 0
   );
 
+  const scheduledHours = Math.round(totalScheduledMins / 60 * 100) / 100;
+  const completedHours = Math.round(totalActualMins / 60 * 100) / 100;
+  const useActual = completedJobs.length > 0;
+
   return {
-    hoursWorked: Math.round(totalActualMins / 60 * 100) / 100,
+    // For newly published weeks, use scheduled duration immediately.
+    // Once jobs are completed, prefer actual duration for accuracy.
+    hoursWorked: useActual ? completedHours : scheduledHours,
+    hoursSource: useActual ? 'actual_completed_jobs' : 'published_rota_schedule',
     completedJobs: completedJobs.length,
     scheduledJobs: staffJobs.length,
+    scheduledHours,
+    completedHours,
+    totalScheduledMinutes: totalScheduledMins,
     totalMinutes: totalActualMins,
   };
 }

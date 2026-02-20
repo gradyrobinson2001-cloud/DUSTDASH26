@@ -76,6 +76,9 @@ export default function PayrollTab({ showToast, isMobile }) {
           staffId: staff.id,
           jobsCompleted: hoursCalc.completedJobs,
           jobsScheduled: hoursCalc.scheduledJobs,
+          hoursSource: hoursCalc.hoursSource,
+          scheduledHours: hoursCalc.scheduledHours,
+          completedHours: hoursCalc.completedHours,
           employmentType: staff.employment_type || 'casual',
           superRate: staff.super_rate ?? 0.115,
           hourlyRate: staff.hourly_rate || 0,
@@ -224,7 +227,11 @@ export default function PayrollTab({ showToast, isMobile }) {
                       label="Hours Worked"
                       value={ov.hoursWorked ?? rec.hoursWorked ?? 0}
                       onChange={v => handleOverride(staff.id, 'hoursWorked', v)}
-                      hint={`Auto: ${draft?.jobsCompleted || 0}/${draft?.jobsScheduled || 0} jobs`}
+                      hint={
+                        draft?.hoursSource === 'published_rota_schedule'
+                          ? `Auto: ${draft?.scheduledHours || 0}h from published rota (${draft?.jobsScheduled || 0} jobs)`
+                          : `Auto: ${draft?.completedHours || 0}h from completed jobs (${draft?.jobsCompleted || 0}/${draft?.jobsScheduled || 0})`
+                      }
                     />
                     <EditField
                       label="Travel Hours"
