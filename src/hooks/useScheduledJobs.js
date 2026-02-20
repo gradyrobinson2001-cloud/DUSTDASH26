@@ -222,5 +222,30 @@ export function useScheduledJobs({ staffId } = {}) {
     ));
   };
 
-  return { scheduledJobs, setScheduledJobs, loading, error, addJob, updateJob, removeJob, bulkUpsertJobs, publishWeek };
+  const unpublishWeek = async (weekStart) => {
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const endStr = weekEnd.toISOString().split('T')[0];
+
+    if (!supabaseReady) {
+      const updated = scheduledJobs.map(j =>
+        j.date >= weekStart && j.date <= endStr ? { ...j, is_published: false, isPublished: false } : j
+      );
+      setScheduledJobs(updated);
+      saveScheduledJobs(updated);
+      return;
+    }
+
+    const { error } = await supabase
+      .from('scheduled_jobs')
+      .update({ is_published: false })
+      .gte('date', weekStart)
+      .lte('date', endStr);
+    if (error) throw error;
+    setScheduledJobs(prev => prev.map(j =>
+      j.date >= weekStart && j.date <= endStr ? { ...j, is_published: false, isPublished: false } : j
+    ));
+  };
+
+  return { scheduledJobs, setScheduledJobs, loading, error, addJob, updateJob, removeJob, bulkUpsertJobs, publishWeek, unpublishWeek };
 }

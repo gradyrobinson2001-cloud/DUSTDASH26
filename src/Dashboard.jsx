@@ -68,7 +68,7 @@ export default function Dashboard() {
   const { clients,  addClient,  updateClient,  removeClient }          = useClients();
   const { enquiries, setEnquiries, addEnquiry, updateEnquiry, removeEnquiry } = useEnquiries();
   const { quotes,   setQuotes,  addQuote,    updateQuote }             = useQuotes();
-  const { scheduledJobs, setScheduledJobs, addJob, updateJob: updateJobDB, removeJob, bulkUpsertJobs, publishWeek } = useScheduledJobs();
+  const { scheduledJobs, setScheduledJobs, addJob, updateJob: updateJobDB, removeJob, bulkUpsertJobs, publishWeek, unpublishWeek } = useScheduledJobs();
   const { invoices, setInvoices, addInvoice: addInvoiceDB, updateInvoice } = useInvoices();
   const { emailHistory, setEmailHistory, addEmailHistory }             = useEmailHistory();
   const { pricing,  setPricing }                                        = usePricing();
@@ -790,7 +790,15 @@ export default function Dashboard() {
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} showToast={showToast} isMobile={isMobile} />}
         {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} isMobile={isMobile} />}
         {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} />}
-        {page === "rota"     && <RotaTab scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} profile={profile} showToast={showToast} isMobile={isMobile} />}
+        {page === "rota"     && <RotaTab
+          scheduledJobs={scheduledJobs}
+          staffMembers={staffMembers}
+          showToast={showToast}
+          isMobile={isMobile}
+          publishWeek={publishWeek}
+          unpublishWeek={unpublishWeek}
+          initialWeekStart={calendarWeekStart}
+        />}
         {page === "clients"  && <ClientsTab
           clients={clients}
           clientSearch={clientSearch}

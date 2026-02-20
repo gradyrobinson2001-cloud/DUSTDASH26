@@ -47,6 +47,24 @@ function weekDays(anchorDate) {
     return dd.toISOString().split('T')[0];
   });
 }
+function getMonday(dateStr) {
+  const d = new Date(dateStr);
+  const day = d.getDay();
+  d.setDate(d.getDate() - ((day + 6) % 7));
+  return d.toISOString().split('T')[0];
+}
+function shiftDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0];
+}
+function fmtWeekRange(monday) {
+  const m = new Date(monday);
+  const s = new Date(monday);
+  s.setDate(m.getDate() + 6);
+  const opts = { day: 'numeric', month: 'short' };
+  return `${m.toLocaleDateString('en-AU', opts)} - ${s.toLocaleDateString('en-AU', opts)}`;
+}
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // ─── Component ────────────────────────────────────────────
@@ -77,6 +95,7 @@ export default function CleanerPortal() {
 
   // Week for date strip
   const weekDates = weekDays(selectedDate);
+  const weekStart = getMonday(selectedDate);
 
   // ── Active jobs for selected date ──────────────────────
   const allJobs = demoMode ? DEMO_JOBS : scheduledJobs;
@@ -284,40 +303,58 @@ export default function CleanerPortal() {
 
         {/* Week strip */}
         {activeTab === 'today' && (
-          <div style={{ display: 'flex', gap: 4, overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: 2 }}>
-            {weekDates.map((d, i) => {
-              const isToday = d === TODAY;
-              const isSel   = d === selectedDate;
-              const stat    = weeklyStats[i];
-              const allDone = stat.done === stat.jobs && stat.jobs > 0;
-              return (
-                <button
-                  key={d}
-                  onClick={() => setSelectedDate(d)}
-                  style={{
-                    flex: '0 0 auto', minWidth: 46,
-                    padding: '6px 4px',
-                    borderRadius: 10,
-                    border: isSel ? '2px solid #fff' : '2px solid transparent',
-                    background: isSel ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)',
-                    color: '#fff', cursor: 'pointer', textAlign: 'center',
-                  }}
-                >
-                  <div style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{DAY_LABELS[i]}</div>
-                  <div style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.3 }}>
-                    {allDone ? '✓' : isToday ? '•' : stat.jobs > 0 ? stat.jobs : '–'}
-                  </div>
-                </button>
-              );
-            })}
-            {selectedDate !== TODAY && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 2 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <button
-                onClick={() => setSelectedDate(TODAY)}
-                style={{ flex: '0 0 auto', padding: '6px 10px', borderRadius: 10, border: 'none', background: '#fff', color: teamColor, fontSize: 11, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                onClick={() => setSelectedDate(d => shiftDays(d, -7))}
+                style={{ padding: '5px 10px', borderRadius: 8, border: 'none', background: 'rgba(255,255,255,0.18)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
               >
-                Today
+                ← Prev Week
               </button>
-            )}
+              <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.95 }}>{fmtWeekRange(weekStart)}</div>
+              <button
+                onClick={() => setSelectedDate(d => shiftDays(d, 7))}
+                style={{ padding: '5px 10px', borderRadius: 8, border: 'none', background: 'rgba(255,255,255,0.18)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+              >
+                Next Week →
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: 4, overflowX: 'auto', scrollbarWidth: 'none' }}>
+              {weekDates.map((d, i) => {
+                const isToday = d === TODAY;
+                const isSel   = d === selectedDate;
+                const stat    = weeklyStats[i];
+                const allDone = stat.done === stat.jobs && stat.jobs > 0;
+                return (
+                  <button
+                    key={d}
+                    onClick={() => setSelectedDate(d)}
+                    style={{
+                      flex: '0 0 auto', minWidth: 46,
+                      padding: '6px 4px',
+                      borderRadius: 10,
+                      border: isSel ? '2px solid #fff' : '2px solid transparent',
+                      background: isSel ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)',
+                      color: '#fff', cursor: 'pointer', textAlign: 'center',
+                    }}
+                  >
+                    <div style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{DAY_LABELS[i]}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.3 }}>
+                      {allDone ? '✓' : isToday ? '•' : stat.jobs > 0 ? stat.jobs : '–'}
+                    </div>
+                  </button>
+                );
+              })}
+              {selectedDate !== TODAY && (
+                <button
+                  onClick={() => setSelectedDate(TODAY)}
+                  style={{ flex: '0 0 auto', padding: '6px 10px', borderRadius: 10, border: 'none', background: '#fff', color: teamColor, fontSize: 11, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  Today
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
