@@ -63,10 +63,10 @@ serve(async (req) => {
       });
     }
 
-    // ── 4. Create the auth user ───────────────────────────────────────
+    // ── 4. Create the auth user (don't confirm email yet — the invite will do that) ─
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
       email,
-      email_confirm: true,
+      email_confirm: false,
       user_metadata: { full_name },
     });
     if (createError) {
@@ -101,8 +101,16 @@ serve(async (req) => {
       });
     }
 
-    // ── 7. Send password-setup invite email ───────────────────────────
-    await adminClient.auth.admin.inviteUserByEmail(email, { data: { full_name } });
+    // ── 7. Send invite email (confirms email + lets them set password) ─
+    const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
+      data: { full_name },
+      redirectTo: `${req.headers.get('origin') || ''}/reset-password`,
+    });
+
+    // Non-critical — account is created even if email fails
+    if (inviteError) {
+      console.warn('[create-staff-user] Could not send invite email:', inviteError.message);
+    }
 
     return new Response(
       JSON.stringify({ success: true, user_id: newUser.user!.id }),

@@ -46,12 +46,12 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         setDebugMsg(`Auth event: ${_event}, user: ${session?.user?.email ?? 'none'}`);
-        setSession(session);
 
         if (session?.user) {
           // On token refresh events, keep the cached profile and refresh in background
           if (_event === 'TOKEN_REFRESHED' && profileCache.current) {
             setDebugMsg(`Token refreshed — keeping cached profile for ${session.user.email}`);
+            setSession(session);
             setProfile(profileCache.current);
             setLoading(false);
             if (!initialised.current) initialised.current = true;
@@ -61,13 +61,18 @@ export function AuthProvider({ children }) {
             return;
           }
 
-          // Mark profile as loading so RequireAdmin shows a spinner, not the error screen
+          // Set profileLoading BEFORE setting session to avoid a render frame
+          // where session exists but profile is null and no loading flag is set
           setProfileLoading(true);
+          setSession(session);
+
           setDebugMsg(`Fetching profile for ${session.user.id}…`);
           const prof = await fetchProfile(session.user.id);
           setProfile(prof ?? profileCache.current);
           setProfileLoading(false);
         } else {
+          // Genuine sign-out — clear everything
+          setSession(null);
           profileCache.current = null;
           setProfile(null);
           setProfileLoading(false);
