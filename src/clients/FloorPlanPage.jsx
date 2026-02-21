@@ -80,6 +80,11 @@ function textColorForBackground(hex) {
   return luminance > 165 ? "#24414B" : "#FFFFFF";
 }
 
+function hexToRgba(hex, alpha = 1) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${clamp(Number(alpha) || 1, 0, 1)})`;
+}
+
 function darkenColor(hex, amount = 0.2) {
   const { r, g, b } = hexToRgb(hex);
   const next = (v) => clamp(Math.round(v * (1 - amount)), 0, 255);
@@ -463,6 +468,141 @@ async function detectRoomsFromImage({ imageUrl, targetWidth, targetHeight, start
   return detected;
 }
 
+async function detectRoomFromPoint({
+  imageUrl,
+  targetWidth,
+  targetHeight,
+  clickX,
+  clickY,
+  roomIndex,
+  defaultColorKey,
+  sectionKey,
+}) {
+  const img = await loadImage(imageUrl);
+
+  const maxW = 1000;
+  const scale = Math.min(1, maxW / img.width);
+  const w = Math.max(180, Math.round(img.width * scale));
+  const h = Math.max(180, Math.round(img.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Canvas image processing is unavailable.");
+
+  ctx.drawImage(img, 0, 0, w, h);
+  const raw = ctx.getImageData(0, 0, w, h).data;
+  const size = w * h;
+  const white = new Uint8Array(size);
+
+  for (let i = 0; i < size; i += 1) {
+    const p = i * 4;
+    const lum = (0.2126 * raw[p]) + (0.7152 * raw[p + 1]) + (0.0722 * raw[p + 2]);
+    white[i] = lum > 224 ? 1 : 0;
+  }
+
+  const sxRaw = Math.round((clamp(clickX, 0, targetWidth) / Math.max(1, targetWidth)) * w);
+  const syRaw = Math.round((clamp(clickY, 0, targetHeight) / Math.max(1, targetHeight)) * h);
+  let sx = clamp(sxRaw, 0, w - 1);
+  let sy = clamp(syRaw, 0, h - 1);
+
+  const startIndexLinear = sy * w + sx;
+  if (white[startIndexLinear] !== 1) {
+    let found = null;
+    for (let radius = 1; radius <= 18 && !found; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const nx = clamp(sx + dx, 0, w - 1);
+          const ny = clamp(sy + dy, 0, h - 1);
+          const idx = ny * w + nx;
+          if (white[idx] === 1) {
+            found = { x: nx, y: ny };
+            break;
+          }
+        }
+        if (found) break;
+      }
+    }
+    if (!found) return null;
+    sx = found.x;
+    sy = found.y;
+  }
+
+  const visited = new Uint8Array(size);
+  const queue = new Int32Array(size);
+  let head = 0;
+  let tail = 0;
+  const start = sy * w + sx;
+  visited[start] = 1;
+  queue[tail++] = start;
+
+  let minX = w;
+  let minY = h;
+  let maxX = 0;
+  let maxY = 0;
+  let count = 0;
+
+  while (head < tail) {
+    const current = queue[head++];
+    const x = current % w;
+    const y = (current / w) | 0;
+    count += 1;
+
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+
+    if (x > 0) {
+      const n = current - 1;
+      if (white[n] === 1 && visited[n] === 0) {
+        visited[n] = 1;
+        queue[tail++] = n;
+      }
+    }
+    if (x < w - 1) {
+      const n = current + 1;
+      if (white[n] === 1 && visited[n] === 0) {
+        visited[n] = 1;
+        queue[tail++] = n;
+      }
+    }
+    if (y > 0) {
+      const n = current - w;
+      if (white[n] === 1 && visited[n] === 0) {
+        visited[n] = 1;
+        queue[tail++] = n;
+      }
+    }
+    if (y < h - 1) {
+      const n = current + w;
+      if (white[n] === 1 && visited[n] === 0) {
+        visited[n] = 1;
+        queue[tail++] = n;
+      }
+    }
+  }
+
+  const boxW = (maxX - minX) + 1;
+  const boxH = (maxY - minY) + 1;
+  if (boxW < 14 || boxH < 14) return null;
+  if (count < 160) return null;
+
+  const boxArea = boxW * boxH;
+  const fill = count / boxArea;
+  if (fill < 0.45) return null;
+
+  const scaleX = targetWidth / w;
+  const scaleY = targetHeight / h;
+  return buildRoomFromBounds({
+    x: clamp(minX * scaleX, 0, targetWidth - MIN_ROOM_WIDTH),
+    y: clamp(minY * scaleY, 0, targetHeight - MIN_ROOM_HEIGHT),
+    width: clamp(boxW * scaleX, MIN_ROOM_WIDTH, targetWidth),
+    height: clamp(boxH * scaleY, MIN_ROOM_HEIGHT, targetHeight),
+  }, roomIndex, defaultColorKey, sectionKey);
+}
+
 function readImageFile(file) {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);
@@ -524,6 +664,8 @@ export default function FloorPlanPage() {
   const [referenceImagePath, setReferenceImagePath] = useState("");
   const [referenceImageUrl, setReferenceImageUrl] = useState("");
   const [referenceImageOpacity, setReferenceImageOpacity] = useState(0.32);
+  const [annotateFromImageMode, setAnnotateFromImageMode] = useState(false);
+  const [addingFromImage, setAddingFromImage] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -590,6 +732,66 @@ export default function FloorPlanPage() {
       return [...prev, room];
     });
   }, [activeSectionId, defaultColorKey, defaultSectionKey]);
+
+  const addRoomFromImageClick = useCallback(async (canvasEvent) => {
+    if (!annotateFromImageMode || !referenceImageUrl) return;
+    const target = canvasEvent?.currentTarget;
+    if (!target) return;
+
+    const rect = target.getBoundingClientRect();
+    const clickX = clamp(canvasEvent.clientX - rect.left, 0, rect.width);
+    const clickY = clamp(canvasEvent.clientY - rect.top, 0, rect.height);
+
+    setAddingFromImage(true);
+    setError("");
+    setNotice("");
+    try {
+      const detected = await detectRoomFromPoint({
+        imageUrl: referenceImageUrl,
+        targetWidth: Math.max(1, Math.round(rect.width)),
+        targetHeight: Math.max(1, Math.round(rect.height)),
+        clickX,
+        clickY,
+        roomIndex: rooms.length,
+        defaultColorKey,
+        sectionKey: activeSectionId || defaultSectionKey,
+      });
+
+      if (!detected) {
+        setNotice("Could not detect a clear enclosed room from that click. Try clicking inside room center.");
+        return;
+      }
+
+      const existing = rooms.find((room) =>
+        String(room.section_key || "") === String(activeSectionId)
+        && iou(room, detected) > 0.7
+      );
+      if (existing) {
+        setSelectedRoomId(existing.id);
+        setNotice("Matched an existing room near that area. Edit it from the sidebar.");
+        return;
+      }
+
+      const normalized = normalizeRoom(detected, colorLegend, houseSections);
+      setRooms((prev) => [...prev, normalized]);
+      setSelectedRoomId(normalized.id);
+      setNotice("Room overlay added. Update color/notes in the sidebar.");
+    } catch (err) {
+      console.error("[floor-plan] add room from image failed", err);
+      setError(err?.message || "Could not add room from image click.");
+    } finally {
+      setAddingFromImage(false);
+    }
+  }, [
+    activeSectionId,
+    annotateFromImageMode,
+    colorLegend,
+    defaultColorKey,
+    defaultSectionKey,
+    houseSections,
+    referenceImageUrl,
+    rooms,
+  ]);
 
   const addPinToRoom = useCallback((roomId, pin) => {
     setRooms((prev) => prev.map((room) => {
@@ -1347,7 +1549,21 @@ export default function FloorPlanPage() {
               disabled={interpretingImage || !referenceImageUrl}
               style={{ ...toolbarBtn, border: "1px solid #B59145", color: "#7D6123", background: "#F4E8CD", opacity: interpretingImage || !referenceImageUrl ? 0.7 : 1, cursor: interpretingImage || !referenceImageUrl ? "not-allowed" : "pointer" }}
             >
-              {interpretingImage ? "Interpreting..." : "Interpret Image"}
+              {interpretingImage ? "Interpreting..." : "Auto Interpret"}
+            </button>
+            <button
+              onClick={() => setAnnotateFromImageMode((prev) => !prev)}
+              disabled={!referenceImageUrl || addingFromImage}
+              style={{
+                ...toolbarBtn,
+                border: annotateFromImageMode ? "1px solid #5D7C69" : `1px solid ${ui.panelBorder}`,
+                background: annotateFromImageMode ? "#DCE8DE" : "#F6F7F3",
+                color: annotateFromImageMode ? "#2E5340" : "#3D4E47",
+                opacity: !referenceImageUrl || addingFromImage ? 0.7 : 1,
+                cursor: !referenceImageUrl || addingFromImage ? "not-allowed" : "pointer",
+              }}
+            >
+              {addingFromImage ? "Adding..." : annotateFromImageMode ? "Annotate: ON" : "Annotate Existing Rooms"}
             </button>
             <button
               onClick={addRoom}
@@ -1432,6 +1648,7 @@ export default function FloorPlanPage() {
                   onClick={() => {
                     setReferenceImagePath("");
                     setReferenceImageUrl("");
+                    setAnnotateFromImageMode(false);
                   }}
                   disabled={!referenceImageUrl}
                   style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${T.border}`, background: "#fff", color: T.textMuted, fontSize: 11, fontWeight: 700, cursor: !referenceImageUrl ? "not-allowed" : "pointer", opacity: !referenceImageUrl ? 0.6 : 1 }}
@@ -1440,6 +1657,11 @@ export default function FloorPlanPage() {
                 </button>
               </div>
             </div>
+            {annotateFromImageMode && referenceImageUrl && (
+              <div style={{ marginBottom: 8, fontSize: 11, color: "#496358", fontWeight: 700 }}>
+                Annotate mode: click inside each room on the floor plan to add clean color overlays.
+              </div>
+            )}
 
             <div
               ref={canvasRef}
@@ -1457,6 +1679,11 @@ export default function FloorPlanPage() {
                 if (e.target !== e.currentTarget) return;
                 setSelectedRoomId(null);
                 setPinModeRoomId(null);
+              }}
+              onClick={(e) => {
+                if (!annotateFromImageMode) return;
+                if (e.target !== e.currentTarget) return;
+                addRoomFromImageClick(e);
               }}
             >
               {referenceImageUrl && (
@@ -1496,6 +1723,7 @@ export default function FloorPlanPage() {
                 const text = textColorForBackground(bg);
                 const isSelected = String(room.id) === String(selectedRoomId);
                 const isPinMode = String(room.id) === String(pinModeRoomId);
+                const overlayStyleMode = Boolean(referenceImageUrl);
 
                 return (
                   <Rnd
@@ -1561,8 +1789,12 @@ export default function FloorPlanPage() {
                         width: "100%",
                         height: "100%",
                         borderRadius: 10,
-                        border: `2px solid ${isSelected ? border : `${border}AA`}`,
-                        background: bg,
+                        border: overlayStyleMode
+                          ? `1.6px solid ${isSelected ? border : `${border}B8`}`
+                          : `2px solid ${isSelected ? border : `${border}AA`}`,
+                        background: overlayStyleMode
+                          ? hexToRgba(bg, isSelected ? 0.34 : 0.25)
+                          : bg,
                         color: text,
                         position: "relative",
                         boxSizing: "border-box",
@@ -1571,13 +1803,45 @@ export default function FloorPlanPage() {
                         boxShadow: isSelected ? "0 0 0 2px rgba(44,78,96,0.14)" : "none",
                       }}
                     >
-                      <div className="room-drag-handle" style={{ padding: "8px 10px", borderBottom: `1px solid ${border}70`, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "move" }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "70%" }}>
-                          {room.name || "Room"}
-                        </div>
-                        <div style={{ fontSize: 10, fontWeight: 700, opacity: 0.92 }}>
-                          {meta?.label || "Color"}
-                        </div>
+                      <div className="room-drag-handle" style={{
+                        padding: overlayStyleMode ? "0" : "8px 10px",
+                        borderBottom: overlayStyleMode ? "none" : `1px solid ${border}70`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        cursor: "move",
+                      }}>
+                        {overlayStyleMode ? (
+                          <div style={{
+                            position: "absolute",
+                            left: 7,
+                            top: 7,
+                            borderRadius: 8,
+                            background: "rgba(255,255,255,0.82)",
+                            border: `1px solid ${border}80`,
+                            padding: "2px 6px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            maxWidth: "calc(100% - 14px)",
+                          }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, color: "#27453C", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {room.name || "Room"}
+                            </div>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: "#47655A", opacity: 0.9 }}>
+                              {meta?.label || "Color"}
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 12, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "70%" }}>
+                              {room.name || "Room"}
+                            </div>
+                            <div style={{ fontSize: 10, fontWeight: 700, opacity: 0.92 }}>
+                              {meta?.label || "Color"}
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {(room.pins || []).map((pin) => (
