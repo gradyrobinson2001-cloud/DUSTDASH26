@@ -14,43 +14,87 @@ const addDays = (dateStr, days) => {
   return d.toISOString().split('T')[0];
 };
 
+const parseJsonSafe = async (res) => {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+};
+
 export function useStaffTimeEntries({ staffId = null, weekStart = null } = {}) {
   const [timeEntries, setTimeEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const fetchingRef = useRef(false);
 
+  const fetchViaApi = useCallback(async () => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    const token = sessionData?.session?.access_token;
+    if (!token) throw new Error('Session expired. Please sign in again.');
+
+    const res = await fetch('/api/staff/clock-list', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        staffId: staffId || null,
+        weekStart: toIsoDate(weekStart),
+      }),
+    });
+    const body = await parseJsonSafe(res);
+    if (!res.ok || body?.error) {
+      throw new Error(body?.error || body?.details || `Request failed (${res.status})`);
+    }
+    return Array.isArray(body?.entries) ? body.entries : [];
+  }, [staffId, weekStart]);
+
+  const fetchViaSupabase = useCallback(async () => {
+    let query = supabase
+      .from('staff_time_entries')
+      .select('*')
+      .order('work_date', { ascending: false });
+
+    if (staffId) query = query.eq('staff_id', staffId);
+
+    const weekStartIso = toIsoDate(weekStart);
+    if (weekStartIso) {
+      const weekEndIso = addDays(weekStartIso, 6);
+      query = query.gte('work_date', weekStartIso).lte('work_date', weekEndIso);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data ?? [];
+  }, [staffId, weekStart]);
+
   const refreshTimeEntries = useCallback(async () => {
     if (!supabaseReady || !supabase || fetchingRef.current) return;
     fetchingRef.current = true;
     try {
-      let query = supabase
-        .from('staff_time_entries')
-        .select('*')
-        .order('work_date', { ascending: false });
-
-      if (staffId) {
-        query = query.eq('staff_id', staffId);
+      try {
+        const rows = await fetchViaApi();
+        setError(null);
+        setTimeEntries(rows);
+      } catch (apiError) {
+        // Fallback keeps local/dev and partial server deployments usable.
+        try {
+          const rows = await fetchViaSupabase();
+          setError(null);
+          setTimeEntries(rows);
+        } catch (dbError) {
+          setError(dbError || apiError);
+          return;
+        }
       }
-
-      const weekStartIso = toIsoDate(weekStart);
-      if (weekStartIso) {
-        const weekEndIso = addDays(weekStartIso, 6);
-        query = query.gte('work_date', weekStartIso).lte('work_date', weekEndIso);
-      }
-
-      const { data, error } = await query;
-      if (error) {
-        setError(error);
-        return;
-      }
-      setError(null);
-      setTimeEntries(data ?? []);
     } finally {
       fetchingRef.current = false;
       setLoading(false);
     }
-  }, [staffId, weekStart]);
+  }, [fetchViaApi, fetchViaSupabase]);
 
   useEffect(() => {
     if (!supabaseReady) {

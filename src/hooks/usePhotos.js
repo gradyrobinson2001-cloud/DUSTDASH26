@@ -28,6 +28,12 @@ const inferExt = (file) => {
   return 'jpg';
 };
 
+const isSupportedImageType = (file) => {
+  const type = String(file?.type || '').toLowerCase().trim();
+  if (!type) return true;
+  return type === 'image/jpeg' || type === 'image/png' || type === 'image/webp';
+};
+
 const parseJsonSafe = async (res) => {
   try {
     return await res.json();
@@ -79,11 +85,35 @@ export function usePhotos() {
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, [refreshPhotos]);
 
-  const uploadPhotoDirect = async ({ jobId, clientId, date, type, file, uploadedBy }) => {
+  const completeUploadViaApi = async ({ accessToken, jobId, clientId, date, type, storagePath, uploadedBy }) => {
+    const completeRes = await fetch('/api/photos/complete-upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        jobId,
+        clientId,
+        date,
+        type,
+        storagePath,
+        uploadedBy,
+      }),
+    });
+    const completeBody = await parseJsonSafe(completeRes);
+    if (!completeRes.ok || completeBody?.error) {
+      const message = completeBody?.error || completeBody?.details || `Upload completion failed (${completeRes.status})`;
+      throw new Error(message);
+    }
+    return normalizePhoto(completeBody?.photo);
+  };
+
+  const uploadPhotoDirect = async ({ accessToken, jobId, clientId, date, type, file, uploadedBy }) => {
     const ext = inferExt(file);
     const safeType = (type === 'after' ? 'after' : 'before');
     const safeDate = date || new Date().toISOString().split('T')[0];
-    const path = `${jobId}/${safeDate}/${Date.now()}-${safeType}.${ext}`;
+    const path = `${jobId}/${safeDate}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeType}.${ext}`;
     const contentType = file?.type || 'image/jpeg';
 
     const { error: uploadError } = await supabase.storage
@@ -93,22 +123,21 @@ export function usePhotos() {
       throw new Error(uploadError.message || 'Storage upload failed.');
     }
 
-    const { data, error } = await supabase
-      .from('photos')
-      .insert({
-        job_id: jobId,
-        client_id: clientId,
+    try {
+      return await completeUploadViaApi({
+        accessToken,
+        jobId,
+        clientId,
         date: safeDate,
         type: safeType,
-        storage_path: path,
-        uploaded_by: uploadedBy,
-      })
-      .select()
-      .single();
-    if (error) {
-      throw new Error(error.message || 'Failed to save photo metadata.');
+        storagePath: path,
+        uploadedBy,
+      });
+    } catch (err) {
+      // Avoid orphan files when metadata creation fails.
+      await supabase.storage.from('job-photos').remove([path]);
+      throw err;
     }
-    return normalizePhoto(data);
   };
 
   const getAccessToken = async () => {
@@ -122,6 +151,9 @@ export function usePhotos() {
   const uploadPhoto = async ({ jobId, clientId, date, type, file, uploadedBy }) => {
     if (!supabaseReady) throw new Error('Supabase not configured');
     if (!jobId) throw new Error('Job ID is required');
+    if (!file) throw new Error('Photo file is required');
+    if (file.size > 15 * 1024 * 1024) throw new Error('Photo is too large. Please keep uploads under 15MB.');
+    if (!isSupportedImageType(file)) throw new Error('Unsupported format. Please upload JPG, PNG, or WEBP.');
 
     const safeType = (type === 'after' ? 'after' : 'before');
     const safeDate = date || new Date().toISOString().split('T')[0];
@@ -167,49 +199,27 @@ export function usePhotos() {
       }
 
       stage = 'complete-upload';
-      const completeRes = await fetch('/api/photos/complete-upload', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          jobId,
-          clientId,
-          date: safeDate,
-          type: safeType,
-          storagePath: uploadPath,
-          uploadedBy,
-        }),
+      const normalized = await completeUploadViaApi({
+        accessToken,
+        jobId,
+        clientId,
+        date: safeDate,
+        type: safeType,
+        storagePath: uploadPath,
+        uploadedBy,
       });
-      const completeBody = await parseJsonSafe(completeRes);
-      if (!completeRes.ok || completeBody?.error) {
-        const message = completeBody?.error || completeBody?.details || `Upload completion failed (${completeRes.status})`;
-        throw new Error(message);
-      }
-
-      const normalized = normalizePhoto(completeBody?.photo);
       setPhotos(prev => [normalized, ...prev.filter(p => p.id !== normalized.id)]);
       return normalized;
     } catch (secureErr) {
       const message = secureErr?.message || 'Unknown upload error.';
-      const canFallback = stage === 'request-upload-url' && (
-        message.includes('404') ||
-        message.includes('Method not allowed') ||
-        message.includes('Failed to fetch')
-      );
-
-      if (!canFallback) {
-        throw new Error(`Photo upload failed (${stage}): ${message}`);
-      }
-
-      // Local-dev fallback where API routes may not be running.
+      // Fallback to direct upload to improve resilience when secure route path fails.
       try {
-        const normalized = await uploadPhotoDirect({ jobId, clientId, date: safeDate, type: safeType, file, uploadedBy });
+        const accessToken = await getAccessToken();
+        const normalized = await uploadPhotoDirect({ accessToken, jobId, clientId, date: safeDate, type: safeType, file, uploadedBy });
         setPhotos(prev => [normalized, ...prev.filter(p => p.id !== normalized.id)]);
         return normalized;
       } catch (directErr) {
-        throw new Error(`Photo upload failed: ${directErr?.message || message}`);
+        throw new Error(`Photo upload failed (${stage}): ${message}. Direct fallback also failed: ${directErr?.message || 'unknown error'}`);
       }
     }
   };

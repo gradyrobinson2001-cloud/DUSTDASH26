@@ -6,7 +6,7 @@ import { useProfiles }      from '../hooks/useProfiles';
 import { usePayroll }       from '../hooks/usePayroll';
 import { useScheduledJobs } from '../hooks/useScheduledJobs';
 import { useStaffTimeEntries } from '../hooks/useStaffTimeEntries';
-import { calcPayrollBreakdown, calcHoursFromJobs, fmtCurrency, fmtPercent, getWeekLabel } from '../utils/payroll';
+import { calcPayrollBreakdown, calcHoursFromJobs, calcWorkedMinutesFromEntry, fmtCurrency, fmtPercent, getWeekLabel } from '../utils/payroll';
 
 // ═══════════════════════════════════════════════════════════
 // PAYROLL TAB — Phase 5
@@ -40,6 +40,15 @@ function getMonday(dateStr) {
 function prevMonday(m) { const d = new Date(m); d.setDate(d.getDate() - 7); return d.toISOString().split('T')[0]; }
 function nextMonday(m) { const d = new Date(m); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0]; }
 function getSunday(mondayStr) { const d = new Date(mondayStr); d.setDate(d.getDate() + 6); return d; }
+function toDateLabel(dateStr) {
+  return new Date(dateStr).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+function toTimeLabel(isoValue) {
+  if (!isoValue) return '—';
+  const d = new Date(isoValue);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+}
 function fmtDate(dateValue, options = { day: 'numeric', month: 'short', year: 'numeric' }) {
   return new Date(dateValue).toLocaleDateString('en-AU', options);
 }
@@ -243,7 +252,29 @@ export default function PayrollTab({ showToast, isMobile }) {
   const { staffMembers }                         = useProfiles();
   const { payrollRecords, savePayrollRecord }    = usePayroll();
   const { scheduledJobs }                        = useScheduledJobs();
-  const { timeEntries }                          = useStaffTimeEntries({ weekStart });
+  const { timeEntries, error: timeEntriesError, refreshTimeEntries } = useStaffTimeEntries({ weekStart });
+
+  const staffById = useMemo(
+    () => Object.fromEntries((staffMembers || []).map(staff => [String(staff.id), staff])),
+    [staffMembers]
+  );
+
+  const clockEntriesForWeek = useMemo(() => {
+    return [...(timeEntries || [])]
+      .sort((a, b) => {
+        const dCmp = String(b.work_date || '').localeCompare(String(a.work_date || ''));
+        if (dCmp !== 0) return dCmp;
+        return String(a.staff_id || '').localeCompare(String(b.staff_id || ''));
+      })
+      .map((entry) => {
+        const workedMinutes = calcWorkedMinutesFromEntry(entry, false);
+        return {
+          ...entry,
+          workedHours: Math.round((workedMinutes / 60) * 100) / 100,
+          staff: staffById[String(entry.staff_id || '')] || null,
+        };
+      });
+  }, [staffById, timeEntries]);
 
   // Build draft payroll rows for this week
   const draftRows = useMemo(() => {
@@ -437,6 +468,58 @@ export default function PayrollTab({ showToast, isMobile }) {
           <div style={{ fontSize: 13, color: T.textMuted }}>Add staff accounts in Supabase Auth to run payroll.</div>
         </div>
       )}
+
+      {/* Time clock review */}
+      <div style={{ background: '#fff', borderRadius: T.radius, boxShadow: T.shadow, marginBottom: 16, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: T.text }}>⏱️ Staff Clock Times</div>
+            <div style={{ fontSize: 12, color: T.textMuted }}>Clock in/out logs for {getWeekLabel(weekStart)}</div>
+          </div>
+          <button
+            onClick={() => refreshTimeEntries?.()}
+            style={{ padding: '8px 12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', color: T.textMuted, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+          >
+            Refresh Logs
+          </button>
+        </div>
+
+        {timeEntriesError && (
+          <div style={{ padding: '10px 16px', background: '#FCEAEA', color: T.danger, fontSize: 12, fontWeight: 600 }}>
+            Failed to load clock logs: {timeEntriesError.message || 'Unknown error'}
+          </div>
+        )}
+
+        {clockEntriesForWeek.length === 0 ? (
+          <div style={{ padding: '16px', fontSize: 13, color: T.textMuted }}>
+            No clock entries recorded this week yet.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+              <thead>
+                <tr style={{ background: T.bg }}>
+                  {['Date', 'Staff', 'Clock In', 'Clock Out', 'Break', 'Worked'].map((h) => (
+                    <th key={h} style={{ textAlign: 'left', fontSize: 11, color: T.textMuted, fontWeight: 800, padding: '10px 12px', borderBottom: `1px solid ${T.border}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {clockEntriesForWeek.map((entry) => (
+                  <tr key={entry.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                    <td style={{ padding: '9px 12px', fontSize: 12, color: T.text }}>{toDateLabel(entry.work_date)}</td>
+                    <td style={{ padding: '9px 12px', fontSize: 12, color: T.text, fontWeight: 700 }}>{entry.staff?.full_name || entry.staff_id}</td>
+                    <td style={{ padding: '9px 12px', fontSize: 12, color: T.text }}>{toTimeLabel(entry.clock_in_at)}</td>
+                    <td style={{ padding: '9px 12px', fontSize: 12, color: T.text }}>{toTimeLabel(entry.clock_out_at)}</td>
+                    <td style={{ padding: '9px 12px', fontSize: 12, color: T.text }}>{Number(entry.break_minutes || 0)} min</td>
+                    <td style={{ padding: '9px 12px', fontSize: 12, color: T.primaryDark, fontWeight: 800 }}>{entry.workedHours.toFixed(2)}h</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Payroll cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

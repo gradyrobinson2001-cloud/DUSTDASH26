@@ -1,7 +1,9 @@
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { T, SERVICED_AREAS, calculateDuration } from "../shared";
 import { SearchInput } from "../components/ui";
 import { isEmail, isPhone, errorStyle } from "../utils/validate";
+import { supabase, supabaseReady } from "../lib/supabase";
 
 // ═══════════════════════════════════════════════════════════
 // CLIENTS TAB — Full Revamp
@@ -53,9 +55,38 @@ export default function ClientsTab({
   const [editingId,     setEditingId]    = useState(null); // null | "new" | client.id
   const [showFilters,   setShowFilters]  = useState(false);
   const [loadingDemo,   setLoadingDemo]  = useState(false);
+  const [floorPlanClientIds, setFloorPlanClientIds] = useState(() => new Set());
+  const navigate = useNavigate();
 
   const settings = scheduleSettings || {};
   const allSuburbs = [...new Set(clients.map(c => c.suburb).filter(Boolean))].sort();
+
+  useEffect(() => {
+    if (!supabaseReady || !supabase) {
+      setFloorPlanClientIds(new Set());
+      return;
+    }
+
+    let mounted = true;
+    const refreshFloorPlanIndex = async () => {
+      const { data, error } = await supabase
+        .from("floor_plans")
+        .select("client_id");
+      if (!mounted || error) return;
+      setFloorPlanClientIds(new Set((data || []).map((row) => String(row.client_id))));
+    };
+
+    refreshFloorPlanIndex();
+    const ch = supabase
+      .channel("clients:floor-plans")
+      .on("postgres_changes", { event: "*", schema: "public", table: "floor_plans" }, refreshFloorPlanIndex)
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      supabase.removeChannel(ch);
+    };
+  }, []);
 
   // ── Filter ──────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -204,6 +235,7 @@ export default function ClientsTab({
           const dur        = c.custom_duration || c.customDuration || c.estimated_duration || c.estimatedDuration;
           const initials   = (c.name || "?").split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
           const isDemo     = c.is_demo || c.isDemo;
+          const hasFloorPlan = floorPlanClientIds.has(String(c.id));
 
           if (isEditing) {
             return (
@@ -248,6 +280,26 @@ export default function ClientsTab({
                   {c.phone && <a href={`tel:${c.phone}`} onClick={e => e.stopPropagation()} style={{ color: T.primary, textDecoration: "none", fontWeight: 600 }}>📱 {c.phone}</a>}
                   {c.email && <a href={`mailto:${c.email}`} onClick={e => e.stopPropagation()} style={{ color: T.blue, textDecoration: "none" }}>✉️ {c.email}</a>}
                 </div>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/dashboard/clients/${c.id}/floorplan`);
+                  }}
+                  style={{
+                    padding: "7px 10px",
+                    borderRadius: T.radiusSm,
+                    border: `1.5px solid ${hasFloorPlan ? T.primary : T.blue}`,
+                    background: hasFloorPlan ? T.primaryLight : T.blueLight,
+                    color: hasFloorPlan ? T.primaryDark : T.blue,
+                    fontSize: 11,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  {hasFloorPlan ? "View Floor Plan" : "Create Floor Plan"}
+                </button>
 
                 <span style={{ fontSize: 12, color: T.textMuted, transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s", flexShrink: 0 }}>▶</span>
               </div>
@@ -303,6 +355,12 @@ export default function ClientsTab({
                     <button onClick={() => { setEditingId(c.id); setExpandedId(null); }}
                       style={{ padding: "9px 18px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.text, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                       ✏️ Edit
+                    </button>
+                    <button
+                      onClick={() => navigate(`/dashboard/clients/${c.id}/floorplan`)}
+                      style={{ padding: "9px 18px", borderRadius: T.radiusSm, border: "none", background: hasFloorPlan ? T.primaryLight : T.blueLight, color: hasFloorPlan ? T.primaryDark : T.blue, fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      🧱 {hasFloorPlan ? "View Floor Plan" : "Create Floor Plan"}
                     </button>
                     {c.phone && (
                       <a href={`tel:${c.phone}`} style={{ padding: "9px 18px", borderRadius: T.radiusSm, border: "none", background: T.primaryLight, color: T.primaryDark, fontSize: 13, fontWeight: 700, textDecoration: "none" }}>

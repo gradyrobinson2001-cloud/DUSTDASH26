@@ -125,6 +125,21 @@ export default function PhotosTab({
     return photo?.url || (id ? urlMap[id] : null) || null;
   };
 
+  const refreshPhotoUrl = async (photo) => {
+    if (!getSignedUrl) return;
+    const id = String(photo?.id || "");
+    const storagePath = getPhotoStoragePath(photo);
+    if (!id || !storagePath) return;
+    try {
+      const fresh = await getSignedUrl(storagePath);
+      if (fresh) {
+        setUrlMap((prev) => ({ ...prev, [id]: fresh }));
+      }
+    } catch (err) {
+      console.error("[photos] signed URL refresh failed", { photoId: id, err });
+    }
+  };
+
   const handleDownloadZip = async () => {
     if (filteredDatePhotos.length === 0) {
       showToast("⚠️ No photos to download for this filter");
@@ -295,7 +310,12 @@ export default function PhotosTab({
                   onClick={() => setSelectedPhoto({ ...photo, displayUrl: src })}
                   style={{ cursor: "pointer", borderRadius: T.radiusSm, overflow: "hidden", aspectRatio: "4/3", background: T.bg }}
                 >
-                  <img src={src} alt={photo.type} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <img
+                    src={src}
+                    alt={photo.type}
+                    onError={() => refreshPhotoUrl(photo)}
+                    style={{ width: "100%", height: "100%", objectFit: "contain", background: "#111" }}
+                  />
                 </div>
               );
             };
@@ -349,7 +369,12 @@ export default function PhotosTab({
                         >
                           <div style={{ aspectRatio: "4/3", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
                             {src ? (
-                              <img src={src} alt={type} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              <img
+                                src={src}
+                                alt={type}
+                                onError={() => refreshPhotoUrl(photo)}
+                                style={{ width: "100%", height: "100%", objectFit: "contain", background: "#111" }}
+                              />
                             ) : (
                               <span style={{ fontSize: 11, color: T.textLight }}>Loading...</span>
                             )}
@@ -375,7 +400,12 @@ export default function PhotosTab({
 
       {selectedPhoto && (
         <div onClick={() => setSelectedPhoto(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
-          <img src={selectedPhoto.displayUrl || selectedPhoto.url || urlMap[String(selectedPhoto.id)]} alt={selectedPhoto.type} style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: T.radius }} />
+          <img
+            src={selectedPhoto.displayUrl || selectedPhoto.url || urlMap[String(selectedPhoto.id)]}
+            alt={selectedPhoto.type}
+            onError={() => refreshPhotoUrl(selectedPhoto)}
+            style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: T.radius, objectFit: "contain", background: "#111" }}
+          />
           <button onClick={() => setSelectedPhoto(null)} style={{ position: "absolute", top: 20, right: 20, width: 44, height: 44, borderRadius: "50%", border: "none", background: "#fff", fontSize: 20, cursor: "pointer" }}>✕</button>
         </div>
       )}

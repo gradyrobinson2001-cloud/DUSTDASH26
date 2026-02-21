@@ -80,6 +80,16 @@ function fmtWeekRange(monday) {
   return `${m.toLocaleDateString('en-AU', opts)} - ${s.toLocaleDateString('en-AU', opts)}`;
 }
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_SUFFIX = ['th', 'st', 'nd', 'rd'];
+
+function dayOrdinalLabel(dateStr) {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '--';
+  const day = d.getDate();
+  const modulo100 = day % 100;
+  const suffix = (modulo100 >= 11 && modulo100 <= 13) ? 'th' : (DAY_SUFFIX[day % 10] || 'th');
+  return `${day}${suffix}`;
+}
 
 function timeToMinutes(timeValue) {
   if (!timeValue || typeof timeValue !== 'string') return null;
@@ -226,7 +236,7 @@ export default function CleanerPortal() {
   const { scheduledJobs, updateJob, refreshScheduledJobs } = useScheduledJobs(staffId ? { staffId } : {});
   const { clients, loading: clientsLoading } = useClients();
   const { photos: supaPhotos, uploadPhoto, getSignedUrl } = usePhotos();
-  const { timeEntries, refreshTimeEntries } = useStaffTimeEntries(staffId ? { staffId, weekStart } : { weekStart });
+  const { timeEntries, setTimeEntries, refreshTimeEntries, error: timeEntriesError } = useStaffTimeEntries(staffId ? { staffId, weekStart } : { weekStart });
 
   // ── Active jobs for selected date ──────────────────────
   const allJobs = demoMode ? DEMO_JOBS : scheduledJobs;
@@ -255,6 +265,36 @@ export default function CleanerPortal() {
       return next;
     });
   }, []);
+
+  const normalizeClockError = useCallback((rawMessage) => {
+    const msg = String(rawMessage || '').toLowerCase();
+    if (msg.includes('staff_time_entries') && msg.includes('does not exist')) {
+      return 'Time tracking database is not deployed yet. Run migration 20260220_staff_time_tracking.sql.';
+    }
+    if (msg.includes('failed to fetch') || msg.includes('network')) {
+      return 'Network issue while syncing clock times. Please retry.';
+    }
+    return rawMessage || 'Unknown clock error';
+  }, []);
+
+  const upsertLiveTimeEntry = useCallback((entry) => {
+    if (!entry?.work_date) return;
+    setTimeEntries((prev) => {
+      const next = Array.isArray(prev) ? [...prev] : [];
+      const entryId = entry?.id ? String(entry.id) : null;
+      const idx = next.findIndex((row) => {
+        const sameId = entryId && String(row?.id || '') === entryId;
+        const sameStaffDate = String(row?.staff_id || '') === String(entry?.staff_id || '') && String(row?.work_date || '') === String(entry?.work_date || '');
+        return sameId || sameStaffDate;
+      });
+      if (idx >= 0) {
+        next[idx] = { ...next[idx], ...entry };
+      } else {
+        next.unshift(entry);
+      }
+      return next;
+    });
+  }, [setTimeEntries]);
 
   useEffect(() => {
     if (demoMode || !staffId) return;
@@ -512,17 +552,18 @@ export default function CleanerPortal() {
         });
         showToast('✅ Clocked in');
       } else {
-        await callStaffClockApi('clock_in', selectedDate);
+        const entry = await callStaffClockApi('clock_in', selectedDate);
+        upsertLiveTimeEntry(entry);
         await refreshTimeEntries();
         showToast('✅ Clocked in');
       }
     } catch (err) {
       console.error('[staff:clock-in] failed', err);
-      showToast(`❌ Clock in failed: ${err.message}`);
+      showToast(`❌ Clock in failed: ${normalizeClockError(err?.message)}`);
     } finally {
       setClockActionLoading(false);
     }
-  }, [breakMinutes, callStaffClockApi, demoMode, refreshTimeEntries, selectedDate, showToast]);
+  }, [breakMinutes, callStaffClockApi, demoMode, normalizeClockError, refreshTimeEntries, selectedDate, showToast, upsertLiveTimeEntry]);
 
   const handleClockOut = useCallback(async () => {
     if (!window.confirm(`Are you sure you want to clock out for ${selectedDate}?`)) return;
@@ -537,17 +578,18 @@ export default function CleanerPortal() {
         )));
         showToast('✅ Clocked out');
       } else {
-        await callStaffClockApi('clock_out', selectedDate);
+        const entry = await callStaffClockApi('clock_out', selectedDate);
+        upsertLiveTimeEntry(entry);
         await refreshTimeEntries();
         showToast('✅ Clocked out');
       }
     } catch (err) {
       console.error('[staff:clock-out] failed', err);
-      showToast(`❌ Clock out failed: ${err.message}`);
+      showToast(`❌ Clock out failed: ${normalizeClockError(err?.message)}`);
     } finally {
       setClockActionLoading(false);
     }
-  }, [breakMinutes, callStaffClockApi, demoMode, refreshTimeEntries, selectedDate, showToast]);
+  }, [breakMinutes, callStaffClockApi, demoMode, normalizeClockError, refreshTimeEntries, selectedDate, showToast, upsertLiveTimeEntry]);
 
   // ── Photo upload ──────────────────────────────────────
   const handlePhotoFile = useCallback(async (e) => {
@@ -840,11 +882,12 @@ export default function CleanerPortal() {
                       background: isSel ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)',
                       color: '#fff', cursor: 'pointer', textAlign: 'center',
                     }}
-                  >
+                    >
                     <div style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{DAY_LABELS[i]}</div>
-                    <div style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.3 }}>
-                      {allDone ? '✓' : isToday ? '•' : stat.jobs > 0 ? stat.jobs : '–'}
+                    <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1.3 }}>
+                      {dayOrdinalLabel(d)}
                     </div>
+                    <div style={{ fontSize: 8, opacity: 0.9 }}>{allDone ? 'done' : (isToday ? 'today' : '')}</div>
                   </button>
                 );
               })}
@@ -868,6 +911,11 @@ export default function CleanerPortal() {
         <div style={{ padding: '16px 16px 0' }}>
           {/* Daily clock in/out */}
           <div style={{ background: '#fff', borderRadius: T.radius, padding: '14px 14px', marginBottom: 16, boxShadow: T.shadow }}>
+            {timeEntriesError && (
+              <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: '#FCEAEA', color: T.danger, fontSize: 12, fontWeight: 600 }}>
+                Clock sync warning: {normalizeClockError(timeEntriesError?.message || 'Failed to load time entries')}
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted }}>TODAY'S WORKDAY</div>
@@ -944,7 +992,7 @@ export default function CleanerPortal() {
                 >
                   <div style={{ fontSize: 9, color: T.textMuted }}>{s.label}</div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: s.done === s.jobs && s.jobs > 0 ? teamColor : T.text }}>
-                    {s.actualHours > 0 ? `${s.actualHours}h` : s.jobs > 0 ? `${s.jobs}j` : '–'}
+                    {s.actualHours > 0 ? `${s.actualHours}h` : dayOrdinalLabel(s.date)}
                   </div>
                   <div style={{ fontSize: 9, color: T.textLight }}>{fmtHours(s.scheduledHours)} sch</div>
                 </div>
@@ -1190,7 +1238,7 @@ export default function CleanerPortal() {
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
                             {photos[photoType].map((p, i) => (
                               <div key={i} style={{ aspectRatio: '1', borderRadius: T.radiusSm, overflow: 'hidden', background: T.bg }}>
-                                <img src={p.url || p.data} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <img src={p.url || p.data} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#111' }} />
                               </div>
                             ))}
                           </div>
@@ -1485,8 +1533,8 @@ export default function CleanerPortal() {
       </div>
 
       {/* Hidden file inputs */}
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoFile} style={{ display: 'none' }} />
-      <input ref={fileRef}   type="file" accept="image/*" multiple            onChange={handlePhotoFile} style={{ display: 'none' }} />
+      <input ref={cameraRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePhotoFile} style={{ display: 'none' }} />
+      <input ref={fileRef}   type="file" accept="image/jpeg,image/png,image/webp" multiple            onChange={handlePhotoFile} style={{ display: 'none' }} />
 
       {/* Toast */}
       {toast && (
