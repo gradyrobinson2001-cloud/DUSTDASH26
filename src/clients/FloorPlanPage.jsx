@@ -1958,6 +1958,38 @@ export default function FloorPlanPage() {
                         )}
                       </div>
 
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          confirmDeleteRoom(room.id);
+                        }}
+                        title={`Delete ${room.name || "room"}`}
+                        style={{
+                          position: "absolute",
+                          top: overlayStyleMode ? 6 : 8,
+                          right: overlayStyleMode ? 6 : 8,
+                          width: 22,
+                          height: 22,
+                          borderRadius: 7,
+                          border: `1px solid ${border}90`,
+                          background: "rgba(255,255,255,0.9)",
+                          color: "#A44A4A",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: "pointer",
+                          padding: 0,
+                          zIndex: 8,
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path d="M4 7h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                          <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                          <path d="M8 10v8M12 10v8M16 10v8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                          <path d="M7 20h10a1 1 0 0 0 1-1V7H6v12a1 1 0 0 0 1 1Z" stroke="currentColor" strokeWidth="1.8" />
+                        </svg>
+                      </button>
+
                       {(room.pins || []).map((pin) => (
                         <button
                           key={pin.id}
