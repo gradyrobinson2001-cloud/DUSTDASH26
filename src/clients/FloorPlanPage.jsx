@@ -494,12 +494,84 @@ async function detectRoomFromPoint({
   ctx.drawImage(img, 0, 0, w, h);
   const raw = ctx.getImageData(0, 0, w, h).data;
   const size = w * h;
-  const white = new Uint8Array(size);
+  const bright = new Uint8Array(size);
 
   for (let i = 0; i < size; i += 1) {
     const p = i * 4;
     const lum = (0.2126 * raw[p]) + (0.7152 * raw[p + 1]) + (0.0722 * raw[p + 2]);
-    white[i] = lum > 224 ? 1 : 0;
+    bright[i] = lum > 224 ? 1 : 0;
+  }
+
+  // Erode bright regions slightly to avoid leaking through thin door openings.
+  const white = new Uint8Array(size);
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const idx = y * w + x;
+      if (bright[idx] !== 1) continue;
+      let keep = 1;
+      for (let ny = Math.max(0, y - 1); ny <= Math.min(h - 1, y + 1); ny += 1) {
+        for (let nx = Math.max(0, x - 1); nx <= Math.min(w - 1, x + 1); nx += 1) {
+          if (bright[ny * w + nx] !== 1) {
+            keep = 0;
+            break;
+          }
+        }
+        if (!keep) break;
+      }
+      white[idx] = keep;
+    }
+  }
+
+  const outside = new Uint8Array(size);
+  const floodQueue = new Int32Array(size);
+  const floodOutside = (seedIndex) => {
+    if (seedIndex < 0 || seedIndex >= size) return;
+    if (outside[seedIndex] === 1 || white[seedIndex] !== 1) return;
+    let head = 0;
+    let tail = 0;
+    outside[seedIndex] = 1;
+    floodQueue[tail++] = seedIndex;
+    while (head < tail) {
+      const current = floodQueue[head++];
+      const x = current % w;
+      const y = (current / w) | 0;
+      if (x > 0) {
+        const n = current - 1;
+        if (white[n] === 1 && outside[n] === 0) {
+          outside[n] = 1;
+          floodQueue[tail++] = n;
+        }
+      }
+      if (x < w - 1) {
+        const n = current + 1;
+        if (white[n] === 1 && outside[n] === 0) {
+          outside[n] = 1;
+          floodQueue[tail++] = n;
+        }
+      }
+      if (y > 0) {
+        const n = current - w;
+        if (white[n] === 1 && outside[n] === 0) {
+          outside[n] = 1;
+          floodQueue[tail++] = n;
+        }
+      }
+      if (y < h - 1) {
+        const n = current + w;
+        if (white[n] === 1 && outside[n] === 0) {
+          outside[n] = 1;
+          floodQueue[tail++] = n;
+        }
+      }
+    }
+  };
+  for (let x = 0; x < w; x += 1) {
+    floodOutside(x);
+    floodOutside((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y += 1) {
+    floodOutside(y * w);
+    floodOutside(y * w + (w - 1));
   }
 
   const sxRaw = Math.round((clamp(clickX, 0, targetWidth) / Math.max(1, targetWidth)) * w);
@@ -508,15 +580,15 @@ async function detectRoomFromPoint({
   let sy = clamp(syRaw, 0, h - 1);
 
   const startIndexLinear = sy * w + sx;
-  if (white[startIndexLinear] !== 1) {
+  if (white[startIndexLinear] !== 1 || outside[startIndexLinear] === 1) {
     let found = null;
-    for (let radius = 1; radius <= 18 && !found; radius += 1) {
+    for (let radius = 1; radius <= 24 && !found; radius += 1) {
       for (let dy = -radius; dy <= radius; dy += 1) {
         for (let dx = -radius; dx <= radius; dx += 1) {
           const nx = clamp(sx + dx, 0, w - 1);
           const ny = clamp(sy + dy, 0, h - 1);
           const idx = ny * w + nx;
-          if (white[idx] === 1) {
+          if (white[idx] === 1 && outside[idx] === 0) {
             found = { x: nx, y: ny };
             break;
           }
@@ -534,6 +606,7 @@ async function detectRoomFromPoint({
   let head = 0;
   let tail = 0;
   const start = sy * w + sx;
+  if (outside[start] === 1) return null;
   visited[start] = 1;
   queue[tail++] = start;
 
@@ -556,28 +629,28 @@ async function detectRoomFromPoint({
 
     if (x > 0) {
       const n = current - 1;
-      if (white[n] === 1 && visited[n] === 0) {
+      if (white[n] === 1 && outside[n] === 0 && visited[n] === 0) {
         visited[n] = 1;
         queue[tail++] = n;
       }
     }
     if (x < w - 1) {
       const n = current + 1;
-      if (white[n] === 1 && visited[n] === 0) {
+      if (white[n] === 1 && outside[n] === 0 && visited[n] === 0) {
         visited[n] = 1;
         queue[tail++] = n;
       }
     }
     if (y > 0) {
       const n = current - w;
-      if (white[n] === 1 && visited[n] === 0) {
+      if (white[n] === 1 && outside[n] === 0 && visited[n] === 0) {
         visited[n] = 1;
         queue[tail++] = n;
       }
     }
     if (y < h - 1) {
       const n = current + w;
-      if (white[n] === 1 && visited[n] === 0) {
+      if (white[n] === 1 && outside[n] === 0 && visited[n] === 0) {
         visited[n] = 1;
         queue[tail++] = n;
       }
@@ -588,6 +661,7 @@ async function detectRoomFromPoint({
   const boxH = (maxY - minY) + 1;
   if (boxW < 14 || boxH < 14) return null;
   if (count < 160) return null;
+  if (minX <= 0 || minY <= 0 || maxX >= w - 1 || maxY >= h - 1) return null;
 
   const boxArea = boxW * boxH;
   const fill = count / boxArea;
@@ -665,6 +739,7 @@ export default function FloorPlanPage() {
   const [referenceImageUrl, setReferenceImageUrl] = useState("");
   const [referenceImageOpacity, setReferenceImageOpacity] = useState(0.32);
   const [annotateFromImageMode, setAnnotateFromImageMode] = useState(false);
+  const [paintColorKey, setPaintColorKey] = useState(DEFAULT_COLOR_LEGEND[0]?.id || "light");
   const [addingFromImage, setAddingFromImage] = useState(false);
 
   const [loading, setLoading] = useState(true);
@@ -696,6 +771,12 @@ export default function FloorPlanPage() {
   const getColorMeta = useCallback((roomColorKey) => {
     return colorById[String(roomColorKey)] || colorLegend[0] || DEFAULT_COLOR_LEGEND[0];
   }, [colorById, colorLegend]);
+
+  useEffect(() => {
+    if (!colorLegend.some((item) => String(item.id) === String(paintColorKey))) {
+      setPaintColorKey(colorLegend[0]?.id || "standard");
+    }
+  }, [colorLegend, paintColorKey]);
 
   useEffect(() => {
     if (!houseSections.some((section) => String(section.id) === String(activeSectionId))) {
@@ -767,15 +848,23 @@ export default function FloorPlanPage() {
         && iou(room, detected) > 0.7
       );
       if (existing) {
+        upsertRoom(existing.id, {
+          difficulty_level: paintColorKey || defaultColorKey,
+          section_key: activeSectionId || defaultSectionKey,
+        });
         setSelectedRoomId(existing.id);
-        setNotice("Matched an existing room near that area. Edit it from the sidebar.");
+        setNotice(`Updated "${existing.name || "Room"}" color from click.`);
         return;
       }
 
-      const normalized = normalizeRoom(detected, colorLegend, houseSections);
+      const normalized = normalizeRoom({
+        ...detected,
+        difficulty_level: paintColorKey || defaultColorKey,
+        section_key: activeSectionId || defaultSectionKey,
+      }, colorLegend, houseSections);
       setRooms((prev) => [...prev, normalized]);
       setSelectedRoomId(normalized.id);
-      setNotice("Room overlay added. Update color/notes in the sidebar.");
+      setNotice("Detected room from image click and applied selected color.");
     } catch (err) {
       console.error("[floor-plan] add room from image failed", err);
       setError(err?.message || "Could not add room from image click.");
@@ -789,8 +878,10 @@ export default function FloorPlanPage() {
     defaultColorKey,
     defaultSectionKey,
     houseSections,
+    paintColorKey,
     referenceImageUrl,
     rooms,
+    upsertRoom,
   ]);
 
   const addPinToRoom = useCallback((roomId, pin) => {
@@ -1129,7 +1220,8 @@ export default function FloorPlanPage() {
         });
         setReferenceImagePath(url);
         setReferenceImageUrl(url);
-        setNotice("Reference image loaded locally.");
+        setAnnotateFromImageMode(true);
+        setNotice("Image uploaded. Click inside each room to detect and apply your selected color.");
         return;
       }
 
@@ -1168,7 +1260,8 @@ export default function FloorPlanPage() {
 
       setReferenceImagePath(uploadPath);
       await refreshReferenceImageUrl(uploadPath);
-      setNotice('Reference image uploaded. Click "Interpret Image" to generate starter rooms.');
+      setAnnotateFromImageMode(true);
+      setNotice("Image uploaded. Click inside each room to detect and apply your selected color.");
     } catch (err) {
       console.error("[floor-plan] upload image failed", err);
       setError(err?.message || "Failed to upload image.");
@@ -1635,6 +1728,16 @@ export default function FloorPlanPage() {
                 >
                   + Section
                 </button>
+                <span style={{ fontSize: 11, color: T.textMuted }}>Paint Color</span>
+                <select
+                  value={paintColorKey}
+                  onChange={(e) => setPaintColorKey(e.target.value)}
+                  style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 12, color: T.text, background: "#fff", fontWeight: 700, minWidth: 150 }}
+                >
+                  {colorLegend.map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))}
+                </select>
                 <span style={{ fontSize: 11, color: T.textMuted }}>Image Opacity</span>
                 <input
                   type="range"
@@ -1659,7 +1762,7 @@ export default function FloorPlanPage() {
             </div>
             {annotateFromImageMode && referenceImageUrl && (
               <div style={{ marginBottom: 8, fontSize: 11, color: "#496358", fontWeight: 700 }}>
-                Annotate mode: click inside each room on the floor plan to add clean color overlays.
+                Annotate mode: click inside any room on the original image to detect walls and apply "{getColorMeta(paintColorKey)?.label || "selected color"}".
               </div>
             )}
 
@@ -1772,6 +1875,17 @@ export default function FloorPlanPage() {
                       }}
                       onClick={(e) => {
                         e.stopPropagation();
+                        setSelectedRoomId(room.id);
+
+                        if (annotateFromImageMode && !isPinMode) {
+                          upsertRoom(room.id, {
+                            difficulty_level: paintColorKey || defaultColorKey,
+                            section_key: activeSectionId || room.section_key || defaultSectionKey,
+                          });
+                          setNotice(`Applied "${getColorMeta(paintColorKey)?.label || "selected color"}" to ${room.name || "room"}.`);
+                          return;
+                        }
+
                         if (!isPinMode) return;
 
                         const rect = e.currentTarget.getBoundingClientRect();
