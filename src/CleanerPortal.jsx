@@ -4,6 +4,7 @@ import { useScheduledJobs } from './hooks/useScheduledJobs';
 import { useClients } from './hooks/useClients';
 import { usePhotos } from './hooks/usePhotos';
 import { useStaffTimeEntries } from './hooks/useStaffTimeEntries';
+import { useStaffBroadcast } from './hooks/useStaffBroadcast';
 import { supabase, supabaseReady } from './lib/supabase';
 import { T } from './shared';
 import { calcPayrollBreakdown, calcWorkedMinutesFromEntry, fmtCurrency } from './utils/payroll';
@@ -237,6 +238,7 @@ export default function CleanerPortal() {
   const { clients, loading: clientsLoading } = useClients();
   const { photos: supaPhotos, uploadPhoto, getSignedUrl } = usePhotos();
   const { timeEntries, setTimeEntries, refreshTimeEntries, error: timeEntriesError } = useStaffTimeEntries(staffId ? { staffId, weekStart } : { weekStart });
+  const { activeBroadcast } = useStaffBroadcast();
 
   // ── Active jobs for selected date ──────────────────────
   const allJobs = demoMode ? DEMO_JOBS : scheduledJobs;
@@ -903,6 +905,18 @@ export default function CleanerPortal() {
           </div>
         )}
       </div>
+
+      {activeBroadcast?.message && (
+        <div style={{ padding: '10px 16px 0' }}>
+          <div style={{ background: '#FFF8E7', border: `1px solid ${T.border}`, borderRadius: 10, padding: '10px 12px', boxShadow: T.shadow }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#8B6914', marginBottom: 3 }}>Owner Broadcast</div>
+            <div style={{ fontSize: 13, color: T.text, fontWeight: 600 }}>{activeBroadcast.message}</div>
+            <div style={{ marginTop: 4, fontSize: 11, color: T.textMuted }}>
+              {activeBroadcast.created_at ? `Sent ${new Date(activeBroadcast.created_at).toLocaleString('en-AU')}` : ''}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════
           TODAY TAB

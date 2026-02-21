@@ -73,6 +73,12 @@ export default function TodayTab({
   staffMembers,
   timeEntries,
   invoices,
+  activeBroadcast,
+  broadcastDraft,
+  setBroadcastDraft,
+  onPublishBroadcast,
+  onClearBroadcast,
+  broadcastSaving,
   onViewFloorPlan,
   onMessageStaff,
   onMarkComplete,
@@ -163,11 +169,6 @@ export default function TodayTab({
     return Boolean(inAt) && !outAt;
   }).length;
 
-  const expectedRevenue = todayJobs.reduce((sum, job) => {
-    const n = Number(job.price || job.amount || job.total || 0);
-    return sum + (Number.isFinite(n) ? n : 0);
-  }, 0);
-
   const overdueInvoices = (invoices || []).filter((inv) => {
     const due = inv.due_date || inv.dueDate;
     if (!due) return false;
@@ -192,8 +193,63 @@ export default function TodayTab({
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10, marginBottom: 14 }}>
-        <SummaryCard title="Expected Revenue" value={`$${expectedRevenue.toFixed(2)}`} subValue={`${todayJobs.length} jobs`} />
+      <section
+        style={{
+          background: '#fff',
+          border: `1px solid ${T.border}`,
+          borderRadius: 12,
+          boxShadow: T.shadow,
+          padding: '12px 14px',
+          marginBottom: 12,
+        }}
+      >
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 8 }}>Broadcast Message To All Staff</div>
+        {activeBroadcast?.message && (
+          <div style={{ background: T.accentLight, border: `1px solid ${T.border}`, borderRadius: 8, padding: '8px 10px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#8B6914', marginBottom: 2 }}>Active Broadcast</div>
+            <div style={{ fontSize: 13, color: T.text }}>{activeBroadcast.message}</div>
+            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 4 }}>
+              Sent {new Date(activeBroadcast.created_at || Date.now()).toLocaleString('en-AU')}
+            </div>
+          </div>
+        )}
+        <textarea
+          value={broadcastDraft}
+          onChange={(e) => setBroadcastDraft(e.target.value)}
+          placeholder="Type a global update for all staff portals..."
+          rows={3}
+          style={{
+            width: '100%',
+            resize: 'vertical',
+            border: `1px solid ${T.border}`,
+            borderRadius: 8,
+            padding: '9px 10px',
+            fontSize: 13,
+            color: T.text,
+            outline: 'none',
+          }}
+        />
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <button
+            onClick={onPublishBroadcast}
+            disabled={broadcastSaving}
+            style={{ border: 'none', background: T.primary, color: '#fff', borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 800, cursor: broadcastSaving ? 'not-allowed' : 'pointer', opacity: broadcastSaving ? 0.7 : 1 }}
+          >
+            {broadcastSaving ? 'Sending...' : 'Send Broadcast'}
+          </button>
+          {activeBroadcast?.message && (
+            <button
+              onClick={onClearBroadcast}
+              disabled={broadcastSaving}
+              style={{ border: `1px solid ${T.border}`, background: '#fff', color: T.text, borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 700, cursor: broadcastSaving ? 'not-allowed' : 'pointer', opacity: broadcastSaving ? 0.7 : 1 }}
+            >
+              Clear Active Message
+            </button>
+          )}
+        </div>
+      </section>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 14 }}>
         <SummaryCard title="Jobs Scheduled" value={todayJobs.length} subValue={unassignedCount > 0 ? `${unassignedCount} unassigned` : 'All assigned'} />
         <SummaryCard title="Staff Working" value={staffIdsFromJobs.size} subValue={`${staffRows.length} tracked today`} />
         <SummaryCard title="Clocked In" value={clockedInCount} subValue={`${staffRows.length - clockedInCount} off shift`} />

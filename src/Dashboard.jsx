@@ -25,6 +25,7 @@ import { useScheduleSettings } from "./hooks/useScheduleSettings";
 import { usePhotos }           from "./hooks/usePhotos";
 import { useProfiles }         from "./hooks/useProfiles";
 import { useStaffTimeEntries } from "./hooks/useStaffTimeEntries";
+import { useStaffBroadcast }   from "./hooks/useStaffBroadcast";
 
 import { Toast, Modal } from "./components/ui";
 
@@ -212,6 +213,7 @@ export default function Dashboard() {
   const { photos, refreshPhotos, getSignedUrl }                         = usePhotos();
   const { staffMembers, refreshProfiles }                               = useProfiles();
   const { timeEntries: staffTimeEntries }                               = useStaffTimeEntries();
+  const { activeBroadcast, publishBroadcast, clearBroadcast }           = useStaffBroadcast();
 
   // scheduleClients = active clients with scheduling info (subset of clients)
   const scheduleClients = clients.filter(c => c.status === "active");
@@ -277,6 +279,8 @@ export default function Dashboard() {
   // Photos UI
   const [photoViewDate, setPhotoViewDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
+  const [broadcastDraft, setBroadcastDraft] = useState("");
+  const [broadcastSaving, setBroadcastSaving] = useState(false);
 
   // Modals
   const [selectedEnquiry,        setSelectedEnquiry]        = useState(null);
@@ -1314,6 +1318,42 @@ export default function Dashboard() {
     }
   }, [showToast, updateJobDB]);
 
+  const handlePublishBroadcast = useCallback(async () => {
+    const message = broadcastDraft.trim();
+    if (!message) {
+      showToast("⚠️ Enter a broadcast message first.");
+      return;
+    }
+    setBroadcastSaving(true);
+    try {
+      await publishBroadcast({
+        message,
+        createdBy: profile?.id || null,
+        tone: "info",
+      });
+      setBroadcastDraft("");
+      showToast("📣 Broadcast sent to staff portal.");
+    } catch (err) {
+      console.error("[broadcast:publish] failed", err);
+      showToast(`❌ Failed to publish broadcast: ${err.message}`);
+    } finally {
+      setBroadcastSaving(false);
+    }
+  }, [broadcastDraft, profile?.id, publishBroadcast, showToast]);
+
+  const handleClearBroadcast = useCallback(async () => {
+    setBroadcastSaving(true);
+    try {
+      await clearBroadcast();
+      showToast("✅ Broadcast cleared.");
+    } catch (err) {
+      console.error("[broadcast:clear] failed", err);
+      showToast(`❌ Failed to clear broadcast: ${err.message}`);
+    } finally {
+      setBroadcastSaving(false);
+    }
+  }, [clearBroadcast, showToast]);
+
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: shellBackground }}>
       <SidebarNav
@@ -1351,6 +1391,12 @@ export default function Dashboard() {
           staffMembers={staffMembers}
           timeEntries={staffTimeEntries}
           invoices={invoices}
+          activeBroadcast={activeBroadcast}
+          broadcastDraft={broadcastDraft}
+          setBroadcastDraft={setBroadcastDraft}
+          onPublishBroadcast={handlePublishBroadcast}
+          onClearBroadcast={handleClearBroadcast}
+          broadcastSaving={broadcastSaving}
           onViewFloorPlan={handleViewFloorPlan}
           onMessageStaff={handleMessageStaff}
           onMarkComplete={handleMarkCompleteFromToday}
