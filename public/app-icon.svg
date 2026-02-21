@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Dust Bunnies">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1E2F24" />
+      <stop offset="100%" stop-color="#355240" />
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
+  <g fill="#CFE8D3">
+    <path d="M252 332c36-54 58-104 58-145 0-36-23-63-56-63-31 0-52 26-52 58 0 37 22 71 50 91 7 5 15 9 23 12-7 14-15 29-23 47zm-4-77c-21-16-35-39-35-66 0-22 14-39 33-39 20 0 34 17 34 39 0 30-15 65-32 98z"/>
+    <ellipse cx="187" cy="281" rx="34" ry="57" transform="rotate(-26 187 281)"/>
+    <ellipse cx="326" cy="282" rx="34" ry="57" transform="rotate(24 326 282)"/>
+  </g>
+</svg>

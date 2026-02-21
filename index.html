@@ -3,16 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#355240" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Dust Bunnies" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
     <title>Dust Bunnies Cleaning</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/app-icon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: 'Nunito', sans-serif; background: #F4F8F6; color: #2C3E36; }
+      html, body, #root { height: 100%; }
+      body { font-family: 'Nunito', sans-serif; background: #F4F8F6; color: #2C3E36; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; overscroll-behavior-y: contain; padding-bottom: env(safe-area-inset-bottom); }
       ::-webkit-scrollbar { width: 6px; }
       ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
-      button { font-family: 'Nunito', sans-serif; }
+      button { font-family: 'Nunito', sans-serif; touch-action: manipulation; }
       input, select, textarea { font-family: 'Nunito', sans-serif; }
+      @media (max-width: 768px) {
+        input, select, textarea { font-size: 16px !important; }
+      }
     </style>
   </head>
   <body>

@@ -28,10 +28,15 @@ const inferExt = (file) => {
   return 'jpg';
 };
 
+const DISPLAY_SAFE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
+const CONVERTIBLE_IMAGE_TYPES = new Set(["image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"]);
+
 const isSupportedImageType = (file) => {
   const type = String(file?.type || '').toLowerCase().trim();
   if (!type) return true;
-  return type === 'image/jpeg' || type === 'image/png' || type === 'image/webp';
+  if (DISPLAY_SAFE_TYPES.has(type)) return true;
+  if (CONVERTIBLE_IMAGE_TYPES.has(type)) return true;
+  return type.startsWith("image/");
 };
 
 const parseJsonSafe = async (res) => {
@@ -40,6 +45,44 @@ const parseJsonSafe = async (res) => {
   } catch {
     return {};
   }
+};
+
+const readImageElement = (file) =>
+  new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Unable to decode image format."));
+    };
+    image.src = objectUrl;
+  });
+
+const convertToJpeg = async (file) => {
+  const image = await readImageElement(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas not available for image conversion.");
+  ctx.drawImage(image, 0, 0);
+
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob((next) => {
+      if (next) resolve(next);
+      else reject(new Error("Image conversion failed."));
+    }, "image/jpeg", 0.92);
+  });
+
+  const safeName = String(file?.name || "photo")
+    .replace(/\.[^/.]+$/, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .slice(0, 40) || "photo";
+  return new File([blob], `${safeName}.jpg`, { type: "image/jpeg" });
 };
 
 export function usePhotos() {
@@ -152,12 +195,22 @@ export function usePhotos() {
     if (!supabaseReady) throw new Error('Supabase not configured');
     if (!jobId) throw new Error('Job ID is required');
     if (!file) throw new Error('Photo file is required');
-    if (file.size > 15 * 1024 * 1024) throw new Error('Photo is too large. Please keep uploads under 15MB.');
-    if (!isSupportedImageType(file)) throw new Error('Unsupported format. Please upload JPG, PNG, or WEBP.');
+    if (file.size > 20 * 1024 * 1024) throw new Error('Photo is too large. Please keep uploads under 20MB.');
+    if (!isSupportedImageType(file)) throw new Error('Unsupported format. Please upload an image file.');
+
+    let preparedFile = file;
+    const preparedType = String(file?.type || "").toLowerCase();
+    if (!DISPLAY_SAFE_TYPES.has(preparedType)) {
+      try {
+        preparedFile = await convertToJpeg(file);
+      } catch {
+        throw new Error("This image format is not supported on this browser. Please upload JPG/PNG/WEBP or switch iPhone camera format to Most Compatible.");
+      }
+    }
 
     const safeType = (type === 'after' ? 'after' : 'before');
     const safeDate = date || new Date().toISOString().split('T')[0];
-    const contentType = file?.type || 'image/jpeg';
+    const contentType = preparedFile?.type || 'image/jpeg';
 
     let stage = 'request-upload-url';
     try {
@@ -174,7 +227,7 @@ export function usePhotos() {
           clientId,
           date: safeDate,
           type: safeType,
-          fileName: file?.name || '',
+          fileName: preparedFile?.name || file?.name || '',
           contentType,
         }),
       });
@@ -193,7 +246,7 @@ export function usePhotos() {
       stage = 'upload-to-signed-url';
       const { error: signedUploadError } = await supabase.storage
         .from('job-photos')
-        .uploadToSignedUrl(uploadPath, uploadToken, file, { contentType, upsert: false });
+        .uploadToSignedUrl(uploadPath, uploadToken, preparedFile, { contentType, upsert: false });
       if (signedUploadError) {
         throw new Error(signedUploadError.message || 'Signed upload failed.');
       }
@@ -215,7 +268,7 @@ export function usePhotos() {
       // Fallback to direct upload to improve resilience when secure route path fails.
       try {
         const accessToken = await getAccessToken();
-        const normalized = await uploadPhotoDirect({ accessToken, jobId, clientId, date: safeDate, type: safeType, file, uploadedBy });
+        const normalized = await uploadPhotoDirect({ accessToken, jobId, clientId, date: safeDate, type: safeType, file: preparedFile, uploadedBy });
         setPhotos(prev => [normalized, ...prev.filter(p => p.id !== normalized.id)]);
         return normalized;
       } catch (directErr) {
@@ -225,7 +278,22 @@ export function usePhotos() {
   };
 
   const getSignedUrl = async (storagePath) => {
-    if (!supabaseReady) return null;
+    if (!supabaseReady || !storagePath) return null;
+    try {
+      const accessToken = await getAccessToken();
+      const res = await fetch('/api/photos/get-signed-url', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ storagePath }),
+      });
+      const body = await parseJsonSafe(res);
+      if (res.ok && body?.signedUrl) return body.signedUrl;
+    } catch (err) {
+      console.error('[photos:get-signed-url] secure API failed', err);
+    }
     const { data, error } = await supabase.storage.from('job-photos').createSignedUrl(storagePath, 3600);
     if (error) return null;
     return data?.signedUrl ?? null;

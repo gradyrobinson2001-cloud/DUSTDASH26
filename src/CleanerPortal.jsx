@@ -5,6 +5,7 @@ import { useClients } from './hooks/useClients';
 import { usePhotos } from './hooks/usePhotos';
 import { useStaffTimeEntries } from './hooks/useStaffTimeEntries';
 import { useStaffBroadcast } from './hooks/useStaffBroadcast';
+import { useBrowserNotifications } from './hooks/useBrowserNotifications';
 import { supabase, supabaseReady } from './lib/supabase';
 import { T } from './shared';
 import { calcPayrollBreakdown, calcWorkedMinutesFromEntry, fmtCurrency } from './utils/payroll';
@@ -239,6 +240,13 @@ export default function CleanerPortal() {
   const { photos: supaPhotos, uploadPhoto, getSignedUrl } = usePhotos();
   const { timeEntries, setTimeEntries, refreshTimeEntries, error: timeEntriesError } = useStaffTimeEntries(staffId ? { staffId, weekStart } : { weekStart });
   const { activeBroadcast } = useStaffBroadcast();
+  const {
+    supported: notificationSupported,
+    permission: notificationPermission,
+    enabled: notificationsEnabled,
+    requestPermission: requestNotificationPermission,
+    notify: notifyBrowser,
+  } = useBrowserNotifications('dustdash_staff_notifications');
 
   // ── Active jobs for selected date ──────────────────────
   const allJobs = demoMode ? DEMO_JOBS : scheduledJobs;
@@ -258,6 +266,50 @@ export default function CleanerPortal() {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  const enableStaffNotifications = useCallback(async () => {
+    if (!notificationSupported) {
+      showToast('⚠️ Browser notifications are not supported on this device.');
+      return;
+    }
+    const result = await requestNotificationPermission();
+    if (result.ok) showToast('🔔 Notifications enabled');
+    else if (result.reason === 'denied') showToast('❌ Notifications blocked in browser settings');
+  }, [notificationSupported, requestNotificationPermission, showToast]);
+
+  const prevBroadcastIdRef = useRef(null);
+  useEffect(() => {
+    const id = activeBroadcast?.id || null;
+    if (!id) {
+      prevBroadcastIdRef.current = null;
+      return;
+    }
+    if (prevBroadcastIdRef.current && prevBroadcastIdRef.current !== id && document.visibilityState !== 'visible') {
+      notifyBrowser({
+        title: 'New owner broadcast',
+        body: String(activeBroadcast?.message || '').slice(0, 120),
+        tag: 'staff-broadcast',
+        requireInteraction: true,
+      });
+    }
+    prevBroadcastIdRef.current = id;
+  }, [activeBroadcast?.id, activeBroadcast?.message, notifyBrowser]);
+
+  const prevDayJobsCountRef = useRef(dayJobs.length);
+  useEffect(() => {
+    if (demoMode) {
+      prevDayJobsCountRef.current = dayJobs.length;
+      return;
+    }
+    if (dayJobs.length > prevDayJobsCountRef.current && document.visibilityState !== 'visible') {
+      notifyBrowser({
+        title: 'New job assigned',
+        body: `${dayJobs.length} job${dayJobs.length === 1 ? '' : 's'} scheduled for ${new Date(selectedDate).toLocaleDateString('en-AU')}`,
+        tag: 'staff-jobs',
+      });
+    }
+    prevDayJobsCountRef.current = dayJobs.length;
+  }, [dayJobs.length, demoMode, notifyBrowser, selectedDate]);
 
   const toggleExpandedRotaRow = useCallback((rowKey) => {
     setExpandedRotaRows((prev) => {
@@ -402,20 +454,22 @@ export default function CleanerPortal() {
   // ── Load Supabase photos for day jobs ─────────────────
   useEffect(() => {
     if (demoMode) return;
-    const jobIds = dayJobs.map(j => j.id);
-    const relevant = supaPhotos.filter(p => jobIds.includes(p.job_id));
+    const jobIdSet = new Set(dayJobs.map(j => String(j.id)));
+    const relevant = supaPhotos.filter(p => jobIdSet.has(String(p.job_id)));
 
     const buildMap = async () => {
       const map = {};
       for (const p of relevant) {
-        if (!map[p.job_id]) map[p.job_id] = { before: [], after: [] };
+        const key = String(p.job_id);
+        if (!map[key]) map[key] = { before: [], after: [] };
         const url = await getSignedUrl(p.storage_path);
-        map[p.job_id][p.type].push({ id: p.id, url, storage_path: p.storage_path, uploaded_at: p.uploaded_at });
+        if (!url) continue;
+        map[key][p.type].push({ id: p.id, url, storage_path: p.storage_path, uploaded_at: p.uploaded_at });
       }
       setLocalPhotos(map);
     };
     buildMap();
-  }, [supaPhotos, selectedDate, demoMode]);
+  }, [dayJobIdsKey, demoMode, getSignedUrl, supaPhotos]);
 
   // ── Load client profiles for visible jobs via secure API fallback ─────
   useEffect(() => {
@@ -801,6 +855,7 @@ export default function CleanerPortal() {
 
   const teamColor = T.primary;
   const displayName = demoMode ? 'Demo Staff' : (profile?.full_name || 'Staff');
+  const staffNotificationsNeedsEnable = notificationSupported && (notificationPermission !== 'granted' || !notificationsEnabled);
 
   // ══════════════════════════════════════════════════════
   // ── AUTH SCREEN ────────────────────────────────────────
@@ -821,7 +876,7 @@ export default function CleanerPortal() {
   // ── MAIN PORTAL ────────────────────────────────────────
   // ══════════════════════════════════════════════════════
   return (
-    <div style={{ minHeight: '100vh', background: T.bg, paddingBottom: 112 }}>
+    <div style={{ minHeight: '100vh', background: T.bg, paddingBottom: 'calc(112px + env(safe-area-inset-bottom))' }}>
 
       {/* ── Header ─────────────────────────────────────── */}
       <div style={{ background: teamColor, padding: '16px 20px', color: '#fff', position: 'sticky', top: 0, zIndex: 30 }}>
@@ -905,6 +960,23 @@ export default function CleanerPortal() {
           </div>
         )}
       </div>
+
+      {staffNotificationsNeedsEnable && (
+        <div style={{ padding: '10px 16px 0' }}>
+          <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 10, padding: '10px 12px', boxShadow: T.shadow }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: T.text, marginBottom: 4 }}>Enable Alerts</div>
+            <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 8 }}>
+              Get browser notifications for new broadcasts and assigned jobs.
+            </div>
+            <button
+              onClick={enableStaffNotifications}
+              style={{ border: 'none', background: teamColor, color: '#fff', borderRadius: 8, padding: '8px 10px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}
+            >
+              Enable Notifications
+            </button>
+          </div>
+        </div>
+      )}
 
       {activeBroadcast?.message && (
         <div style={{ padding: '10px 16px 0' }}>
@@ -1520,7 +1592,7 @@ export default function CleanerPortal() {
       )}
 
       {/* Bottom navigation */}
-      <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, background: '#fff', borderTop: `1px solid ${T.border}`, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', zIndex: 120 }}>
+      <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, background: '#fff', borderTop: `1px solid ${T.border}`, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', zIndex: 120, paddingBottom: 'env(safe-area-inset-bottom)' }}>
         {[
           { id: 'today', label: 'Today', icon: '🧼' },
           { id: 'rota', label: 'Rota', icon: '📅' },
@@ -1547,8 +1619,8 @@ export default function CleanerPortal() {
       </div>
 
       {/* Hidden file inputs */}
-      <input ref={cameraRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handlePhotoFile} style={{ display: 'none' }} />
-      <input ref={fileRef}   type="file" accept="image/jpeg,image/png,image/webp" multiple            onChange={handlePhotoFile} style={{ display: 'none' }} />
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoFile} style={{ display: 'none' }} />
+      <input ref={fileRef}   type="file" accept="image/*" multiple            onChange={handlePhotoFile} style={{ display: 'none' }} />
 
       {/* Toast */}
       {toast && (

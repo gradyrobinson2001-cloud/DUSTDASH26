@@ -1,0 +1,19 @@
+{
+  "name": "Dust Bunnies Cleaning",
+  "short_name": "DustBunnies",
+  "description": "Cleaning operations dashboard and staff portal",
+  "start_url": "/cleaner",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F3F1EA",
+  "theme_color": "#355240",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

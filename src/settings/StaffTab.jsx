@@ -6,8 +6,10 @@ import { useProfiles } from "../hooks/useProfiles";
 
 const EMAILJS_SERVICE_ID  = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_PUBLIC_KEY  = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
-// Use the universal template for staff invite emails
-const EMAILJS_INVITE_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_INVITE_TEMPLATE_ID || import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID;
+const EMAILJS_INVITE_TEMPLATE_ID =
+  import.meta.env.VITE_EMAILJS_INVITE_TEMPLATE_ID ||
+  import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID ||
+  import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 
 // ═══════════════════════════════════════════════════════════
 // STAFF MANAGEMENT TAB — Admin Panel

@@ -83,35 +83,51 @@ export default function StaffLogin({ onAuthenticated, onDemoMode }) {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div style={{ background: T.card, borderRadius: 16, padding: 32, width: '100%', maxWidth: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ fontSize: 36, marginBottom: 8 }}>🫧</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: T.text }}>Staff Portal</div>
-          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4 }}>Sign in with your email and password</div>
+    <div style={{ minHeight: '100vh', background: `radial-gradient(circle at 18% 14%, #EAF1E8 0%, ${T.bg} 38%, #ECE8DC 100%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', position: 'relative', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', width: 320, height: 320, borderRadius: '50%', background: 'rgba(91,127,98,0.13)', top: -140, left: -110, filter: 'blur(2px)' }} />
+      <div style={{ position: 'absolute', width: 260, height: 260, borderRadius: '50%', background: 'rgba(79,125,130,0.10)', bottom: -110, right: -80, filter: 'blur(2px)' }} />
+
+      <div style={{ position: 'relative', width: '100%', maxWidth: 420, background: '#FFFEFC', borderRadius: 22, border: `1px solid ${T.border}`, padding: 28, boxShadow: '0 20px 56px rgba(30,47,36,0.15)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+          <div style={{ width: 54, height: 54, borderRadius: 16, background: T.primaryLight, color: T.primaryDark, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30 }}>
+            🌿
+          </div>
+        </div>
+
+        <div style={{ textAlign: 'center', marginBottom: 22 }}>
+          <div style={{ fontSize: 24, fontWeight: 900, color: T.text, letterSpacing: 0.2 }}>Staff Portal</div>
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6 }}>
+            Dust Bunnies Operations
+          </div>
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 5 }}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 11, fontWeight: 800, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.55, display: 'block', marginBottom: 6 }}>
               Email
             </label>
             <input
               type="email"
               value={email}
               onChange={e => { setEmail(e.target.value); setError(''); }}
-              placeholder="your.email@example.com"
+              placeholder="you@dustbunnies.com.au"
               autoComplete="email"
               style={{
-                width: '100%', padding: '12px 14px', borderRadius: 10,
-                border: `1.5px solid ${T.border}`, fontSize: 15, boxSizing: 'border-box',
-                background: T.bg, color: T.text,
+                width: '100%',
+                padding: '12px 13px',
+                borderRadius: 11,
+                border: `1.5px solid ${T.border}`,
+                fontSize: 15,
+                boxSizing: 'border-box',
+                background: '#FAF9F6',
+                color: T.text,
+                outline: 'none',
               }}
             />
           </div>
 
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 5 }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, fontWeight: 800, color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.55, display: 'block', marginBottom: 6 }}>
               Password
             </label>
             <input
@@ -121,31 +137,47 @@ export default function StaffLogin({ onAuthenticated, onDemoMode }) {
               placeholder="Enter your password"
               autoComplete="current-password"
               style={{
-                width: '100%', padding: '12px 14px', borderRadius: 10,
-                border: `1.5px solid ${T.border}`, fontSize: 15, boxSizing: 'border-box',
-                background: T.bg, color: T.text,
+                width: '100%',
+                padding: '12px 13px',
+                borderRadius: 11,
+                border: `1.5px solid ${T.border}`,
+                fontSize: 15,
+                boxSizing: 'border-box',
+                background: '#FAF9F6',
+                color: T.text,
+                outline: 'none',
               }}
             />
           </div>
 
           {error && (
-            <div style={{ textAlign: 'center', color: '#D4645C', fontSize: 13, marginBottom: 14 }}>{error}</div>
+            <div style={{ textAlign: 'center', color: T.danger, fontSize: 13, marginBottom: 12, background: T.dangerLight, borderRadius: 9, padding: '8px 10px', fontWeight: 600 }}>
+              {error}
+            </div>
           )}
 
           <button
             type="submit"
             disabled={loading}
             style={{
-              width: '100%', padding: '14px', borderRadius: 10, border: 'none',
-              background: T.primary, color: '#fff', fontSize: 16, fontWeight: 800,
-              cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1,
+              width: '100%',
+              padding: '13px',
+              borderRadius: 11,
+              border: 'none',
+              background: `linear-gradient(135deg, ${T.primary} 0%, ${T.primaryDark} 100%)`,
+              color: '#fff',
+              fontSize: 15,
+              fontWeight: 800,
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.76 : 1,
+              boxShadow: '0 10px 22px rgba(53,82,64,0.24)',
             }}
           >
-            {loading ? 'Signing in…' : 'Sign In'}
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
 
-        <div style={{ textAlign: 'center', marginTop: 16 }}>
+        <div style={{ textAlign: 'center', marginTop: 14, fontSize: 12, color: T.textMuted }}>
           <button
             onClick={onDemoMode}
             style={{ background: 'none', border: 'none', color: T.textMuted, fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
@@ -153,7 +185,7 @@ export default function StaffLogin({ onAuthenticated, onDemoMode }) {
             Demo mode
           </button>
           <span style={{ color: T.border, margin: '0 8px' }}>·</span>
-          <a href="/login" style={{ color: T.textMuted, fontSize: 12 }}>Admin →</a>
+          <a href="/login" style={{ color: T.textMuted, fontSize: 12, textDecoration: 'underline' }}>Admin login</a>
         </div>
       </div>
     </div>

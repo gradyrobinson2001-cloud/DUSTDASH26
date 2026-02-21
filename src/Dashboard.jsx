@@ -26,6 +26,7 @@ import { usePhotos }           from "./hooks/usePhotos";
 import { useProfiles }         from "./hooks/useProfiles";
 import { useStaffTimeEntries } from "./hooks/useStaffTimeEntries";
 import { useStaffBroadcast }   from "./hooks/useStaffBroadcast";
+import { useBrowserNotifications } from "./hooks/useBrowserNotifications";
 
 import { Toast, Modal } from "./components/ui";
 
@@ -68,11 +69,15 @@ const EMAILJS_SERVICE_ID           = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID          = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_UNIVERSAL_TEMPLATE_ID= import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID;
 const EMAILJS_QUOTE_TEMPLATE_ID    =
-  EMAILJS_UNIVERSAL_TEMPLATE_ID ||
   import.meta.env.VITE_EMAILJS_QUOTE_TEMPLATE_ID ||
+  EMAILJS_UNIVERSAL_TEMPLATE_ID ||
+  EMAILJS_TEMPLATE_ID;
+const EMAILJS_BULK_TEMPLATE_ID     =
+  EMAILJS_UNIVERSAL_TEMPLATE_ID ||
   EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY           = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 const GOOGLE_MAPS_API_KEY          = getGoogleMapsApiKey();
+const isLikelyEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 
 const PAGE_TO_PATH = {
   today: "/dashboard/today",
@@ -214,6 +219,13 @@ export default function Dashboard() {
   const { staffMembers, refreshProfiles }                               = useProfiles();
   const { timeEntries: staffTimeEntries }                               = useStaffTimeEntries();
   const { activeBroadcast, publishBroadcast, clearBroadcast }           = useStaffBroadcast();
+  const {
+    supported: notificationSupported,
+    permission: notificationPermission,
+    enabled: notificationsEnabled,
+    requestPermission: requestNotificationPermission,
+    notify: notifyBrowser,
+  } = useBrowserNotifications("dustdash_admin_notifications");
 
   // scheduleClients = active clients with scheduling info (subset of clients)
   const scheduleClients = clients.filter(c => c.status === "active");
@@ -428,9 +440,19 @@ export default function Dashboard() {
   useEffect(() => {
     if (enquiries.length > prevEnqCount.current) {
       showToast(`📋 New enquiry received!`);
+      const newest = enquiries[0];
+      if (document.visibilityState !== "visible") {
+        notifyBrowser({
+          title: "New enquiry received",
+          body: newest?.name
+            ? `${newest.name}${newest.suburb ? ` · ${newest.suburb}` : ""}`
+            : "A new enquiry was submitted.",
+          tag: "new-enquiry",
+        });
+      }
     }
     prevEnqCount.current = enquiries.length;
-  }, [enquiries.length]);
+  }, [enquiries, notifyBrowser, showToast]);
 
   // Google Maps
   useEffect(() => {
@@ -577,8 +599,8 @@ export default function Dashboard() {
       if (!EMAILJS_SERVICE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_QUOTE_TEMPLATE_ID) {
         throw new Error("Email config missing. Add VITE_EMAILJS_SERVICE_ID, VITE_EMAILJS_PUBLIC_KEY and a quote template ID.");
       }
-      if (!recipientEmail) {
-        throw new Error("Client email is missing on this enquiry.");
+      if (!recipientEmail || !isLikelyEmail(recipientEmail)) {
+        throw new Error("Client email is missing or invalid on this enquiry.");
       }
 
       await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_QUOTE_TEMPLATE_ID, {
@@ -834,16 +856,27 @@ export default function Dashboard() {
 
   const handleBulkEmailSend = async () => {
     if (selectedRecipients.length === 0) return;
+    if (!EMAILJS_SERVICE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_BULK_TEMPLATE_ID) {
+      showToast("❌ Email config missing for bulk sends.");
+      return;
+    }
     if (!window.confirm(`Send ${EMAIL_TEMPLATES[selectedEmailTemplate]?.name || "email"} to ${selectedRecipients.length} recipient(s)?`)) return;
     setSendingBulkEmail(true);
     const recipients = getFilteredEmailRecipients().filter(r => selectedRecipients.includes(r.id));
     let success = 0, fail = 0;
     for (const r of recipients) {
+      if (!isLikelyEmail(r?.email)) {
+        fail++;
+        continue;
+      }
       try {
-        await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_UNIVERSAL_TEMPLATE_ID, buildEmailTemplateParams(r, selectedEmailTemplate, customEmailContent, customEmailStyle), EMAILJS_PUBLIC_KEY);
+        await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_BULK_TEMPLATE_ID, buildEmailTemplateParams(r, selectedEmailTemplate, customEmailContent, customEmailStyle), EMAILJS_PUBLIC_KEY);
         await addEmailHistory({ client_id: r.id, recipient_name: r.name, recipient_email: r.email, template_type: selectedEmailTemplate, custom_style: selectedEmailTemplate === "custom" ? customEmailStyle : null });
         success++;
-      } catch { fail++; }
+      } catch (err) {
+        console.error("[email:bulk] send failed", { recipient: r?.email, err });
+        fail++;
+      }
     }
     setSendingBulkEmail(false);
     setSelectedRecipients([]);
@@ -1354,6 +1387,16 @@ export default function Dashboard() {
     }
   }, [clearBroadcast, showToast]);
 
+  const handleEnableNotifications = useCallback(async () => {
+    if (!notificationSupported) {
+      showToast("⚠️ Browser notifications are not supported on this device.");
+      return;
+    }
+    const result = await requestNotificationPermission();
+    if (result.ok) showToast("🔔 Notifications enabled.");
+    else if (result.reason === "denied") showToast("❌ Notifications blocked. Allow them in browser settings.");
+  }, [notificationSupported, requestNotificationPermission, showToast]);
+
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: shellBackground }}>
       <SidebarNav
@@ -1381,6 +1424,10 @@ export default function Dashboard() {
           searchResults={globalSearchResults}
           onSelectSearchResult={onSelectGlobalSearchResult}
           notificationsCount={notificationsCount}
+          notificationSupported={notificationSupported}
+          notificationPermission={notificationPermission}
+          notificationsEnabled={notificationsEnabled}
+          onEnableNotifications={handleEnableNotifications}
           darkMode={darkMode}
           setDarkMode={setDarkMode}
         />

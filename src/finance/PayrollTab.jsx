@@ -20,8 +20,8 @@ const EMAILJS_SERVICE_ID  = import.meta.env.VITE_EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
 const EMAILJS_UNIVERSAL_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_UNIVERSAL_TEMPLATE_ID;
 const EMAILJS_PAYROLL_TEMPLATE_ID =
-  EMAILJS_UNIVERSAL_TEMPLATE_ID ||
   import.meta.env.VITE_EMAILJS_PAYROLL_TEMPLATE_ID ||
+  EMAILJS_UNIVERSAL_TEMPLATE_ID ||
   EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY  = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 const BUSINESS_NAME       = import.meta.env.VITE_BUSINESS_NAME || 'Dust Bunnies Cleaning';
@@ -30,6 +30,7 @@ const BUSINESS_EMAIL      = import.meta.env.VITE_BUSINESS_EMAIL || '';
 const SUPER_FUND_NAME     = import.meta.env.VITE_SUPER_FUND_NAME || 'Configured by employer';
 const SUPER_FUND_NUMBER   = import.meta.env.VITE_SUPER_FUND_NUMBER || import.meta.env.VITE_SUPER_FUND_USI || '';
 const DEFAULT_SUPER_RATE  = 0.12;
+const isLikelyEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 
 function getMonday(dateStr) {
   const d = new Date(dateStr);
@@ -376,7 +377,7 @@ export default function PayrollTab({ showToast, isMobile }) {
     const rec = row.existing || row.draft;
     const recipientEmail = (row?.staff?.email || "").trim();
     const recipientName = (row?.staff?.full_name || "Staff").trim();
-    if (!rec || !recipientEmail) { showToast('No email on file for this staff member'); return; }
+    if (!rec || !recipientEmail || !isLikelyEmail(recipientEmail)) { showToast('No valid email on file for this staff member'); return; }
     if (!EMAILJS_SERVICE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PAYROLL_TEMPLATE_ID) {
       showToast('EmailJS not configured for payroll');
       return;

@@ -10,6 +10,7 @@ const MIN_ROOM_HEIGHT = 100;
 const CANVAS_HEIGHT = 700;
 const LOCAL_KEY_PREFIX = "floorplan_client_";
 const MAX_IMAGE_MB = 15;
+const FLOORPLAN_SAFE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
 
 const DEFAULT_COLOR_LEGEND = [
   { id: "light", label: "Light", color: "#BFE3C8" },
@@ -409,6 +410,48 @@ async function detectRoomsFromImage({ imageUrl, targetWidth, targetHeight, start
   return detected;
 }
 
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Unable to decode uploaded image."));
+    };
+    img.src = objectUrl;
+  });
+}
+
+async function toUploadableFloorplanFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  if (!type || FLOORPLAN_SAFE_TYPES.has(type)) return file;
+
+  const image = await readImageFile(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas is unavailable for image conversion.");
+  ctx.drawImage(image, 0, 0);
+
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob((next) => {
+      if (next) resolve(next);
+      else reject(new Error("Failed to convert image."));
+    }, "image/jpeg", 0.92);
+  });
+
+  const safeName = String(file?.name || "floorplan")
+    .replace(/\.[^/.]+$/, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .slice(0, 50) || "floorplan";
+  return new File([blob], `${safeName}.jpg`, { type: "image/jpeg" });
+}
+
 export default function FloorPlanPage() {
   const navigate = useNavigate();
   const { id: clientId } = useParams();
@@ -536,12 +579,34 @@ export default function FloorPlanPage() {
       return;
     }
 
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw new Error(sessionError.message || "Failed to load auth session.");
+      const accessToken = data?.session?.access_token;
+      if (!accessToken) throw new Error("Session expired. Please sign in again.");
+      const res = await fetch("/api/floorplans/get-image-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ storagePath: path, clientId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body?.signedUrl) {
+        setReferenceImageUrl(body.signedUrl);
+        return;
+      }
+    } catch (err) {
+      console.error("[floor-plan] secure signed URL request failed", err);
+    }
+
     const { data, error: signedErr } = await supabase.storage
       .from("floorplan-images")
       .createSignedUrl(path, 60 * 60 * 24 * 30);
     if (signedErr) throw new Error(signedErr.message || "Failed to load reference image URL.");
     setReferenceImageUrl(data?.signedUrl || "");
-  }, []);
+  }, [clientId]);
 
   const loadFloorPlan = useCallback(async () => {
     if (!clientId) return;
@@ -694,12 +759,17 @@ export default function FloorPlanPage() {
     setNotice("");
 
     try {
+      let preparedFile = file;
+      if (!FLOORPLAN_SAFE_TYPES.has(String(file.type || "").toLowerCase())) {
+        preparedFile = await toUploadableFloorplanFile(file);
+      }
+
       if (!supabaseReady || !supabase) {
         const url = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result || ""));
           reader.onerror = () => reject(new Error("Failed to read image file."));
-          reader.readAsDataURL(file);
+          reader.readAsDataURL(preparedFile);
         });
         setReferenceImagePath(url);
         setReferenceImageUrl(url);
@@ -716,8 +786,8 @@ export default function FloorPlanPage() {
         },
         body: JSON.stringify({
           clientId,
-          fileName: file.name || "plan.png",
-          contentType: file.type || "image/png",
+          fileName: preparedFile.name || file.name || "plan.png",
+          contentType: preparedFile.type || file.type || "image/png",
         }),
       });
 
@@ -734,8 +804,8 @@ export default function FloorPlanPage() {
 
       const { error: uploadErr } = await supabase.storage
         .from("floorplan-images")
-        .uploadToSignedUrl(uploadPath, uploadToken, file, {
-          contentType: file.type || "image/png",
+        .uploadToSignedUrl(uploadPath, uploadToken, preparedFile, {
+          contentType: preparedFile.type || file.type || "image/png",
           upsert: false,
         });
       if (uploadErr) throw new Error(uploadErr.message || "Image upload failed.");
@@ -1069,7 +1139,7 @@ export default function FloorPlanPage() {
         <input
           ref={imageInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/*"
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) uploadReferenceImage(file);
