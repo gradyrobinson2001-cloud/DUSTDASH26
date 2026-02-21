@@ -35,6 +35,15 @@ const newId = () => {
 
 const floorPlanStorageKey = (clientId) => `${LOCAL_KEY_PREFIX}${clientId}`;
 
+function isMissingColumnError(error, columnName = "") {
+  if (!error) return false;
+  const code = String(error?.code || "");
+  if (code !== "42703") return false;
+  if (!columnName) return true;
+  const haystack = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return haystack.includes(String(columnName).toLowerCase());
+}
+
 function slugifyLabel(label) {
   return String(label || "")
     .trim()
@@ -649,29 +658,55 @@ export default function FloorPlanPage() {
     }
 
     try {
-      const [{ data: clientRow, error: clientErr }, { data: floorPlanRow, error: floorPlanErr }] = await Promise.all([
-        supabase.from("clients").select("id, name, address, suburb").eq("id", clientId).single(),
-        supabase
-          .from("floor_plans")
-          .select("id, client_id, color_legend, house_sections, reference_image_path, created_at, updated_at")
-          .eq("client_id", clientId)
-          .maybeSingle(),
-      ]);
-
+      const { data: clientRow, error: clientErr } = await supabase
+        .from("clients")
+        .select("id, name, address, suburb")
+        .eq("id", clientId)
+        .single();
       if (clientErr) throw new Error(clientErr.message || "Failed to load client.");
-      if (floorPlanErr) throw new Error(floorPlanErr.message || "Failed to load floor plan.");
+
+      let floorPlanRow = null;
+      let compatibilityMode = false;
+      const advancedFloorPlan = await supabase
+        .from("floor_plans")
+        .select("id, client_id, color_legend, house_sections, reference_image_path, created_at, updated_at")
+        .eq("client_id", clientId)
+        .maybeSingle();
+
+      if (advancedFloorPlan.error) {
+        if (
+          isMissingColumnError(advancedFloorPlan.error, "house_sections")
+          || isMissingColumnError(advancedFloorPlan.error, "color_legend")
+          || isMissingColumnError(advancedFloorPlan.error, "reference_image_path")
+        ) {
+          compatibilityMode = true;
+          const legacyFloorPlan = await supabase
+            .from("floor_plans")
+            .select("id, client_id, created_at, updated_at")
+            .eq("client_id", clientId)
+            .maybeSingle();
+          if (legacyFloorPlan.error) {
+            throw new Error(legacyFloorPlan.error.message || "Failed to load floor plan.");
+          }
+          floorPlanRow = legacyFloorPlan.data || null;
+        } else {
+          throw new Error(advancedFloorPlan.error.message || "Failed to load floor plan.");
+        }
+      } else {
+        floorPlanRow = advancedFloorPlan.data || null;
+      }
 
       setClient(clientRow || null);
       setFloorPlanId(floorPlanRow?.id || null);
       setSavedAt(floorPlanRow?.updated_at || null);
 
-      const sections = normalizeSections(floorPlanRow?.house_sections || DEFAULT_HOUSE_SECTIONS);
-      const legend = normalizeLegend(floorPlanRow?.color_legend || DEFAULT_COLOR_LEGEND);
+      const sections = normalizeSections(compatibilityMode ? DEFAULT_HOUSE_SECTIONS : (floorPlanRow?.house_sections || DEFAULT_HOUSE_SECTIONS));
+      const legend = normalizeLegend(compatibilityMode ? DEFAULT_COLOR_LEGEND : (floorPlanRow?.color_legend || DEFAULT_COLOR_LEGEND));
       setHouseSections(sections);
       setActiveSectionId((prev) => sections.some((s) => String(s.id) === String(prev)) ? prev : (sections[0]?.id || "main"));
       setColorLegend(legend);
 
-      const imagePath = String(floorPlanRow?.reference_image_path || "");
+      const imagePath = compatibilityMode ? "" : String(floorPlanRow?.reference_image_path || "");
       setReferenceImagePath(imagePath);
       if (imagePath) await refreshReferenceImageUrl(imagePath);
       else setReferenceImageUrl("");
@@ -687,14 +722,34 @@ export default function FloorPlanPage() {
         return;
       }
 
-      const { data: roomRows, error: roomErr } = await supabase
+      let roomRows = [];
+      const advancedRooms = await supabase
         .from("rooms")
         .select("id, floor_plan_id, name, x, y, width, height, difficulty_level, section_key, notes")
         .eq("floor_plan_id", floorPlanRow.id)
         .order("created_at", { ascending: true });
-      if (roomErr) throw new Error(roomErr.message || "Failed to load rooms.");
 
-      const roomIds = (roomRows || []).map((room) => room.id);
+      if (advancedRooms.error) {
+        if (isMissingColumnError(advancedRooms.error, "section_key")) {
+          compatibilityMode = true;
+          const legacyRooms = await supabase
+            .from("rooms")
+            .select("id, floor_plan_id, name, x, y, width, height, difficulty_level, notes")
+            .eq("floor_plan_id", floorPlanRow.id)
+            .order("created_at", { ascending: true });
+          if (legacyRooms.error) throw new Error(legacyRooms.error.message || "Failed to load rooms.");
+          roomRows = (legacyRooms.data || []).map((room) => ({
+            ...room,
+            section_key: sections[0]?.id || "main",
+          }));
+        } else {
+          throw new Error(advancedRooms.error.message || "Failed to load rooms.");
+        }
+      } else {
+        roomRows = advancedRooms.data || [];
+      }
+
+      const roomIds = roomRows.map((room) => room.id);
       let pinsByRoom = {};
       if (roomIds.length > 0) {
         const { data: pinRows, error: pinErr } = await supabase
@@ -716,13 +771,16 @@ export default function FloorPlanPage() {
         }, {});
       }
 
-      const mergedRooms = normalizeRooms((roomRows || []).map((room) => ({
+      const mergedRooms = normalizeRooms(roomRows.map((room) => ({
         ...room,
         pins: pinsByRoom[String(room.id)] || [],
       })), legend, sections);
 
       setRooms(mergedRooms);
       setSelectedRoomId(mergedRooms[0]?.id || null);
+      if (compatibilityMode) {
+        setNotice("Floor plan compatibility mode active. Run latest Supabase migration to enable house sections/colors in DB.");
+      }
     } catch (err) {
       console.error("[floor-plan] load failed", err);
       setError(err?.message || "Failed to load floor plan.");
@@ -903,7 +961,11 @@ export default function FloorPlanPage() {
 
     try {
       const now = new Date().toISOString();
-      const { data: floorPlanRow, error: floorPlanErr } = await supabase
+      let floorPlanCompatibilityMode = false;
+      let roomCompatibilityMode = false;
+
+      let floorPlanRow = null;
+      const floorPlanAdvancedUpsert = await supabase
         .from("floor_plans")
         .upsert(
           {
@@ -918,8 +980,37 @@ export default function FloorPlanPage() {
         .select("id, updated_at")
         .single();
 
-      if (floorPlanErr || !floorPlanRow?.id) {
-        throw new Error(floorPlanErr?.message || "Failed to save floor plan record.");
+      if (floorPlanAdvancedUpsert.error) {
+        if (
+          isMissingColumnError(floorPlanAdvancedUpsert.error, "house_sections")
+          || isMissingColumnError(floorPlanAdvancedUpsert.error, "color_legend")
+          || isMissingColumnError(floorPlanAdvancedUpsert.error, "reference_image_path")
+        ) {
+          floorPlanCompatibilityMode = true;
+          const floorPlanLegacyUpsert = await supabase
+            .from("floor_plans")
+            .upsert(
+              {
+                client_id: clientId,
+                updated_at: now,
+              },
+              { onConflict: "client_id" }
+            )
+            .select("id, updated_at")
+            .single();
+          if (floorPlanLegacyUpsert.error || !floorPlanLegacyUpsert.data?.id) {
+            throw new Error(floorPlanLegacyUpsert.error?.message || "Failed to save floor plan record.");
+          }
+          floorPlanRow = floorPlanLegacyUpsert.data;
+        } else {
+          throw new Error(floorPlanAdvancedUpsert.error.message || "Failed to save floor plan record.");
+        }
+      } else {
+        floorPlanRow = floorPlanAdvancedUpsert.data;
+      }
+
+      if (!floorPlanRow?.id) {
+        throw new Error("Failed to save floor plan record.");
       }
 
       const currentFloorPlanId = floorPlanRow.id;
@@ -952,10 +1043,21 @@ export default function FloorPlanPage() {
           updated_at: now,
         }));
 
-        const { error: roomUpsertErr } = await supabase
+        const roomUpsert = await supabase
           .from("rooms")
           .upsert(roomPayload, { onConflict: "id" });
-        if (roomUpsertErr) throw new Error(roomUpsertErr.message || "Failed to save rooms.");
+        if (roomUpsert.error) {
+          if (isMissingColumnError(roomUpsert.error, "section_key")) {
+            roomCompatibilityMode = true;
+            const roomPayloadLegacy = roomPayload.map(({ section_key, ...rest }) => rest);
+            const roomUpsertLegacy = await supabase
+              .from("rooms")
+              .upsert(roomPayloadLegacy, { onConflict: "id" });
+            if (roomUpsertLegacy.error) throw new Error(roomUpsertLegacy.error.message || "Failed to save rooms.");
+          } else {
+            throw new Error(roomUpsert.error.message || "Failed to save rooms.");
+          }
+        }
       }
 
       if (deletedRoomIds.length > 0) {
@@ -1006,7 +1108,11 @@ export default function FloorPlanPage() {
 
       setSavedAt(floorPlanRow.updated_at || now);
       setRooms(normalizedRooms);
-      setNotice("Floor plan saved.");
+      if (floorPlanCompatibilityMode || roomCompatibilityMode) {
+        setNotice("Floor plan saved in compatibility mode. Run latest Supabase migration to unlock sections/colors persistence.");
+      } else {
+        setNotice("Floor plan saved.");
+      }
     } catch (err) {
       console.error("[floor-plan] save failed", err);
       setError(err?.message || "Failed to save floor plan.");
@@ -1224,7 +1330,8 @@ export default function FloorPlanPage() {
                 backgroundImage: "linear-gradient(to right, rgba(35,47,50,0.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(35,47,50,0.06) 1px, transparent 1px)",
                 backgroundSize: `${GRID}px ${GRID}px`,
               }}
-              onMouseDown={() => {
+              onMouseDown={(e) => {
+                if (e.target !== e.currentTarget) return;
                 setSelectedRoomId(null);
                 setPinModeRoomId(null);
               }}
@@ -1267,18 +1374,17 @@ export default function FloorPlanPage() {
                   <Rnd
                     key={room.id}
                     bounds="parent"
+                    dragHandleClassName="room-drag-handle"
                     dragGrid={[GRID, GRID]}
                     resizeGrid={[GRID, GRID]}
                     size={{ width: room.width, height: room.height }}
                     position={{ x: room.x, y: room.y }}
                     minWidth={MIN_ROOM_WIDTH}
                     minHeight={MIN_ROOM_HEIGHT}
-                    onDragStart={(e) => {
-                      e.stopPropagation();
+                    onDragStart={() => {
                       setSelectedRoomId(room.id);
                     }}
-                    onResizeStart={(e) => {
-                      e.stopPropagation();
+                    onResizeStart={() => {
                       setSelectedRoomId(room.id);
                     }}
                     onDrag={(_, data) => {
@@ -1306,8 +1412,7 @@ export default function FloorPlanPage() {
                     style={{ zIndex: isSelected ? 3 : 2 }}
                   >
                     <div
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
+                      onMouseDown={() => {
                         setSelectedRoomId(room.id);
                       }}
                       onClick={(e) => {
@@ -1335,11 +1440,11 @@ export default function FloorPlanPage() {
                         position: "relative",
                         boxSizing: "border-box",
                         overflow: "hidden",
-                        cursor: isPinMode ? "crosshair" : "move",
+                        cursor: isPinMode ? "crosshair" : "default",
                         boxShadow: isSelected ? "0 0 0 2px rgba(44,78,96,0.14)" : "none",
                       }}
                     >
-                      <div style={{ padding: "8px 10px", borderBottom: `1px solid ${border}70`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div className="room-drag-handle" style={{ padding: "8px 10px", borderBottom: `1px solid ${border}70`, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "move" }}>
                         <div style={{ fontSize: 12, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "70%" }}>
                           {room.name || "Room"}
                         </div>

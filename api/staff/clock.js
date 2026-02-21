@@ -18,6 +18,12 @@ function clampBreakMinutes(value) {
   return Math.max(0, Math.min(180, Math.round(n)));
 }
 
+function addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
 function calcWorkedMinutes(entry) {
   const clockInAt = entry?.clock_in_at;
   const clockOutAt = entry?.clock_out_at;
@@ -45,9 +51,31 @@ export default async function handler(req, res) {
     const { profile } = await requireProfile(req, admin, { roles: ["admin", "staff"], requireActive: true });
     const body = await parseJsonBody(req);
 
-    const action = String(body?.action || "").trim().toLowerCase();
-    if (!["clock_in", "clock_out", "set_break"].includes(action)) {
-      throw new ApiError(400, "Invalid action. Use clock_in, clock_out, or set_break.");
+    const rawAction = String(body?.action || "").trim().toLowerCase();
+    // Backward compatibility:
+    // if caller sends list-style payload without action, treat it as "list".
+    const action = rawAction || ((body?.weekStart || body?.staffId) ? "list" : "");
+    if (!["clock_in", "clock_out", "set_break", "list"].includes(action)) {
+      throw new ApiError(400, "Invalid action. Use clock_in, clock_out, set_break, or list.");
+    }
+
+    if (action === "list") {
+      const weekStart = toIsoDate(String(body?.weekStart || "").trim());
+      const requestedStaffId = body?.staffId == null ? null : String(body.staffId).trim();
+      const targetStaffId = profile.role === "admin" && requestedStaffId ? requestedStaffId : profile.id;
+
+      let query = admin
+        .from("staff_time_entries")
+        .select("*")
+        .order("work_date", { ascending: false })
+        .order("clock_in_at", { ascending: false });
+
+      if (targetStaffId) query = query.eq("staff_id", targetStaffId);
+      if (weekStart) query = query.gte("work_date", weekStart).lte("work_date", addDays(weekStart, 6));
+
+      const { data, error } = await query;
+      if (error) throw new ApiError(500, "Failed to load clock entries.", error.message);
+      return sendJson(res, 200, { ok: true, action, entries: data || [] });
     }
 
     const targetStaffId = profile.role === "admin" && body?.staffId

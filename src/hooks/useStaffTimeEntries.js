@@ -34,13 +34,14 @@ export function useStaffTimeEntries({ staffId = null, weekStart = null } = {}) {
     const token = sessionData?.session?.access_token;
     if (!token) throw new Error('Session expired. Please sign in again.');
 
-    const res = await fetch('/api/staff/clock-list', {
+    const res = await fetch('/api/staff/clock', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
+        action: 'list',
         staffId: staffId || null,
         weekStart: toIsoDate(weekStart),
       }),
