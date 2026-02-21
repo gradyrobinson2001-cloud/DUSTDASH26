@@ -1,6 +1,7 @@
 import { getAdminClient } from "../_lib/supabaseAdmin.js";
 import { requireProfile } from "../_lib/auth.js";
 import { ApiError, parseJsonBody, sendJson } from "../_lib/http.js";
+import { runApiSecurity } from "../_lib/security.js";
 
 const PATH_RE = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9._-]+$/;
 
@@ -19,6 +20,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed." });
 
   try {
+    runApiSecurity(req, { rateLimitKey: "floorplans:get-image-url", max: 300, windowMs: 5 * 60_000 });
     let admin;
     try {
       admin = getAdminClient();

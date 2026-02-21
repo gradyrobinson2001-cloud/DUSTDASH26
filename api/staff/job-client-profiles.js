@@ -1,6 +1,7 @@
 import { getAdminClient } from "../_lib/supabaseAdmin.js";
 import { requireProfile } from "../_lib/auth.js";
 import { ApiError, parseJsonBody, sendJson } from "../_lib/http.js";
+import { runApiSecurity } from "../_lib/security.js";
 
 const asStringArray = (value) => {
   if (!Array.isArray(value)) return [];
@@ -34,6 +35,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed." });
 
   try {
+    runApiSecurity(req, { rateLimitKey: "staff:job-client-profiles", max: 240, windowMs: 5 * 60_000 });
     let admin;
     try {
       admin = getAdminClient();

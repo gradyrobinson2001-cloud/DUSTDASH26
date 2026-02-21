@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { T, SERVICED_AREAS, loadPricing } from "./shared";
+import { T, SERVICED_AREAS, loadPricing, loadScheduleSettings, DEFAULT_SCHEDULE_SETTINGS, normalizeScheduleSettings } from "./shared";
 import { isEmail, isPhone, errorStyle } from "./utils/validate";
 import { supabase, supabaseReady } from "./lib/supabase";
 
@@ -12,6 +12,10 @@ export default function CustomerForm() {
   const [submitted, setSubmitted] = useState(false);
   const [pricing, setPricing] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth < 520);
+  const [formOptions, setFormOptions] = useState(() => ({
+    ...DEFAULT_SCHEDULE_SETTINGS.formOptions,
+    ...loadScheduleSettings().formOptions,
+  }));
   
   const [fd, setFd] = useState({
     name: "", email: "", phone: "", suburb: "",
@@ -46,6 +50,40 @@ export default function CustomerForm() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pricing]);
+
+  useEffect(() => {
+    const applySettings = (settingsData) => {
+      const normalized = normalizeScheduleSettings(settingsData || {});
+      setFormOptions({
+        ...DEFAULT_SCHEDULE_SETTINGS.formOptions,
+        ...(normalized.formOptions || {}),
+      });
+    };
+
+    applySettings(loadScheduleSettings());
+    if (!supabaseReady || !supabase) return undefined;
+
+    let mounted = true;
+    const fetchSettings = async () => {
+      const { data } = await supabase
+        .from("schedule_settings")
+        .select("data")
+        .eq("id", 1)
+        .single();
+      if (!mounted) return;
+      if (data?.data) applySettings(data.data);
+    };
+    fetchSettings();
+
+    const ch = supabase
+      .channel("customer-form:settings")
+      .on("postgres_changes", { event: "*", schema: "public", table: "schedule_settings" }, fetchSettings)
+      .subscribe();
+    return () => {
+      mounted = false;
+      supabase.removeChannel(ch);
+    };
+  }, []);
 
   // Responsive listener
   useEffect(() => {
@@ -318,7 +356,7 @@ export default function CustomerForm() {
                   background: fd.frequency === f.id ? T.primaryLight : "#fff",
                 }}>
                   <div style={{ fontSize: 16, fontWeight: 800, color: fd.frequency === f.id ? T.primaryDark : T.text }}>{f.label}</div>
-                  {f.id === "weekly" && (
+                  {f.id === "weekly" && formOptions.showWeeklyDiscountBadge && (
                     <div style={{ marginTop: 8, background: T.accent, color: T.sidebar, padding: "4px 12px", borderRadius: 12, fontSize: 11, fontWeight: 800, display: "inline-block" }}>🎉 SAVE 10%</div>
                   )}
                   {f.sub && <div style={{ marginTop: 8, fontSize: 11, color: T.textMuted, fontWeight: 600 }}>{f.sub}</div>}
@@ -326,7 +364,7 @@ export default function CustomerForm() {
               ))}
             </div>
             
-            {fd.frequency === "weekly" && (
+            {fd.frequency === "weekly" && formOptions.showWeeklyDiscountBadge && (
               <div style={{ marginTop: 16, background: T.accentLight, borderRadius: T.radiusSm, padding: "12px 16px", textAlign: "center" }}>
                 <span style={{ fontSize: 13, color: "#8B6914", fontWeight: 700 }}>✨ Great choice! You'll save 10% on every clean.</span>
               </div>
@@ -347,7 +385,7 @@ export default function CustomerForm() {
                   k={key}
                   label={service.label}
                   icon={service.icon}
-                  subtitle={service.unit}
+                  subtitle={formOptions.showAddonPrices ? `${service.unit} · $${service.price}` : service.unit}
                   service={service}
                 />
               ))}
@@ -360,26 +398,29 @@ export default function CustomerForm() {
             </div>
 
             {/* Summary */}
-            <div style={{ marginTop: 24, background: T.bg, borderRadius: T.radius, padding: "18px 20px" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: T.primaryDark, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 }}>Quick Summary</div>
-              <div style={{ fontSize: 13, color: T.text, lineHeight: 2 }}>
-                <strong>{fd.name}</strong> · {fd.suburb}<br/>
-                {roomServices.map(([key, service]) => (
-                  <span key={key}>{service.icon} {fd[key]} · </span>
-                ))}
-                <br/>
-                📅 {fd.frequency.charAt(0).toUpperCase() + fd.frequency.slice(1)}
-                {fd.frequency === "weekly" && <span style={{ color: T.primary, fontWeight: 700 }}> (10% off!)</span>}
-                {addonServices.some(([key]) => fd[key]) && (
-                  <>
-                    <br/>✨ {addonServices.filter(([key]) => fd[key]).map(([key, service]) => {
-                      const qty = service.hasQuantity ? fd[`${key}Count`] : null;
-                      return `${service.label}${qty ? ` (${qty})` : ""}`;
-                    }).join(" · ")}
-                  </>
-                )}
+            {formOptions.showStepSummary && (
+              <div style={{ marginTop: 24, background: T.bg, borderRadius: T.radius, padding: "18px 20px" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: T.primaryDark, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 }}>Quick Summary</div>
+                <div style={{ fontSize: 13, color: T.text, lineHeight: 2 }}>
+                  <strong>{fd.name}</strong> · {fd.suburb}<br/>
+                  {roomServices.map(([key, service]) => (
+                    <span key={key}>{service.icon} {fd[key]} · </span>
+                  ))}
+                  <br/>
+                  📅 {fd.frequency.charAt(0).toUpperCase() + fd.frequency.slice(1)}
+                  {fd.frequency === "weekly" && formOptions.showWeeklyDiscountBadge && <span style={{ color: T.primary, fontWeight: 700 }}> (10% off!)</span>}
+                  {addonServices.some(([key]) => fd[key]) && (
+                    <>
+                      <br/>✨ {addonServices.filter(([key]) => fd[key]).map(([key, service]) => {
+                        const qty = service.hasQuantity ? fd[`${key}Count`] : null;
+                        const showPrice = formOptions.showAddonPrices ? ` - $${service.price}${service.hasQuantity && qty ? ` x ${qty}` : ""}` : "";
+                        return `${service.label}${qty ? ` (${qty})` : ""}${showPrice}`;
+                      }).join(" · ")}
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 

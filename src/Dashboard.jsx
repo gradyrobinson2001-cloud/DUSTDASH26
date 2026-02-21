@@ -34,6 +34,7 @@ import { Toast, Modal } from "./components/ui";
 import InboxTab        from "./enquiries/InboxTab";
 import QuotesTab       from "./quotes/QuotesTab";
 import EmailCenterTab  from "./emails/EmailCenterTab";
+import AIMarketingStudioTab from "./marketing/AIMarketingStudioTab";
 import PaymentsTab     from "./finance/PaymentsTab";
 import PayrollTab      from "./finance/PayrollTab";
 import PhotosTab       from "./photos/PhotosTab";
@@ -84,6 +85,7 @@ const PAGE_TO_PATH = {
   inbox: "/dashboard/inbox",
   quotes: "/dashboard/quotes",
   emails: "/dashboard/email-marketing",
+  ai_marketing_studio: "/dashboard/ai-marketing-studio",
   calendar: "/dashboard/schedule",
   rota: "/dashboard/weekly-overview",
   clients: "/dashboard/client-list",
@@ -93,7 +95,7 @@ const PAGE_TO_PATH = {
   payments: "/dashboard/invoices",
   payroll: "/dashboard/payroll",
   staff: "/dashboard/staff-accounts",
-  form: "/dashboard/business-settings",
+  form: "/dashboard/client-quote-form",
   templates: "/dashboard/templates",
   pricing: "/dashboard/pricing-calculator",
   analytics: "/dashboard/analytics",
@@ -101,9 +103,6 @@ const PAGE_TO_PATH = {
   profit_reports: "/dashboard/profit-reports",
   sms_marketing: "/dashboard/sms-marketing",
   review_requests: "/dashboard/review-requests",
-  referral_tracking: "/dashboard/referral-tracking",
-  roles_permissions: "/dashboard/roles-permissions",
-  integrations: "/dashboard/integrations",
   ai_summary: "/dashboard/ai-job-summary",
 };
 
@@ -112,9 +111,9 @@ const PATH_TO_PAGE = {
   inbox: "inbox",
   quotes: "quotes",
   "email-marketing": "emails",
+  "ai-marketing-studio": "ai_marketing_studio",
   "sms-marketing": "sms_marketing",
   "review-requests": "review_requests",
-  "referral-tracking": "referral_tracking",
   schedule: "calendar",
   "weekly-overview": "rota",
   analytics: "analytics",
@@ -127,9 +126,8 @@ const PATH_TO_PAGE = {
   expenses: "expenses",
   "profit-reports": "profit_reports",
   "staff-accounts": "staff",
-  "roles-permissions": "roles_permissions",
+  "client-quote-form": "form",
   "business-settings": "form",
-  integrations: "integrations",
   templates: "templates",
   "pricing-calculator": "pricing",
   "ai-job-summary": "ai_summary",
@@ -149,6 +147,7 @@ const PAGE_TITLES = {
   inbox: "Inbox",
   quotes: "Quotes",
   emails: "Email Marketing",
+  ai_marketing_studio: "AI Marketing Studio",
   calendar: "Schedule",
   rota: "Weekly Overview",
   clients: "Client List",
@@ -158,7 +157,7 @@ const PAGE_TITLES = {
   payments: "Invoices",
   payroll: "Payroll",
   staff: "Staff Accounts",
-  form: "Business Settings",
+  form: "Client Quote Form",
   templates: "Templates",
   pricing: "Pricing Calculator",
   analytics: "Analytics",
@@ -166,9 +165,6 @@ const PAGE_TITLES = {
   profit_reports: "Profit Reports",
   sms_marketing: "SMS Marketing",
   review_requests: "Review Requests",
-  referral_tracking: "Referral Tracking",
-  roles_permissions: "Roles & Permissions",
-  integrations: "Integrations",
   ai_summary: "AI Job Summary",
 };
 
@@ -182,9 +178,9 @@ const PAGE_ROLE_ACCESS = {
   profit_reports: ["admin", "finance"],
   inbox: ["admin"],
   emails: ["admin"],
+  ai_marketing_studio: ["admin"],
   sms_marketing: ["admin"],
   review_requests: ["admin"],
-  referral_tracking: ["admin"],
   calendar: ["admin"],
   rota: ["admin"],
   clients: ["admin"],
@@ -192,11 +188,9 @@ const PAGE_ROLE_ACCESS = {
   tools: ["admin"],
   photos: ["admin"],
   staff: ["admin"],
-  roles_permissions: ["admin"],
   form: ["admin"],
   templates: ["admin"],
   pricing: ["admin"],
-  integrations: ["admin"],
   ai_summary: ["admin"],
 };
 
@@ -1231,10 +1225,10 @@ export default function Dashboard() {
       label: "Marketing",
       icon: "📣",
       items: [
+        { id: "ai_marketing_studio", label: "AI Marketing Studio", icon: "🎨", badge: 0, roles: ["admin"] },
         { id: "emails", label: "Email Marketing", icon: "📧", badge: quotesNeedingFollowUp.length, roles: ["admin"] },
         { id: "sms_marketing", label: "SMS Marketing", icon: "💬", badge: 0, roles: ["admin"] },
         { id: "review_requests", label: "Review Requests", icon: "⭐", badge: 0, roles: ["admin"] },
-        { id: "referral_tracking", label: "Referral Tracking", icon: "🔗", badge: 0, roles: ["admin"] },
       ],
     },
     {
@@ -1242,9 +1236,7 @@ export default function Dashboard() {
       icon: "⚙️",
       items: [
         { id: "staff", label: "Staff Accounts", icon: "👤", badge: 0, roles: ["admin"] },
-        { id: "roles_permissions", label: "Roles & Permissions", icon: "🛡️", badge: 0, roles: ["admin"] },
-        { id: "form", label: "Business Settings", icon: "🏢", badge: 0, roles: ["admin"] },
-        { id: "integrations", label: "Integrations", icon: "🔌", badge: 0, roles: ["admin"] },
+        { id: "form", label: "Client Quote Form", icon: "📝", badge: 0, roles: ["admin"] },
       ],
     },
     {
@@ -1451,6 +1443,7 @@ export default function Dashboard() {
         {page === "inbox"    && <InboxTab enquiries={enquiries} quotes={quotes} filter={filter} setFilter={setFilter} searchTerm={searchTerm} setSearchTerm={setSearchTerm} quotesNeedingFollowUp={quotesNeedingFollowUp} archivedCount={archivedCount} isMobile={isMobile} setPage={navigateToPage} setSelectedEnquiry={setSelectedEnquiry} setSelectedRecipients={setSelectedRecipients} sendInfoForm={sendInfoForm} generateQuote={generateQuote} declineOutOfArea={declineOutOfArea} archiveEnquiry={archiveEnquiry} unarchiveEnquiry={unarchiveEnquiry} removeEnquiry={handleRemoveEnquiry} />}
         {page === "quotes"   && <QuotesTab quotes={quotes} pricing={pricing} isMobile={isMobile} setEditQuoteModal={setEditQuoteModal} setPreviewQuote={setPreviewQuote} approveQuote={approveQuote} markAccepted={markAccepted} />}
         {page === "emails"   && <EmailCenterTab emailHistory={emailHistory} quotesNeedingFollowUp={quotesNeedingFollowUp} selectedEmailTemplate={selectedEmailTemplate} setSelectedEmailTemplate={setSelectedEmailTemplate} selectedRecipients={selectedRecipients} setSelectedRecipients={setSelectedRecipients} recipientFilter={recipientFilter} setRecipientFilter={setRecipientFilter} customEmailStyle={customEmailStyle} setCustomEmailStyle={setCustomEmailStyle} customEmailContent={customEmailContent} setCustomEmailContent={setCustomEmailContent} showEmailPreview={showEmailPreview} setShowEmailPreview={setShowEmailPreview} sendingBulkEmail={sendingBulkEmail} handleBulkEmailSend={handleBulkEmailSend} getFilteredEmailRecipients={getFilteredEmailRecipients} EmailPreviewComponent={EmailPreviewComponent} isMobile={isMobile} />}
+        {page === "ai_marketing_studio" && <AIMarketingStudioTab clients={clients} enquiries={enquiries} addEmailHistory={addEmailHistory} showToast={showToast} isMobile={isMobile} />}
         {page === "payroll"  && <PayrollTab showToast={showToast} isMobile={isMobile} />}
         {page === "payments" && <PaymentsTab scheduledJobs={scheduledJobs} setScheduledJobs={setScheduledJobs} scheduleClients={scheduleClients} invoices={invoices} setInvoices={setInvoices} paymentFilter={paymentFilter} setPaymentFilter={setPaymentFilter} setShowInvoiceModal={setShowInvoiceModal} showToast={showToast} isMobile={isMobile} />}
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} showToast={showToast} isMobile={isMobile} refreshPhotos={refreshPhotos} getSignedUrl={getSignedUrl} />}
@@ -1519,9 +1512,6 @@ export default function Dashboard() {
         {page === "profit_reports" && <ComingSoonTab title="Profit Reports" description="Build margin and P&L views by day, week, suburb, and staff team." />}
         {page === "sms_marketing" && <ComingSoonTab title="SMS Marketing" description="Template-driven SMS campaigns and reminders can be managed from this tab." />}
         {page === "review_requests" && <ComingSoonTab title="Review Requests" description="Queue and send post-job review requests automatically after completion." />}
-        {page === "referral_tracking" && <ComingSoonTab title="Referral Tracking" description="Track referred leads, source attribution, and reward payouts here." />}
-        {page === "roles_permissions" && <ComingSoonTab title="Roles & Permissions" description="Configure role scopes and page-level access controls for each staff account." />}
-        {page === "integrations" && <ComingSoonTab title="Integrations" description="Connect accounting, messaging, and automation providers from one place." />}
         {page === "ai_summary" && <ComingSoonTab title="AI Job Summary" description="Generate concise daily summaries of completed jobs, issues, and staffing risks." />}
       </div>
 

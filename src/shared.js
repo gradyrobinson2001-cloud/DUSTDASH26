@@ -740,14 +740,43 @@ export const DEFAULT_SCHEDULE_SETTINGS = {
     friday: ["Forest Glen", "Mons"],
   },
   jobsPerDay: 6,
+  formOptions: {
+    showAddonPrices: false,
+    showWeeklyDiscountBadge: true,
+    showStepSummary: true,
+  },
 };
+
+export function normalizeScheduleSettings(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  return {
+    ...DEFAULT_SCHEDULE_SETTINGS,
+    ...source,
+    workingHours: {
+      ...DEFAULT_SCHEDULE_SETTINGS.workingHours,
+      ...(source.workingHours || {}),
+    },
+    durationEstimates: {
+      ...DEFAULT_SCHEDULE_SETTINGS.durationEstimates,
+      ...(source.durationEstimates || {}),
+    },
+    areaSchedule: {
+      ...DEFAULT_SCHEDULE_SETTINGS.areaSchedule,
+      ...(source.areaSchedule || {}),
+    },
+    formOptions: {
+      ...DEFAULT_SCHEDULE_SETTINGS.formOptions,
+      ...(source.formOptions || {}),
+    },
+  };
+}
 
 export function loadScheduleSettings() {
   try {
     const stored = localStorage.getItem("db_schedule_settings");
-    if (stored) return JSON.parse(stored);
+    if (stored) return normalizeScheduleSettings(JSON.parse(stored));
   } catch {}
-  return { ...DEFAULT_SCHEDULE_SETTINGS };
+  return normalizeScheduleSettings(DEFAULT_SCHEDULE_SETTINGS);
 }
 
 export function saveScheduleSettings(settings) {

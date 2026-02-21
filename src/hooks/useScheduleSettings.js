@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
-import { loadScheduleSettings, saveScheduleSettings } from '../shared';
+import { loadScheduleSettings, saveScheduleSettings, normalizeScheduleSettings } from '../shared';
 
 export function useScheduleSettings() {
   const [scheduleSettings, setSettingsState] = useState(loadScheduleSettings());
@@ -12,7 +12,8 @@ export function useScheduleSettings() {
     const fetch = async () => {
       const { data } = await supabase.from('schedule_settings').select('data').eq('id', 1).single();
       if (!mounted) return;
-      if (data?.data) setSettingsState(data.data);
+      if (data?.data) setSettingsState(normalizeScheduleSettings(data.data));
+      else setSettingsState(loadScheduleSettings());
       setLoading(false);
     };
     fetch();
@@ -21,9 +22,10 @@ export function useScheduleSettings() {
   }, []);
 
   const saveSettings = async (newSettings) => {
-    setSettingsState(newSettings);
-    if (!supabaseReady) { saveScheduleSettings(newSettings); return; }
-    await supabase.from('schedule_settings').upsert({ id: 1, data: newSettings, updated_at: new Date().toISOString() });
+    const normalized = normalizeScheduleSettings(newSettings);
+    setSettingsState(normalized);
+    if (!supabaseReady) { saveScheduleSettings(normalized); return; }
+    await supabase.from('schedule_settings').upsert({ id: 1, data: normalized, updated_at: new Date().toISOString() });
   };
 
   return { scheduleSettings, setScheduleSettings: saveSettings, loading };

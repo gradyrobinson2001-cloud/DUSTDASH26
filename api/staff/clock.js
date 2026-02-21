@@ -1,6 +1,7 @@
 import { getAdminClient } from "../_lib/supabaseAdmin.js";
 import { requireProfile } from "../_lib/auth.js";
 import { ApiError, parseJsonBody, sendJson } from "../_lib/http.js";
+import { runApiSecurity } from "../_lib/security.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -33,6 +34,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed." });
 
   try {
+    runApiSecurity(req, { rateLimitKey: "staff:clock", max: 240, windowMs: 5 * 60_000 });
     let admin;
     try {
       admin = getAdminClient();

@@ -8,7 +8,12 @@ export class ApiError extends Error {
 }
 
 export function sendJson(res, status, payload) {
-  res.status(status).setHeader("Content-Type", "application/json; charset=utf-8");
+  res.status(status)
+    .setHeader("Content-Type", "application/json; charset=utf-8")
+    .setHeader("Cache-Control", "no-store, max-age=0")
+    .setHeader("Pragma", "no-cache")
+    .setHeader("X-Content-Type-Options", "nosniff")
+    .setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.end(JSON.stringify(payload));
 }
 
@@ -19,4 +24,3 @@ export async function parseJsonBody(req) {
   }
   return {};
 }
-
