@@ -24,7 +24,7 @@ export default function AdminLogin() {
       setLoading(false);
     } else {
       // AuthProvider will pick up the session; navigate to dashboard
-      navigate('/', { replace: true });
+      navigate('/dashboard/today', { replace: true });
     }
   };
 

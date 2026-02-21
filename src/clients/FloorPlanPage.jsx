@@ -17,6 +17,12 @@ const DEFAULT_COLOR_LEGEND = [
   { id: "heavy", label: "Heavy", color: "#F0D1AE" },
   { id: "deep_clean", label: "Deep Clean", color: "#EAB6B6" },
 ];
+const DEFAULT_HOUSE_SECTIONS = [
+  { id: "main", label: "Main" },
+  { id: "upstairs", label: "Upstairs" },
+  { id: "downstairs", label: "Downstairs" },
+  { id: "outbuilding", label: "Outbuilding" },
+];
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 const snap = (n) => Math.round((Number(n) || 0) / GRID) * GRID;
@@ -103,10 +109,41 @@ function newLegendItem(index) {
   };
 }
 
-function normalizeRoom(room, legend) {
+function normalizeSections(list) {
+  const seen = new Set();
+  const src = Array.isArray(list) && list.length > 0 ? list : DEFAULT_HOUSE_SECTIONS;
+  const out = src.map((item, idx) => {
+    const rawId = String(item?.id || slugifyLabel(item?.label || `Section ${idx + 1}`));
+    let id = rawId;
+    let tries = 1;
+    while (seen.has(id)) {
+      tries += 1;
+      id = `${rawId}_${tries}`;
+    }
+    seen.add(id);
+    return {
+      id,
+      label: String(item?.label || `Section ${idx + 1}`).trim() || `Section ${idx + 1}`,
+    };
+  });
+  return out.length > 0 ? out : DEFAULT_HOUSE_SECTIONS;
+}
+
+function newSectionItem(index) {
+  const raw = slugifyLabel(`Section ${index + 1}`);
+  return {
+    id: `${raw}_${Math.random().toString(36).slice(2, 6)}`,
+    label: `Section ${index + 1}`,
+  };
+}
+
+function normalizeRoom(room, legend, sections) {
   const normalizedLegend = normalizeLegend(legend);
+  const normalizedSections = normalizeSections(sections);
   const fallbackColorKey = normalizedLegend[0]?.id || "standard";
+  const fallbackSectionKey = normalizedSections[0]?.id || "main";
   const allowedKeys = new Set(normalizedLegend.map((item) => item.id));
+  const allowedSections = new Set(normalizedSections.map((item) => item.id));
 
   const pins = Array.isArray(room?.pins)
     ? room.pins.map((pin) => ({
@@ -118,6 +155,7 @@ function normalizeRoom(room, legend) {
     : [];
 
   const key = String(room?.difficulty_level || room?.color_key || "");
+  const sectionKey = String(room?.section_key || room?.sectionKey || "");
 
   return {
     id: String(room?.id || newId()),
@@ -127,16 +165,17 @@ function normalizeRoom(room, legend) {
     width: Math.max(MIN_ROOM_WIDTH, snap(room?.width || 220)),
     height: Math.max(MIN_ROOM_HEIGHT, snap(room?.height || 160)),
     difficulty_level: allowedKeys.has(key) ? key : fallbackColorKey,
+    section_key: allowedSections.has(sectionKey) ? sectionKey : fallbackSectionKey,
     notes: String(room?.notes || ""),
     pins,
   };
 }
 
-function normalizeRooms(list, legend) {
-  return (Array.isArray(list) ? list : []).map((room) => normalizeRoom(room, legend));
+function normalizeRooms(list, legend, sections) {
+  return (Array.isArray(list) ? list : []).map((room) => normalizeRoom(room, legend, sections));
 }
 
-function buildRoomFromBounds(bounds, idx, colorKey) {
+function buildRoomFromBounds(bounds, idx, colorKey, sectionKey) {
   return {
     id: newId(),
     name: `Room ${idx + 1}`,
@@ -145,12 +184,13 @@ function buildRoomFromBounds(bounds, idx, colorKey) {
     width: Math.max(MIN_ROOM_WIDTH, snap(bounds.width)),
     height: Math.max(MIN_ROOM_HEIGHT, snap(bounds.height)),
     difficulty_level: colorKey,
+    section_key: sectionKey,
     notes: "Imported from floor plan image",
     pins: [],
   };
 }
 
-function createRoomTemplate(index = 0, colorKey = "standard") {
+function createRoomTemplate(index = 0, colorKey = "standard", sectionKey = "main") {
   const offset = (index % 6) * GRID;
   return {
     id: newId(),
@@ -160,6 +200,7 @@ function createRoomTemplate(index = 0, colorKey = "standard") {
     width: 220,
     height: 160,
     difficulty_level: colorKey,
+    section_key: sectionKey,
     notes: "",
     pins: [],
   };
@@ -190,7 +231,7 @@ async function loadImage(url) {
   });
 }
 
-async function detectRoomsFromImage({ imageUrl, targetWidth, targetHeight, startIndex, defaultColorKey }) {
+async function detectRoomsFromImage({ imageUrl, targetWidth, targetHeight, startIndex, defaultColorKey, sectionKey }) {
   const img = await loadImage(imageUrl);
 
   const maxW = 900;
@@ -363,7 +404,7 @@ async function detectRoomsFromImage({ imageUrl, targetWidth, targetHeight, start
       y: clamp(box.y * scaleY, 0, targetHeight - MIN_ROOM_HEIGHT),
       width: clamp(box.width * scaleX, MIN_ROOM_WIDTH, targetWidth),
       height: clamp(box.height * scaleY, MIN_ROOM_HEIGHT, targetHeight),
-    }, startIndex + idx, defaultColorKey));
+    }, startIndex + idx, defaultColorKey, sectionKey));
 
   return detected;
 }
@@ -377,6 +418,8 @@ export default function FloorPlanPage() {
   const [client, setClient] = useState(null);
   const [floorPlanId, setFloorPlanId] = useState(null);
   const [rooms, setRooms] = useState([]);
+  const [houseSections, setHouseSections] = useState(DEFAULT_HOUSE_SECTIONS);
+  const [activeSectionId, setActiveSectionId] = useState(DEFAULT_HOUSE_SECTIONS[0].id);
   const [colorLegend, setColorLegend] = useState(DEFAULT_COLOR_LEGEND);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [pinModeRoomId, setPinModeRoomId] = useState(null);
@@ -395,8 +438,13 @@ export default function FloorPlanPage() {
   const [savedAt, setSavedAt] = useState(null);
 
   const selectedRoom = rooms.find((room) => String(room.id) === String(selectedRoomId)) || null;
+  const roomsInActiveSection = useMemo(
+    () => rooms.filter((room) => String(room.section_key || "") === String(activeSectionId)),
+    [rooms, activeSectionId]
+  );
 
   const defaultColorKey = colorLegend[0]?.id || "standard";
+  const defaultSectionKey = houseSections[0]?.id || "main";
   const canSave = Boolean(clientId);
 
   const colorById = useMemo(() => {
@@ -411,13 +459,27 @@ export default function FloorPlanPage() {
     return colorById[String(roomColorKey)] || colorLegend[0] || DEFAULT_COLOR_LEGEND[0];
   }, [colorById, colorLegend]);
 
+  useEffect(() => {
+    if (!houseSections.some((section) => String(section.id) === String(activeSectionId))) {
+      setActiveSectionId(houseSections[0]?.id || "main");
+    }
+  }, [activeSectionId, houseSections]);
+
+  useEffect(() => {
+    const room = rooms.find((r) => String(r.id) === String(selectedRoomId));
+    if (!room) return;
+    if (String(room.section_key || "") !== String(activeSectionId)) {
+      setSelectedRoomId(null);
+    }
+  }, [activeSectionId, rooms, selectedRoomId]);
+
   const upsertRoom = useCallback((roomId, updates) => {
     setRooms((prev) => prev.map((room) => (
       String(room.id) === String(roomId)
-        ? normalizeRoom({ ...room, ...updates }, colorLegend)
+        ? normalizeRoom({ ...room, ...updates }, colorLegend, houseSections)
         : room
     )));
-  }, [colorLegend]);
+  }, [colorLegend, houseSections]);
 
   const removeRoom = useCallback((roomId) => {
     setRooms((prev) => prev.filter((room) => String(room.id) !== String(roomId)));
@@ -427,11 +489,11 @@ export default function FloorPlanPage() {
 
   const addRoom = useCallback(() => {
     setRooms((prev) => {
-      const room = createRoomTemplate(prev.length, defaultColorKey);
+      const room = createRoomTemplate(prev.length, defaultColorKey, activeSectionId || defaultSectionKey);
       setSelectedRoomId(room.id);
       return [...prev, room];
     });
-  }, [defaultColorKey]);
+  }, [activeSectionId, defaultColorKey, defaultSectionKey]);
 
   const addPinToRoom = useCallback((roomId, pin) => {
     setRooms((prev) => prev.map((room) => {
@@ -492,21 +554,27 @@ export default function FloorPlanPage() {
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
+          const sections = normalizeSections(parsed?.houseSections || DEFAULT_HOUSE_SECTIONS);
           const legend = normalizeLegend(parsed?.colorLegend || DEFAULT_COLOR_LEGEND);
-          const normalized = normalizeRooms(parsed?.rooms || [], legend);
+          const normalized = normalizeRooms(parsed?.rooms || [], legend, sections);
+          setHouseSections(sections);
           setColorLegend(legend);
           setRooms(normalized);
           setSelectedRoomId(normalized[0]?.id || null);
+          const savedActive = String(parsed?.activeSectionId || "");
+          setActiveSectionId(sections.some((section) => String(section.id) === savedActive) ? savedActive : (sections[0]?.id || "main"));
           setSavedAt(parsed?.savedAt || null);
           setReferenceImagePath(parsed?.referenceImagePath || "");
           setReferenceImageUrl(parsed?.referenceImageUrl || "");
           setReferenceImageOpacity(clamp(Number(parsed?.referenceImageOpacity ?? 0.32), 0.05, 1));
         } catch {
           setRooms([]);
+          setHouseSections(DEFAULT_HOUSE_SECTIONS);
           setColorLegend(DEFAULT_COLOR_LEGEND);
         }
       } else {
         setRooms([]);
+        setHouseSections(DEFAULT_HOUSE_SECTIONS);
         setColorLegend(DEFAULT_COLOR_LEGEND);
       }
       setClient({ id: clientId, name: `Client ${clientId}` });
@@ -520,7 +588,7 @@ export default function FloorPlanPage() {
         supabase.from("clients").select("id, name, address, suburb").eq("id", clientId).single(),
         supabase
           .from("floor_plans")
-          .select("id, client_id, color_legend, reference_image_path, created_at, updated_at")
+          .select("id, client_id, color_legend, house_sections, reference_image_path, created_at, updated_at")
           .eq("client_id", clientId)
           .maybeSingle(),
       ]);
@@ -532,7 +600,10 @@ export default function FloorPlanPage() {
       setFloorPlanId(floorPlanRow?.id || null);
       setSavedAt(floorPlanRow?.updated_at || null);
 
+      const sections = normalizeSections(floorPlanRow?.house_sections || DEFAULT_HOUSE_SECTIONS);
       const legend = normalizeLegend(floorPlanRow?.color_legend || DEFAULT_COLOR_LEGEND);
+      setHouseSections(sections);
+      setActiveSectionId((prev) => sections.some((s) => String(s.id) === String(prev)) ? prev : (sections[0]?.id || "main"));
       setColorLegend(legend);
 
       const imagePath = String(floorPlanRow?.reference_image_path || "");
@@ -541,15 +612,19 @@ export default function FloorPlanPage() {
       else setReferenceImageUrl("");
 
       if (!floorPlanRow?.id) {
+        const defaultSections = normalizeSections(DEFAULT_HOUSE_SECTIONS);
         setRooms([]);
         setSelectedRoomId(null);
+        setHouseSections(defaultSections);
+        setActiveSectionId(defaultSections[0]?.id || "main");
+        setColorLegend(normalizeLegend(DEFAULT_COLOR_LEGEND));
         setLoading(false);
         return;
       }
 
       const { data: roomRows, error: roomErr } = await supabase
         .from("rooms")
-        .select("id, floor_plan_id, name, x, y, width, height, difficulty_level, notes")
+        .select("id, floor_plan_id, name, x, y, width, height, difficulty_level, section_key, notes")
         .eq("floor_plan_id", floorPlanRow.id)
         .order("created_at", { ascending: true });
       if (roomErr) throw new Error(roomErr.message || "Failed to load rooms.");
@@ -579,7 +654,7 @@ export default function FloorPlanPage() {
       const mergedRooms = normalizeRooms((roomRows || []).map((room) => ({
         ...room,
         pins: pinsByRoom[String(room.id)] || [],
-      })), legend);
+      })), legend, sections);
 
       setRooms(mergedRooms);
       setSelectedRoomId(mergedRooms[0]?.id || null);
@@ -696,6 +771,7 @@ export default function FloorPlanPage() {
         targetHeight: CANVAS_HEIGHT,
         startIndex: rooms.length,
         defaultColorKey,
+        sectionKey: activeSectionId || defaultSectionKey,
       });
 
       if (detected.length === 0) {
@@ -711,7 +787,7 @@ export default function FloorPlanPage() {
         nextRooms = detected;
       }
 
-      const normalized = normalizeRooms(nextRooms, colorLegend);
+      const normalized = normalizeRooms(nextRooms, colorLegend, houseSections);
       setRooms(normalized);
       setSelectedRoomId(normalized[0]?.id || null);
       setNotice(`Interpreted ${detected.length} room${detected.length === 1 ? "" : "s"}. You can drag/resize and edit them now.`);
@@ -721,7 +797,7 @@ export default function FloorPlanPage() {
     } finally {
       setInterpretingImage(false);
     }
-  }, [colorLegend, defaultColorKey, referenceImageUrl, rooms]);
+  }, [activeSectionId, colorLegend, defaultColorKey, defaultSectionKey, houseSections, referenceImageUrl, rooms]);
 
   const saveFloorPlan = useCallback(async () => {
     if (!canSave) return;
@@ -729,8 +805,9 @@ export default function FloorPlanPage() {
     setError("");
     setNotice("");
 
+    const normalizedSections = normalizeSections(houseSections);
     const normalizedLegend = normalizeLegend(colorLegend);
-    const normalizedRooms = normalizeRooms(rooms, normalizedLegend);
+    const normalizedRooms = normalizeRooms(rooms, normalizedLegend, normalizedSections);
 
     if (!supabaseReady || !supabase) {
       const now = new Date().toISOString();
@@ -739,6 +816,8 @@ export default function FloorPlanPage() {
         JSON.stringify({
           clientId,
           rooms: normalizedRooms,
+          houseSections: normalizedSections,
+          activeSectionId,
           colorLegend: normalizedLegend,
           referenceImagePath,
           referenceImageUrl,
@@ -759,6 +838,7 @@ export default function FloorPlanPage() {
         .upsert(
           {
             client_id: clientId,
+            house_sections: normalizedSections,
             color_legend: normalizedLegend,
             reference_image_path: referenceImagePath || null,
             updated_at: now,
@@ -774,6 +854,7 @@ export default function FloorPlanPage() {
 
       const currentFloorPlanId = floorPlanRow.id;
       setFloorPlanId(currentFloorPlanId);
+      setHouseSections(normalizedSections);
       setColorLegend(normalizedLegend);
 
       const { data: existingRooms, error: existingRoomErr } = await supabase
@@ -796,6 +877,7 @@ export default function FloorPlanPage() {
           width: Math.max(MIN_ROOM_WIDTH, snap(room.width)),
           height: Math.max(MIN_ROOM_HEIGHT, snap(room.height)),
           difficulty_level: room.difficulty_level,
+          section_key: room.section_key || normalizedSections[0]?.id || "main",
           notes: room.notes || "",
           updated_at: now,
         }));
@@ -861,7 +943,7 @@ export default function FloorPlanPage() {
     } finally {
       setSaving(false);
     }
-  }, [canSave, clientId, colorLegend, referenceImageOpacity, referenceImagePath, referenceImageUrl, rooms]);
+  }, [activeSectionId, canSave, clientId, colorLegend, houseSections, referenceImageOpacity, referenceImagePath, referenceImageUrl, rooms]);
 
   const addLegendItem = useCallback(() => {
     setColorLegend((prev) => normalizeLegend([...prev, newLegendItem(prev.length)]));
@@ -892,6 +974,39 @@ export default function FloorPlanPage() {
     });
   }, []);
 
+  const addSection = useCallback(() => {
+    setHouseSections((prev) => {
+      const normalized = normalizeSections([...prev, newSectionItem(prev.length)]);
+      const created = normalized[normalized.length - 1];
+      if (created?.id) setActiveSectionId(created.id);
+      return normalized;
+    });
+  }, []);
+
+  const updateSection = useCallback((id, updates) => {
+    setHouseSections((prev) => normalizeSections(prev.map((item) => (
+      String(item.id) === String(id)
+        ? { ...item, ...updates }
+        : item
+    ))));
+  }, []);
+
+  const removeSection = useCallback((id) => {
+    setHouseSections((prev) => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter((item) => String(item.id) !== String(id));
+      const normalized = normalizeSections(next);
+      const fallbackId = normalized[0]?.id || "main";
+      setRooms((roomsPrev) => roomsPrev.map((room) => (
+        String(room.section_key) === String(id)
+          ? { ...room, section_key: fallbackId }
+          : room
+      )));
+      setActiveSectionId((current) => (String(current) === String(id) ? fallbackId : current));
+      return normalized;
+    });
+  }, []);
+
   const roomCountLabel = `${rooms.length} room${rooms.length === 1 ? "" : "s"}`;
 
   if (loading) {
@@ -909,7 +1024,9 @@ export default function FloorPlanPage() {
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>Floor Plan Builder</div>
             <div style={{ fontSize: 20, fontWeight: 900, color: T.text }}>{client?.name || "Client"}</div>
-            <div style={{ fontSize: 12, color: T.textLight }}>{roomCountLabel}{floorPlanId ? " · existing plan" : " · new plan"}</div>
+            <div style={{ fontSize: 12, color: T.textLight }}>
+              {roomCountLabel} · {roomsInActiveSection.length} in {houseSections.find((s) => String(s.id) === String(activeSectionId))?.label || "section"}{floorPlanId ? " · existing plan" : " · new plan"}
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -983,7 +1100,26 @@ export default function FloorPlanPage() {
           <div style={{ background: "#fff", borderRadius: T.radius, boxShadow: T.shadow, padding: 12 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontSize: 12, color: T.textMuted, fontWeight: 700 }}>Canvas</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <select
+                  value={activeSectionId}
+                  onChange={(e) => {
+                    setActiveSectionId(e.target.value);
+                    setSelectedRoomId(null);
+                    setPinModeRoomId(null);
+                  }}
+                  style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 12, color: T.text, background: "#fff", fontWeight: 700 }}
+                >
+                  {houseSections.map((section) => (
+                    <option key={section.id} value={section.id}>{section.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={addSection}
+                  style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${T.border}`, background: "#fff", color: T.textMuted, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                >
+                  + Section
+                </button>
                 <span style={{ fontSize: 11, color: T.textMuted }}>Image Opacity</span>
                 <input
                   type="range"
@@ -1040,16 +1176,16 @@ export default function FloorPlanPage() {
                 />
               )}
 
-              {rooms.length === 0 && (
+              {roomsInActiveSection.length === 0 && (
                 <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
                   <div style={{ textAlign: "center", color: T.textLight }}>
-                    <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>No rooms yet</div>
+                    <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>No rooms in this section</div>
                     <div style={{ fontSize: 12 }}>Upload + interpret an image, or click "Add Room".</div>
                   </div>
                 </div>
               )}
 
-              {rooms.map((room) => {
+              {roomsInActiveSection.map((room) => {
                 const meta = getColorMeta(room.difficulty_level);
                 const bg = normalizeHexColor(meta?.color || "#BFD7EF");
                 const border = darkenColor(bg, 0.22);
@@ -1075,8 +1211,19 @@ export default function FloorPlanPage() {
                       e.stopPropagation();
                       setSelectedRoomId(room.id);
                     }}
+                    onDrag={(_, data) => {
+                      upsertRoom(room.id, { x: snap(data.x), y: snap(data.y) });
+                    }}
                     onDragStop={(_, data) => {
                       upsertRoom(room.id, { x: snap(data.x), y: snap(data.y) });
+                    }}
+                    onResize={(_, __, ref, ___, pos) => {
+                      upsertRoom(room.id, {
+                        x: snap(pos.x),
+                        y: snap(pos.y),
+                        width: Math.max(MIN_ROOM_WIDTH, snap(ref.offsetWidth)),
+                        height: Math.max(MIN_ROOM_HEIGHT, snap(ref.offsetHeight)),
+                      });
                     }}
                     onResizeStop={(_, __, ref, ___, pos) => {
                       upsertRoom(room.id, {
@@ -1168,6 +1315,50 @@ export default function FloorPlanPage() {
 
           <div style={{ background: "#fff", borderRadius: T.radius, boxShadow: T.shadow, padding: "12px", position: "sticky", top: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
+              House Sections
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+              {houseSections.map((section) => {
+                const isActive = String(section.id) === String(activeSectionId);
+                return (
+                  <div key={section.id} style={{ border: `1px solid ${isActive ? T.primary : T.borderLight}`, borderRadius: 8, padding: 8, background: isActive ? T.primaryLight : T.bg }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 6, alignItems: "center" }}>
+                      <input
+                        value={section.label}
+                        onChange={(e) => updateSection(section.id, { label: e.target.value })}
+                        style={{ ...inputStyle, marginBottom: 0 }}
+                        placeholder="Section name"
+                      />
+                      <button
+                        onClick={() => setActiveSectionId(section.id)}
+                        style={{ border: "none", background: "transparent", color: isActive ? T.primaryDark : T.textMuted, fontSize: 11, fontWeight: 800, cursor: "pointer" }}
+                      >
+                        {isActive ? "Active" : "View"}
+                      </button>
+                      <button
+                        onClick={() => removeSection(section.id)}
+                        disabled={houseSections.length <= 1}
+                        style={{ border: "none", background: "transparent", color: T.danger, fontSize: 11, fontWeight: 700, cursor: houseSections.length <= 1 ? "not-allowed" : "pointer", opacity: houseSections.length <= 1 ? 0.5 : 1 }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={addSection}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.text, fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}
+            >
+              + Add House Section
+            </button>
+
+            <div style={{ height: 1, background: T.borderLight, marginBottom: 10 }} />
+
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
               Color Legend
             </div>
 
@@ -1226,6 +1417,20 @@ export default function FloorPlanPage() {
                   style={inputStyle}
                   placeholder="e.g. Master Bedroom"
                 />
+
+                <label style={labelStyle}>House Section</label>
+                <select
+                  value={selectedRoom.section_key || defaultSectionKey}
+                  onChange={(e) => {
+                    upsertRoom(selectedRoom.id, { section_key: e.target.value });
+                    setActiveSectionId(e.target.value);
+                  }}
+                  style={inputStyle}
+                >
+                  {houseSections.map((section) => (
+                    <option key={section.id} value={section.id}>{section.label}</option>
+                  ))}
+                </select>
 
                 <label style={labelStyle}>Color Meaning</label>
                 <select

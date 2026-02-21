@@ -132,6 +132,7 @@ export function useAuth() {
 // Route guard — wraps admin-only routes
 export function RequireAdmin({ children }) {
   const { session, profile, loading, profileLoading, debugMsg } = useAuth();
+  const allowedRoles = new Set(['admin', 'finance']);
 
   // Show spinner while auth or profile is still loading
   if (loading || profileLoading) return (
@@ -181,7 +182,7 @@ export function RequireAdmin({ children }) {
     );
   }
 
-  if (!profile || profile.role !== 'admin') {
+  if (!profile || !allowedRoles.has(profile.role)) {
     return <Navigate to="/login" replace />;
   }
 

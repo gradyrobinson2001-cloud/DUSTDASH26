@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import emailjs from "@emailjs/browser";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   T, SERVICED_AREAS, calcQuote, calculateDuration, generateDemoClients,
@@ -23,6 +24,7 @@ import { useTemplates }        from "./hooks/useTemplates";
 import { useScheduleSettings } from "./hooks/useScheduleSettings";
 import { usePhotos }           from "./hooks/usePhotos";
 import { useProfiles }         from "./hooks/useProfiles";
+import { useStaffTimeEntries } from "./hooks/useStaffTimeEntries";
 
 import { Toast, Modal } from "./components/ui";
 
@@ -37,10 +39,15 @@ import ToolsTab        from "./tools/ToolsTab";
 import CalendarTab     from "./scheduling/CalendarTab";
 import RotaTab         from "./scheduling/RotaTab";
 import ClientsTab      from "./clients/ClientsTab";
+import FloorPlansTab   from "./clients/FloorPlansTab";
 import TemplatesTab    from "./settings/TemplatesTab";
 import PricingTab      from "./settings/PricingTab";
 import FormTab         from "./settings/FormTab";
 import StaffTab        from "./settings/StaffTab";
+import TodayTab        from "./dashboard/TodayTab";
+import ComingSoonTab   from "./dashboard/ComingSoonTab";
+import SidebarNav      from "./layout/SidebarNav";
+import DashboardTopbar from "./layout/DashboardTopbar";
 
 // Modal components
 import EditQuoteModal          from "./modals/EditQuoteModal";
@@ -66,7 +73,130 @@ const EMAILJS_QUOTE_TEMPLATE_ID    =
 const EMAILJS_PUBLIC_KEY           = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
 const GOOGLE_MAPS_API_KEY          = getGoogleMapsApiKey();
 
+const PAGE_TO_PATH = {
+  today: "/dashboard/today",
+  inbox: "/dashboard/inbox",
+  quotes: "/dashboard/quotes",
+  emails: "/dashboard/email-marketing",
+  calendar: "/dashboard/schedule",
+  rota: "/dashboard/weekly-overview",
+  clients: "/dashboard/client-list",
+  floorplans: "/dashboard/floor-plans",
+  tools: "/dashboard/maps-routing",
+  photos: "/dashboard/job-history",
+  payments: "/dashboard/invoices",
+  payroll: "/dashboard/payroll",
+  staff: "/dashboard/staff-accounts",
+  form: "/dashboard/business-settings",
+  templates: "/dashboard/templates",
+  pricing: "/dashboard/pricing-calculator",
+  analytics: "/dashboard/analytics",
+  expenses: "/dashboard/expenses",
+  profit_reports: "/dashboard/profit-reports",
+  sms_marketing: "/dashboard/sms-marketing",
+  review_requests: "/dashboard/review-requests",
+  referral_tracking: "/dashboard/referral-tracking",
+  roles_permissions: "/dashboard/roles-permissions",
+  integrations: "/dashboard/integrations",
+  ai_summary: "/dashboard/ai-job-summary",
+};
+
+const PATH_TO_PAGE = {
+  today: "today",
+  inbox: "inbox",
+  quotes: "quotes",
+  "email-marketing": "emails",
+  "sms-marketing": "sms_marketing",
+  "review-requests": "review_requests",
+  "referral-tracking": "referral_tracking",
+  schedule: "calendar",
+  "weekly-overview": "rota",
+  analytics: "analytics",
+  "client-list": "clients",
+  "floor-plans": "floorplans",
+  "maps-routing": "tools",
+  "job-history": "photos",
+  invoices: "payments",
+  payroll: "payroll",
+  expenses: "expenses",
+  "profit-reports": "profit_reports",
+  "staff-accounts": "staff",
+  "roles-permissions": "roles_permissions",
+  "business-settings": "form",
+  integrations: "integrations",
+  templates: "templates",
+  "pricing-calculator": "pricing",
+  "ai-job-summary": "ai_summary",
+  calendar: "calendar",
+  rota: "rota",
+  clients: "clients",
+  floorplans: "floorplans",
+  emails: "emails",
+  payments: "payments",
+  staff: "staff",
+  form: "form",
+  pricing: "pricing",
+};
+
+const PAGE_TITLES = {
+  today: "Today",
+  inbox: "Inbox",
+  quotes: "Quotes",
+  emails: "Email Marketing",
+  calendar: "Schedule",
+  rota: "Weekly Overview",
+  clients: "Client List",
+  floorplans: "Floor Plans",
+  tools: "Maps & Routing",
+  photos: "Job History",
+  payments: "Invoices",
+  payroll: "Payroll",
+  staff: "Staff Accounts",
+  form: "Business Settings",
+  templates: "Templates",
+  pricing: "Pricing Calculator",
+  analytics: "Analytics",
+  expenses: "Expenses",
+  profit_reports: "Profit Reports",
+  sms_marketing: "SMS Marketing",
+  review_requests: "Review Requests",
+  referral_tracking: "Referral Tracking",
+  roles_permissions: "Roles & Permissions",
+  integrations: "Integrations",
+  ai_summary: "AI Job Summary",
+};
+
+const PAGE_ROLE_ACCESS = {
+  today: ["admin", "finance"],
+  analytics: ["admin", "finance"],
+  quotes: ["admin", "finance"],
+  payments: ["admin", "finance"],
+  payroll: ["admin", "finance"],
+  expenses: ["admin", "finance"],
+  profit_reports: ["admin", "finance"],
+  inbox: ["admin"],
+  emails: ["admin"],
+  sms_marketing: ["admin"],
+  review_requests: ["admin"],
+  referral_tracking: ["admin"],
+  calendar: ["admin"],
+  rota: ["admin"],
+  clients: ["admin"],
+  floorplans: ["admin"],
+  tools: ["admin"],
+  photos: ["admin"],
+  staff: ["admin"],
+  roles_permissions: ["admin"],
+  form: ["admin"],
+  templates: ["admin"],
+  pricing: ["admin"],
+  integrations: ["admin"],
+  ai_summary: ["admin"],
+};
+
 export default function Dashboard() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { profile, signOut } = useAuth();
 
   // ─── Data from hooks (Supabase or localStorage fallback) ───
@@ -81,19 +211,29 @@ export default function Dashboard() {
   const { scheduleSettings, setScheduleSettings }                      = useScheduleSettings();
   const { photos, refreshPhotos, getSignedUrl }                         = usePhotos();
   const { staffMembers, refreshProfiles }                               = useProfiles();
+  const { timeEntries: staffTimeEntries }                               = useStaffTimeEntries();
 
   // scheduleClients = active clients with scheduling info (subset of clients)
   const scheduleClients = clients.filter(c => c.status === "active");
 
   // ─── UI State ───
-  const [page, setPage]               = useState("inbox");
+  const [page, setPage]               = useState("today");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile]       = useState(window.innerWidth < 768);
   const [openGroups, setOpenGroups]   = useState(() => new Set());
+  const [darkMode, setDarkMode]       = useState(() => {
+    try {
+      return localStorage.getItem("dustdash_theme") === "dark";
+    } catch {
+      return false;
+    }
+  });
+  const [floorPlanCount, setFloorPlanCount] = useState(0);
   const [toast, setToast]             = useState(null);
   const [filter, setFilter]           = useState("active");
   const [searchTerm, setSearchTerm]   = useState("");
   const [clientSearch, setClientSearch] = useState("");
+  const [globalSearch, setGlobalSearch] = useState("");
 
   // Calendar
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => {
@@ -211,6 +351,22 @@ export default function Dashboard() {
     refreshScheduledJobs,
   ]);
 
+  const canAccessPage = useCallback((pageId) => {
+    const role = profile?.role || "admin";
+    const allowed = PAGE_ROLE_ACCESS[pageId];
+    return !allowed || allowed.includes(role);
+  }, [profile?.role]);
+
+  const navigateToPage = useCallback((pageId) => {
+    const requested = pageId in PAGE_TO_PATH ? pageId : "today";
+    const target = canAccessPage(requested) ? requested : "today";
+    const nextPath = PAGE_TO_PATH[target] || PAGE_TO_PATH.today;
+    setPage(target);
+    if (location.pathname !== nextPath) {
+      navigate(nextPath, { replace: false });
+    }
+  }, [canAccessPage, location.pathname, navigate]);
+
   // ─── Effects ───
   useEffect(() => {
     const handler = () => setIsMobile(window.innerWidth < 768);
@@ -219,6 +375,27 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => { if (isMobile) setSidebarOpen(false); }, [page, isMobile]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("dustdash_theme", darkMode ? "dark" : "light");
+    } catch {}
+  }, [darkMode]);
+
+  useEffect(() => {
+    const path = location.pathname.replace(/^\/dashboard\/?/, "");
+    const segment = path.split("/")[0] || "today";
+    const resolved = PATH_TO_PAGE[segment] || "today";
+    const hasRouteMatch = Boolean(PATH_TO_PAGE[segment]);
+    const roleAllows = canAccessPage(resolved);
+    const allowed = roleAllows ? resolved : "today";
+    if (page !== allowed) setPage(allowed);
+    const expectedPath = PAGE_TO_PATH[allowed] || PAGE_TO_PATH.today;
+    const isDashboardRoot = location.pathname === "/dashboard" || location.pathname === "/dashboard/";
+    if (isDashboardRoot || !hasRouteMatch || !roleAllows || location.pathname !== expectedPath && !hasRouteMatch) {
+      navigate(expectedPath, { replace: true });
+    }
+  }, [canAccessPage, location.pathname, navigate, page]);
 
   useEffect(() => {
     if (!supabaseReady) return;
@@ -957,53 +1134,142 @@ export default function Dashboard() {
   const unpaidJobsCount       = scheduledJobs.filter(j => j.status === "completed" && j.payment_status !== "paid" && j.paymentStatus !== "paid").length;
   const addonServices         = Object.entries(pricing).filter(([_, v]) => v.category === "addon");
 
-  // ─── Nav Groups (Phase 2 accordion) ───
-  const navGroups = [
+  useEffect(() => {
+    if (!supabaseReady || !supabase) {
+      setFloorPlanCount(0);
+      return;
+    }
+    let mounted = true;
+    const refreshFloorPlanCount = async () => {
+      const { count } = await supabase
+        .from("floor_plans")
+        .select("*", { count: "exact", head: true });
+      if (!mounted) return;
+      setFloorPlanCount(Number(count || 0));
+    };
+    refreshFloorPlanCount();
+    const ch = supabase
+      .channel("dashboard:floor-plan-count")
+      .on("postgres_changes", { event: "*", schema: "public", table: "floor_plans" }, refreshFloorPlanCount)
+      .subscribe();
+    return () => {
+      mounted = false;
+      supabase.removeChannel(ch);
+    };
+  }, []);
+
+  const navGroups = useMemo(() => ([
     {
-      label: "Work",
-      icon: "💼",
+      label: "Dashboard",
+      icon: "📊",
       items: [
-        { id: "inbox",    label: "Inbox",        icon: "📥", badge: enquiries.filter(e => !e.archived && ["new","info_received","quote_ready"].includes(e.status)).length },
-        { id: "quotes",   label: "Quotes",       icon: "💰", badge: quotes.filter(q => q.status === "pending_approval").length },
-        { id: "calendar", label: "Calendar",     icon: "📅", badge: 0 },
-        { id: "rota",     label: "Rota",         icon: "🗓️", badge: 0 },
-        { id: "emails",   label: "Email Center", icon: "📧", badge: quotesNeedingFollowUp.length },
+        { id: "today", label: "Today", icon: "☀️", badge: 0, roles: ["admin", "finance"] },
+        { id: "rota", label: "Weekly Overview", icon: "🗓️", badge: 0, roles: ["admin", "finance"] },
+        { id: "analytics", label: "Analytics", icon: "📈", badge: 0, roles: ["admin", "finance"] },
+      ],
+    },
+    {
+      label: "Operations",
+      icon: "🧰",
+      items: [
+        { id: "calendar", label: "Schedule", icon: "📅", badge: 0, roles: ["admin"] },
+        { id: "clients", label: "Client List", icon: "👥", badge: clients.length, roles: ["admin"] },
+        { id: "floorplans", label: "Floor Plans", icon: "🧱", badge: floorPlanCount, roles: ["admin"] },
+        { id: "tools", label: "Maps & Routing", icon: "🗺️", badge: 0, roles: ["admin"] },
+        { id: "photos", label: "Job History", icon: "📸", badge: 0, roles: ["admin"] },
       ],
     },
     {
       label: "Finance",
       icon: "💳",
       items: [
-        { id: "payments", label: "Payments",   icon: "💳", badge: unpaidJobsCount },
-        { id: "payroll",  label: "Payroll",    icon: "💵", badge: 0 },
-        { id: "photos",   label: "Job Photos", icon: "📸", badge: 0 },
+        { id: "quotes", label: "Quotes", icon: "💰", badge: quotes.filter(q => q.status === "pending_approval").length, roles: ["admin", "finance"] },
+        { id: "payments", label: "Invoices", icon: "🧾", badge: unpaidJobsCount, roles: ["admin", "finance"] },
+        { id: "payroll", label: "Payroll", icon: "💵", badge: 0, roles: ["admin", "finance"] },
+        { id: "expenses", label: "Expenses", icon: "📚", badge: 0, roles: ["admin", "finance"] },
+        { id: "profit_reports", label: "Profit Reports", icon: "📉", badge: 0, roles: ["admin", "finance"] },
       ],
     },
     {
-      label: "Route & Maps",
-      icon: "🗺️",
+      label: "Marketing",
+      icon: "📣",
       items: [
-        { id: "tools", label: "Maps & Routing", icon: "🗺️", badge: 0 },
-      ],
-    },
-    {
-      label: "Clients",
-      icon: "👥",
-      items: [
-        { id: "clients", label: "Client List", icon: "👥", badge: clients.length },
+        { id: "emails", label: "Email Marketing", icon: "📧", badge: quotesNeedingFollowUp.length, roles: ["admin"] },
+        { id: "sms_marketing", label: "SMS Marketing", icon: "💬", badge: 0, roles: ["admin"] },
+        { id: "review_requests", label: "Review Requests", icon: "⭐", badge: 0, roles: ["admin"] },
+        { id: "referral_tracking", label: "Referral Tracking", icon: "🔗", badge: 0, roles: ["admin"] },
       ],
     },
     {
       label: "Admin",
       icon: "⚙️",
       items: [
-        { id: "staff",     label: "Staff Manager", icon: "👤", badge: 0 },
-        { id: "templates", label: "Templates",     icon: "💬", badge: 0 },
-        { id: "form",      label: "Customer Form", icon: "📋", badge: 0 },
-        { id: "pricing",   label: "Pricing",       icon: "⚙️", badge: 0 },
+        { id: "staff", label: "Staff Accounts", icon: "👤", badge: 0, roles: ["admin"] },
+        { id: "roles_permissions", label: "Roles & Permissions", icon: "🛡️", badge: 0, roles: ["admin"] },
+        { id: "form", label: "Business Settings", icon: "🏢", badge: 0, roles: ["admin"] },
+        { id: "integrations", label: "Integrations", icon: "🔌", badge: 0, roles: ["admin"] },
       ],
     },
-  ];
+    {
+      label: "Tools",
+      icon: "🛠️",
+      items: [
+        { id: "floorplans", label: "Floor Plan Builder", icon: "📐", badge: floorPlanCount, roles: ["admin"] },
+        { id: "tools", label: "Routing Optimizer", icon: "🚚", badge: 0, roles: ["admin"] },
+        { id: "pricing", label: "Pricing Calculator", icon: "🧮", badge: 0, roles: ["admin"] },
+        { id: "ai_summary", label: "AI Job Summary", icon: "🤖", badge: 0, roles: ["admin"] },
+      ],
+    },
+  ]), [clients.length, floorPlanCount, quotes, unpaidJobsCount, quotesNeedingFollowUp.length]);
+
+  const notificationsCount = useMemo(() => {
+    const today = new Date();
+    const tzAdjusted = new Date(today.getTime() - today.getTimezoneOffset() * 60000);
+    const todayIso = tzAdjusted.toISOString().split("T")[0];
+    const todayUnassigned = scheduledJobs.filter(j => j.date === todayIso && !(j.assigned_staff || []).length && !(j.is_break || j.isBreak)).length;
+    const overdueInvoices = invoices.filter(i => {
+      const due = i.due_date || i.dueDate;
+      if (!due) return false;
+      const unpaid = String(i.status || "").toLowerCase() !== "paid";
+      return unpaid && due < todayIso;
+    }).length;
+    return quotesNeedingFollowUp.length + todayUnassigned + overdueInvoices;
+  }, [invoices, quotesNeedingFollowUp.length, scheduledJobs]);
+
+  const globalSearchResults = useMemo(() => {
+    const term = globalSearch.trim().toLowerCase();
+    if (term.length < 2) return [];
+    const out = [];
+    const add = (entry) => {
+      if (out.length < 10) out.push(entry);
+    };
+
+    clients.forEach((c) => {
+      const haystack = `${c.name || ""} ${c.email || ""} ${c.suburb || ""} ${c.address || ""}`.toLowerCase();
+      if (haystack.includes(term)) {
+        add({ id: `client-${c.id}`, label: c.name || "Client", meta: `${c.suburb || "Unknown suburb"} · Client`, pageId: "clients" });
+      }
+    });
+    enquiries.forEach((e) => {
+      const haystack = `${e.name || ""} ${e.suburb || ""} ${e.details?.email || ""}`.toLowerCase();
+      if (haystack.includes(term)) {
+        add({ id: `enquiry-${e.id}`, label: e.name || "Enquiry", meta: `${e.suburb || ""} · Enquiry`, pageId: "inbox" });
+      }
+    });
+    scheduledJobs.forEach((j) => {
+      const haystack = `${j.client_name || ""} ${j.suburb || ""} ${j.date || ""} ${j.start_time || ""}`.toLowerCase();
+      if (haystack.includes(term)) {
+        add({ id: `job-${j.id}`, label: j.client_name || "Scheduled Job", meta: `${j.date || ""} ${j.start_time || ""} · Job`, pageId: "calendar" });
+      }
+    });
+    staffMembers.forEach((s) => {
+      const haystack = `${s.full_name || ""} ${s.email || ""}`.toLowerCase();
+      if (haystack.includes(term)) {
+        add({ id: `staff-${s.id}`, label: s.full_name || s.email || "Staff", meta: "Staff profile", pageId: "staff" });
+      }
+    });
+    return out.slice(0, 10);
+  }, [clients, enquiries, globalSearch, scheduledJobs, staffMembers]);
 
   const toggleGroup = (label) => {
     setOpenGroups(prev => {
@@ -1013,90 +1279,83 @@ export default function Dashboard() {
     });
   };
 
+  const pageLabel = PAGE_TITLES[page] || "Dashboard";
+  const shellBackground = darkMode
+    ? "radial-gradient(circle at top right, #1a2a22 0%, #0f1713 45%)"
+    : `radial-gradient(circle at top right, ${T.primaryLight} 0%, ${T.bg} 45%)`;
+
+  const onSelectGlobalSearchResult = useCallback((result) => {
+    if (!result?.pageId) return;
+    navigateToPage(result.pageId);
+    setGlobalSearch("");
+  }, [navigateToPage]);
+
+  const handleViewFloorPlan = useCallback((clientId) => {
+    if (!clientId) {
+      showToast("⚠️ No client linked to this job.");
+      return;
+    }
+    navigate(`/dashboard/clients/${clientId}/floorplan`);
+  }, [navigate, showToast]);
+
+  const handleMessageStaff = useCallback(() => {
+    navigateToPage("emails");
+    showToast("📧 Opened Email Marketing. Add a staff message template next.");
+  }, [navigateToPage, showToast]);
+
+  const handleMarkCompleteFromToday = useCallback(async (job) => {
+    if (!job?.id) return;
+    try {
+      await updateJobDB(job.id, { status: "completed" });
+      showToast("✅ Job marked complete.");
+    } catch (err) {
+      console.error("[today:mark-complete] failed", err);
+      showToast(`❌ Failed to mark complete: ${err.message}`);
+    }
+  }, [showToast, updateJobDB]);
+
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: `radial-gradient(circle at top right, ${T.primaryLight} 0%, ${T.bg} 45%)` }}>
-      {/* Mobile Header */}
-      {isMobile && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: 60, background: `linear-gradient(180deg, ${T.sidebar}, #16251d)`, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", zIndex: 100, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-          <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ background: "none", border: "none", color: "#fff", fontSize: 24, cursor: "pointer", padding: 8 }}>{sidebarOpen ? "✕" : "☰"}</button>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 20 }}>🌿</span><span style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>Dust Bunnies</span></div>
-          <div style={{ width: 40 }} />
-        </div>
-      )}
-
-      {/* Sidebar */}
-      <div style={{ width: isMobile ? "100%" : 248, maxWidth: isMobile ? 292 : 248, background: `linear-gradient(180deg, ${T.sidebar} 0%, #15241c 100%)`, padding: "18px 12px", display: "flex", flexDirection: "column", position: "fixed", top: isMobile ? 60 : 0, left: isMobile ? (sidebarOpen ? 0 : -300) : 0, height: isMobile ? "calc(100vh - 60px)" : "100vh", zIndex: 99, transition: "left 0.3s ease", boxShadow: isMobile && sidebarOpen ? "4px 0 20px rgba(0,0,0,0.3)" : "inset -1px 0 0 rgba(255,255,255,0.05)", overflowY: "auto" }}>
-        {!isMobile && (
-          <div style={{ textAlign: "center", marginBottom: 18, padding: "14px 10px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-            <div style={{ fontSize: 24, marginBottom: 4 }}>🌿</div>
-            <h2 style={{ color: "#fff", fontSize: 16, fontWeight: 800, margin: 0 }}>Dust Bunnies</h2>
-            <p style={{ color: "#9CB8A9", fontSize: 11, margin: "2px 0 0" }}>Admin Dashboard</p>
-            {profile && <p style={{ color: "#5A8A72", fontSize: 10, margin: "6px 0 0" }}>{profile.full_name || profile.email}</p>}
-          </div>
-        )}
-
-        <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-          {navGroups.map((group, gi) => {
-            const isOpen    = openGroups.has(group.label);
-            const groupBadge = group.items.reduce((sum, i) => sum + (i.badge || 0), 0);
-            const hasActive  = group.items.some(i => i.id === page);
-
-            return (
-              <div key={group.label} style={{ marginBottom: 2 }}>
-                {/* Group header button */}
-                <button
-                  onClick={() => toggleGroup(group.label)}
-                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 12px", borderRadius: 10, background: hasActive || isOpen ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", cursor: "pointer", color: hasActive || isOpen ? "#EAF4EE" : "#9BB7A8", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.8, transition: "all 0.15s" }}
-                >
-                  <span style={{ fontSize: 13 }}>{group.icon}</span>
-                  <span style={{ flex: 1, textAlign: "left" }}>{group.label}</span>
-                  {!isOpen && groupBadge > 0 && (
-                    <span style={{ background: T.accent, color: T.sidebar, padding: "1px 6px", borderRadius: 8, fontSize: 10, fontWeight: 800 }}>{groupBadge}</span>
-                  )}
-                  <span style={{ fontSize: 10, color: "#7FA693", transition: "transform 0.2s", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
-                </button>
-
-                {/* Collapsible items */}
-                <div style={{ overflow: "hidden", maxHeight: isOpen ? "420px" : "0px", transition: "max-height 0.25s ease", paddingLeft: 6, marginTop: 4 }}>
-                  {group.items.map(n => (
-                    <button
-                      key={n.id}
-                      onClick={() => { setPage(n.id); if (isMobile) setSidebarOpen(false); }}
-                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 9, background: page === n.id ? "rgba(255,255,255,0.16)" : "transparent", border: page === n.id ? "1px solid rgba(255,255,255,0.1)" : "1px solid transparent", cursor: "pointer", color: page === n.id ? "#fff" : "#AEC6BA", fontSize: 13, fontWeight: page === n.id ? 700 : 500, textAlign: "left", width: "100%", transition: "all 0.12s", marginBottom: 2 }}
-                    >
-                      <span style={{ fontSize: 15 }}>{n.icon}</span>
-                      <span style={{ flex: 1 }}>{n.label}</span>
-                      {n.badge > 0 && <span style={{ background: T.accent, color: T.sidebar, padding: "2px 7px", borderRadius: 10, fontSize: 11, fontWeight: 800 }}>{n.badge}</span>}
-                    </button>
-                  ))}
-                </div>
-
-                {gi < navGroups.length - 1 && (
-                  <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "6px 8px 2px" }} />
-                )}
-              </div>
-            );
-          })}
-        </nav>
-
-        {/* Sign out */}
-        <button
-          onClick={signOut}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer", color: "#8FB5A1", fontSize: 12, fontWeight: 700, marginTop: 8, width: "100%" }}
-        >
-          <span>🚪</span><span>Sign Out</span>
-        </button>
-      </div>
-
-      {/* Mobile overlay */}
-      {isMobile && sidebarOpen && (
-        <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)", zIndex: 98 }} />
-      )}
+    <div style={{ display: "flex", minHeight: "100vh", background: shellBackground }}>
+      <SidebarNav
+        navGroups={navGroups}
+        profile={profile}
+        page={page}
+        openGroups={openGroups}
+        toggleGroup={toggleGroup}
+        onSelectPage={navigateToPage}
+        isMobile={isMobile}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        signOut={signOut}
+        darkMode={darkMode}
+      />
 
       {/* Main Content */}
-      <div style={{ flex: 1, marginLeft: isMobile ? 0 : 248, marginTop: isMobile ? 60 : 0, padding: isMobile ? 16 : 30, maxWidth: isMobile ? "100%" : 1080, width: "100%", boxSizing: "border-box" }}>
+      <div style={{ flex: 1, marginLeft: isMobile ? 0 : 268, padding: isMobile ? 14 : 24, width: "100%", boxSizing: "border-box" }}>
+        <DashboardTopbar
+          isMobile={isMobile}
+          onOpenSidebar={() => setSidebarOpen((v) => !v)}
+          pageLabel={pageLabel}
+          globalSearch={globalSearch}
+          setGlobalSearch={setGlobalSearch}
+          searchResults={globalSearchResults}
+          onSelectSearchResult={onSelectGlobalSearchResult}
+          notificationsCount={notificationsCount}
+          darkMode={darkMode}
+          setDarkMode={setDarkMode}
+        />
 
-        {page === "inbox"    && <InboxTab enquiries={enquiries} quotes={quotes} filter={filter} setFilter={setFilter} searchTerm={searchTerm} setSearchTerm={setSearchTerm} quotesNeedingFollowUp={quotesNeedingFollowUp} archivedCount={archivedCount} isMobile={isMobile} setPage={setPage} setSelectedEnquiry={setSelectedEnquiry} setSelectedRecipients={setSelectedRecipients} sendInfoForm={sendInfoForm} generateQuote={generateQuote} declineOutOfArea={declineOutOfArea} archiveEnquiry={archiveEnquiry} unarchiveEnquiry={unarchiveEnquiry} removeEnquiry={handleRemoveEnquiry} />}
+        {page === "today"    && <TodayTab
+          clients={clients}
+          scheduledJobs={scheduledJobs}
+          staffMembers={staffMembers}
+          timeEntries={staffTimeEntries}
+          invoices={invoices}
+          onViewFloorPlan={handleViewFloorPlan}
+          onMessageStaff={handleMessageStaff}
+          onMarkComplete={handleMarkCompleteFromToday}
+        />}
+        {page === "inbox"    && <InboxTab enquiries={enquiries} quotes={quotes} filter={filter} setFilter={setFilter} searchTerm={searchTerm} setSearchTerm={setSearchTerm} quotesNeedingFollowUp={quotesNeedingFollowUp} archivedCount={archivedCount} isMobile={isMobile} setPage={navigateToPage} setSelectedEnquiry={setSelectedEnquiry} setSelectedRecipients={setSelectedRecipients} sendInfoForm={sendInfoForm} generateQuote={generateQuote} declineOutOfArea={declineOutOfArea} archiveEnquiry={archiveEnquiry} unarchiveEnquiry={unarchiveEnquiry} removeEnquiry={handleRemoveEnquiry} />}
         {page === "quotes"   && <QuotesTab quotes={quotes} pricing={pricing} isMobile={isMobile} setEditQuoteModal={setEditQuoteModal} setPreviewQuote={setPreviewQuote} approveQuote={approveQuote} markAccepted={markAccepted} />}
         {page === "emails"   && <EmailCenterTab emailHistory={emailHistory} quotesNeedingFollowUp={quotesNeedingFollowUp} selectedEmailTemplate={selectedEmailTemplate} setSelectedEmailTemplate={setSelectedEmailTemplate} selectedRecipients={selectedRecipients} setSelectedRecipients={setSelectedRecipients} recipientFilter={recipientFilter} setRecipientFilter={setRecipientFilter} customEmailStyle={customEmailStyle} setCustomEmailStyle={setCustomEmailStyle} customEmailContent={customEmailContent} setCustomEmailContent={setCustomEmailContent} showEmailPreview={showEmailPreview} setShowEmailPreview={setShowEmailPreview} sendingBulkEmail={sendingBulkEmail} handleBulkEmailSend={handleBulkEmailSend} getFilteredEmailRecipients={getFilteredEmailRecipients} EmailPreviewComponent={EmailPreviewComponent} isMobile={isMobile} />}
         {page === "payroll"  && <PayrollTab showToast={showToast} isMobile={isMobile} />}
@@ -1157,10 +1416,20 @@ export default function Dashboard() {
           }}
           isMobile={isMobile}
         />}
+        {page === "floorplans" && <FloorPlansTab clients={clients} isMobile={isMobile} />}
         {page === "staff"    && <StaffTab showToast={showToast} isMobile={isMobile} />}
         {page === "templates"&& <TemplatesTab templates={templates} copyTemplate={copyTemplate} removeTemplate={removeTemplate} setAddTemplateModal={setAddTemplateModal} isMobile={isMobile} />}
         {page === "form"     && <FormTab showToast={showToast} isMobile={isMobile} />}
         {page === "pricing"  && <PricingTab pricing={pricing} setEditPriceModal={setEditPriceModal} setAddServiceModal={setAddServiceModal} removeService={removeService} isMobile={isMobile} />}
+        {page === "analytics" && <ComingSoonTab title="Analytics" description="Weekly trends, conversion rates, and staff efficiency dashboards can be surfaced here." />}
+        {page === "expenses" && <ComingSoonTab title="Expenses" description="Track expense claims, categories, and supplier bills in this finance workspace." />}
+        {page === "profit_reports" && <ComingSoonTab title="Profit Reports" description="Build margin and P&L views by day, week, suburb, and staff team." />}
+        {page === "sms_marketing" && <ComingSoonTab title="SMS Marketing" description="Template-driven SMS campaigns and reminders can be managed from this tab." />}
+        {page === "review_requests" && <ComingSoonTab title="Review Requests" description="Queue and send post-job review requests automatically after completion." />}
+        {page === "referral_tracking" && <ComingSoonTab title="Referral Tracking" description="Track referred leads, source attribution, and reward payouts here." />}
+        {page === "roles_permissions" && <ComingSoonTab title="Roles & Permissions" description="Configure role scopes and page-level access controls for each staff account." />}
+        {page === "integrations" && <ComingSoonTab title="Integrations" description="Connect accounting, messaging, and automation providers from one place." />}
+        {page === "ai_summary" && <ComingSoonTab title="AI Job Summary" description="Generate concise daily summaries of completed jobs, issues, and staffing risks." />}
       </div>
 
       {/* ═══ MODALS ═══ */}

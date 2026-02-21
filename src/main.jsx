@@ -21,6 +21,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route path="/form"       element={<CustomerForm />} />
           <Route path="/quote/:id"  element={<QuotePreview />} />
           <Route path="/cleaner"    element={<CleanerPortal />} />
+          <Route path="/" element={<Navigate to="/dashboard/today" replace />} />
           <Route path="/dashboard/clients/:id/floorplan" element={
             <RequireAdmin>
               <FloorPlanPage />
@@ -28,11 +29,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           } />
 
           {/* Protected admin route */}
-          <Route path="/*" element={
+          <Route path="/dashboard/*" element={
             <RequireAdmin>
               <Dashboard />
             </RequireAdmin>
           } />
+          <Route path="/*" element={<Navigate to="/dashboard/today" replace />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>
