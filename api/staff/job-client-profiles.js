@@ -9,6 +9,8 @@ const asStringArray = (value) => {
     .filter(Boolean);
 };
 
+const normalize = (value) => String(value || "").trim().toLowerCase();
+
 const snapshotProfile = (job) => ({
   id: job?.client_id || `job-${job?.id || Date.now()}`,
   name: job?.client_name || "Client",
@@ -73,6 +75,7 @@ export default async function handler(req, res) {
     );
 
     let clientsById = {};
+    let fallbackClients = [];
     if (clientIds.length > 0) {
       const { data: clients, error: clientsError } = await admin
         .from("clients")
@@ -88,11 +91,46 @@ export default async function handler(req, res) {
         acc[String(row.id)] = row;
         return acc;
       }, {});
+      fallbackClients = [...(clients || [])];
+    }
+
+    const jobsMissingClientId = jobRows.filter((job) => !String(job?.client_id || "").trim() && normalize(job?.client_name));
+    if (jobsMissingClientId.length > 0) {
+      const uniqueSuburbs = Array.from(
+        new Set(
+          jobsMissingClientId.map((job) => String(job?.suburb || "").trim()).filter(Boolean)
+        )
+      );
+
+      let fallbackQuery = admin
+        .from("clients")
+        .select("id, name, email, phone, address, suburb, notes, access_notes, frequency, preferred_day, preferred_time, bedrooms, bathrooms, living, kitchen");
+      if (uniqueSuburbs.length > 0) {
+        fallbackQuery = fallbackQuery.in("suburb", uniqueSuburbs);
+      }
+
+      const { data: fallbackRows, error: fallbackError } = await fallbackQuery.limit(500);
+      if (fallbackError) {
+        console.error("[api/staff/job-client-profiles] fallback clients query failed", { userId: user.id, fallbackError });
+        throw new ApiError(500, "Failed to match fallback client profiles.", fallbackError.message);
+      }
+      fallbackClients = [...fallbackClients, ...(fallbackRows || [])];
     }
 
     const profilesByJob = {};
     for (const job of jobRows) {
-      const client = clientsById[String(job.client_id || "")];
+      let client = clientsById[String(job.client_id || "")];
+      if (!client) {
+        const jobName = normalize(job?.client_name);
+        const jobSuburb = normalize(job?.suburb);
+        const byNameSuburb = fallbackClients.find((row) => (
+          normalize(row?.name) === jobName &&
+          (!jobSuburb || normalize(row?.suburb) === jobSuburb)
+        ));
+        const byNameOnly = fallbackClients.find((row) => normalize(row?.name) === jobName);
+        client = byNameSuburb || byNameOnly || null;
+      }
+
       profilesByJob[String(job.id)] = client
         ? { ...client, source: "client" }
         : snapshotProfile(job);

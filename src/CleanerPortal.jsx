@@ -81,6 +81,38 @@ function fmtWeekRange(monday) {
 }
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+function timeToMinutes(timeValue) {
+  if (!timeValue || typeof timeValue !== 'string') return null;
+  const [hh, mm] = timeValue.split(':');
+  const h = Number(hh);
+  const m = Number(mm);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return (h * 60) + m;
+}
+
+function minsToClock(totalMinutes) {
+  if (!Number.isFinite(totalMinutes) || totalMinutes < 0) return '—';
+  const hh = Math.floor(totalMinutes / 60) % 24;
+  const mm = totalMinutes % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function formatShiftMins(mins) {
+  const n = Math.max(0, Math.round(Number(mins) || 0));
+  const h = Math.floor(n / 60);
+  const m = n % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
+function initialsFromName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
 function normalizeText(v) {
   return String(v || '').trim().toLowerCase();
 }
@@ -171,6 +203,12 @@ export default function CleanerPortal() {
   const [clockActionLoading, setClockActionLoading] = useState(false);
   const [breakMinutes, setBreakMinutes] = useState(DEFAULT_BREAK_MINUTES);
   const [demoTimeEntries, setDemoTimeEntries] = useState([]);
+  const [teamRotaJobs, setTeamRotaJobs] = useState([]);
+  const [teamRotaStaffById, setTeamRotaStaffById] = useState({});
+  const [teamRotaLoading, setTeamRotaLoading] = useState(false);
+  const [teamRotaError, setTeamRotaError] = useState('');
+  const [rotaViewMode, setRotaViewMode] = useState('all');
+  const [expandedRotaRows, setExpandedRotaRows] = useState(() => new Set());
 
   const timerRefs = useRef({});
   const cameraRef = useRef(null);
@@ -209,6 +247,15 @@ export default function CleanerPortal() {
     setTimeout(() => setToast(null), 3000);
   }, []);
 
+  const toggleExpandedRotaRow = useCallback((rowKey) => {
+    setExpandedRotaRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowKey)) next.delete(rowKey);
+      else next.add(rowKey);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (demoMode || !staffId) return;
     const refresh = async () => {
@@ -233,6 +280,64 @@ export default function CleanerPortal() {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [demoMode, refreshScheduledJobs, refreshTimeEntries, staffId]);
+
+  // ── Team rota overview (all staff) ────────────────────
+  useEffect(() => {
+    if (activeTab !== 'rota') return;
+    if (demoMode) {
+      setTeamRotaJobs(DEMO_JOBS);
+      setTeamRotaStaffById({
+        demo: { id: 'demo', full_name: 'Demo Staff', role: 'staff' },
+      });
+      setTeamRotaError('');
+      return;
+    }
+    if (!supabaseReady || !supabase || !profile?.id) return;
+
+    let cancelled = false;
+    const loadRota = async () => {
+      setTeamRotaLoading(true);
+      setTeamRotaError('');
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const token = data?.session?.access_token;
+        if (!token) throw new Error('Session expired. Please sign in again.');
+
+        const res = await fetch('/api/staff/rota-overview', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ weekStart }),
+        });
+        let body = {};
+        try { body = await res.json(); } catch {}
+        if (!res.ok || body?.error) {
+          throw new Error(body?.error || body?.details || `Request failed (${res.status})`);
+        }
+        if (cancelled) return;
+        setTeamRotaJobs(Array.isArray(body?.jobs) ? body.jobs : []);
+        setTeamRotaStaffById(body?.staffById || {});
+      } catch (err) {
+        if (cancelled) return;
+        console.error('[staff:rota-overview] failed', err);
+        setTeamRotaJobs([]);
+        setTeamRotaStaffById({});
+        setTeamRotaError(err?.message || 'Failed to load team rota.');
+      } finally {
+        if (!cancelled) setTeamRotaLoading(false);
+      }
+    };
+
+    loadRota();
+    return () => { cancelled = true; };
+  }, [activeTab, demoMode, profile?.id, weekStart]);
+
+  useEffect(() => {
+    setExpandedRotaRows(new Set());
+  }, [weekStart, rotaViewMode]);
 
   // ── Timer management ───────────────────────────────────
   useEffect(() => {
@@ -515,6 +620,109 @@ export default function CleanerPortal() {
       };
     });
   })();
+
+  const teamRotaDays = (() => {
+    const weekSet = new Set(weekDates);
+    const sourceJobs = (demoMode ? DEMO_JOBS : teamRotaJobs)
+      .filter(job => weekSet.has(job?.date))
+      .filter(job => !job?.is_break && !job?.isBreak)
+      .filter(job => Boolean(job?.is_published ?? job?.isPublished ?? true));
+
+    const dayMap = Object.fromEntries(weekDates.map((date, i) => [date, {
+      date,
+      label: DAY_LABELS[i],
+      shifts: [],
+      jobCount: 0,
+    }]));
+
+    weekDates.forEach((date) => {
+      const jobsForDate = sourceJobs.filter(job => job.date === date);
+      const byStaff = {};
+
+      jobsForDate.forEach((job) => {
+        const assigned = Array.isArray(job.assigned_staff) && job.assigned_staff.length > 0
+          ? job.assigned_staff.map(String)
+          : ['unassigned'];
+
+        assigned.forEach((entryStaffId) => {
+          if (rotaViewMode === 'mine' && String(entryStaffId) !== String(staffId)) return;
+          if (!byStaff[entryStaffId]) {
+            const staffProfile = teamRotaStaffById?.[entryStaffId] || null;
+            byStaff[entryStaffId] = {
+              staffId: entryStaffId,
+              name: staffProfile?.full_name || (entryStaffId === 'unassigned' ? 'Unassigned' : 'Staff'),
+              role: staffProfile?.role || (entryStaffId === 'unassigned' ? 'scheduler' : 'staff'),
+              startMin: null,
+              endMin: null,
+              totalJobMinutes: 0,
+              jobs: [],
+            };
+          }
+
+          const row = byStaff[entryStaffId];
+          const startText = job.start_time || job.startTime || '';
+          const endText = job.end_time || job.endTime || '';
+          const startMin = timeToMinutes(startText);
+          const endMin = timeToMinutes(endText);
+          const clientProfile = job.client_profile || null;
+          if (startMin !== null) row.startMin = row.startMin === null ? startMin : Math.min(row.startMin, startMin);
+          if (endMin !== null) row.endMin = row.endMin === null ? endMin : Math.max(row.endMin, endMin);
+          row.totalJobMinutes += Number(job.duration || 0);
+          row.jobs.push({
+            id: job.id,
+            clientName: clientProfile?.name || job.client_name || job.clientName || 'Client',
+            start: startText,
+            end: endText,
+            startMin,
+            endMin,
+            suburb: job.suburb || '',
+            address: clientProfile?.address || '',
+            notes: clientProfile?.notes || job?.notes || '',
+            accessNotes: clientProfile?.access_notes || '',
+            bedrooms: clientProfile?.bedrooms,
+            bathrooms: clientProfile?.bathrooms,
+            living: clientProfile?.living,
+            kitchen: clientProfile?.kitchen,
+            frequency: clientProfile?.frequency || '',
+          });
+        });
+      });
+
+      const shifts = Object.values(byStaff).map((row) => {
+        const sortedJobs = [...row.jobs].sort((a, b) => {
+          const aStart = Number.isFinite(a.startMin) ? a.startMin : 9999;
+          const bStart = Number.isFinite(b.startMin) ? b.startMin : 9999;
+          if (aStart !== bStart) return aStart - bStart;
+          return String(a.clientName).localeCompare(String(b.clientName));
+        });
+        const hasRange = row.startMin !== null && row.endMin !== null && row.endMin > row.startMin;
+        const shiftMinutes = hasRange ? Math.max(row.endMin - row.startMin, row.totalJobMinutes) : row.totalJobMinutes;
+        const shiftLabel = hasRange ? `${minsToClock(row.startMin)} - ${minsToClock(row.endMin)}` : 'Unscheduled time';
+        const jobsPreviewBits = sortedJobs.slice(0, 2).map(j => `${j.clientName} ${j.start || ''}`.trim());
+        const jobsPreview = jobsPreviewBits.join(' · ') + (sortedJobs.length > 2 ? ` +${sortedJobs.length - 2} more` : '');
+        return {
+          ...row,
+          shiftMinutes,
+          shiftLabel,
+          jobsPreview,
+          isYou: String(row.staffId) === String(staffId),
+          jobs: sortedJobs,
+        };
+      }).sort((a, b) => {
+        const aStart = a.startMin === null ? 9999 : a.startMin;
+        const bStart = b.startMin === null ? 9999 : b.startMin;
+        if (aStart !== bStart) return aStart - bStart;
+        return String(a.name).localeCompare(String(b.name));
+      });
+
+      dayMap[date].shifts = shifts;
+      dayMap[date].jobCount = jobsForDate.length;
+    });
+
+    return weekDates.map(date => dayMap[date]);
+  })();
+
+  const selectedTeamRotaDay = teamRotaDays.find(day => day.date === selectedDate) || teamRotaDays[0] || null;
 
   const todayStats = (() => {
     const done = dayJobs.filter(j => (j.status || j.job_status || j.jobStatus) === 'completed');
@@ -904,9 +1112,11 @@ export default function CleanerPortal() {
                             const opened = window.open(mapsUrl, '_blank', 'noopener,noreferrer');
                             if (!opened) window.location.href = mapsUrl;
                           }}
-                          style={{ padding: '12px', borderRadius: T.radiusSm, border: 'none', background: T.blue, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                          style={{ padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                          aria-label="Navigate with Google Maps"
+                          title="Google Maps"
                         >
-                          Google
+                          <img src="/google-maps-mark.svg" alt="Google Maps" style={{ width: 24, height: 24, display: 'block' }} />
                         </button>
                         <button
                           onClick={() => {
@@ -917,9 +1127,11 @@ export default function CleanerPortal() {
                             const opened = window.open(wazeUrl, '_blank', 'noopener,noreferrer');
                             if (!opened) window.location.href = wazeUrl;
                           }}
-                          style={{ padding: '12px', borderRadius: T.radiusSm, border: 'none', background: '#2F5F4A', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                          style={{ padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                          aria-label="Navigate with Waze"
+                          title="Waze"
                         >
-                          Waze
+                          <img src="/waze-mark.svg" alt="Waze" style={{ width: 24, height: 24, display: 'block' }} />
                         </button>
                         <button
                           onClick={() => setExpandedJob(isExp ? null : job.id)}
@@ -1013,54 +1225,170 @@ export default function CleanerPortal() {
       ══════════════════════════════════════════════════ */}
       {activeTab === 'rota' && (
         <div style={{ padding: 16 }}>
-          <div style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', marginBottom: 12, boxShadow: T.shadow }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted, marginBottom: 8 }}>WEEKLY ROTA</div>
-            <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
-              {weeklyStats.map(s => (
-                <button
-                  key={s.date}
-                  onClick={() => setSelectedDate(s.date)}
-                  style={{
-                    flex: '0 0 auto',
-                    padding: '8px 10px',
-                    borderRadius: 10,
-                    border: s.date === selectedDate ? `1.5px solid ${teamColor}` : `1.5px solid ${T.border}`,
-                    background: s.date === selectedDate ? `${teamColor}15` : '#fff',
-                    color: s.date === selectedDate ? teamColor : T.text,
-                    cursor: 'pointer',
-                    minWidth: 66,
-                  }}
-                >
-                  <div style={{ fontSize: 10, fontWeight: 700 }}>{s.label}</div>
-                  <div style={{ fontSize: 12, fontWeight: 800 }}>{s.jobs} jobs</div>
-                </button>
-              ))}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, marginBottom: 12 }}>
+            <div style={{ background: '#fff', border: `1.5px solid ${T.border}`, borderRadius: 14, padding: '7px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                onClick={() => setSelectedDate(d => shiftDays(d, -7))}
+                style={{ border: 'none', background: 'none', color: T.textMuted, fontSize: 20, fontWeight: 700, cursor: 'pointer', padding: '0 4px' }}
+              >
+                ‹
+              </button>
+              <div style={{ flex: 1, textAlign: 'center', fontSize: 13, fontWeight: 800, color: T.text }}>{fmtWeekRange(weekStart)}</div>
+              <button
+                onClick={() => setSelectedDate(d => shiftDays(d, 7))}
+                style={{ border: 'none', background: 'none', color: T.textMuted, fontSize: 20, fontWeight: 700, cursor: 'pointer', padding: '0 4px' }}
+              >
+                ›
+              </button>
             </div>
+
+            <button
+              onClick={() => setRotaViewMode('all')}
+              style={{
+                border: `1.5px solid ${rotaViewMode === 'all' ? teamColor : T.border}`,
+                background: rotaViewMode === 'all' ? `${teamColor}12` : '#fff',
+                color: rotaViewMode === 'all' ? teamColor : T.text,
+                borderRadius: 14,
+                padding: '0 14px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setRotaViewMode('mine')}
+              style={{
+                border: `1.5px solid ${rotaViewMode === 'mine' ? teamColor : T.border}`,
+                background: rotaViewMode === 'mine' ? `${teamColor}12` : '#fff',
+                color: rotaViewMode === 'mine' ? teamColor : T.text,
+                borderRadius: 14,
+                padding: '0 14px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              Me
+            </button>
           </div>
 
-          {dayJobs.length === 0 ? (
-            <div style={{ background: '#fff', borderRadius: T.radius, padding: 36, textAlign: 'center', boxShadow: T.shadow }}>
-              <div style={{ fontWeight: 700, color: T.text, marginBottom: 4 }}>No assigned jobs</div>
-              <div style={{ fontSize: 13, color: T.textMuted }}>Nothing scheduled for {new Date(selectedDate).toLocaleDateString('en-AU', { weekday: 'long' })}.</div>
+          {teamRotaLoading && (
+            <div style={{ background: '#fff', borderRadius: T.radius, padding: 24, textAlign: 'center', color: T.textMuted, boxShadow: T.shadow }}>
+              Loading rota...
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {dayJobs.map(job => {
-                const start = job.start_time || job.startTime || '—';
-                const end = job.end_time || job.endTime || '—';
-                const client = resolveClientProfile(job, allClients) || jobClientProfiles[String(job.id)] || buildJobSnapshotProfile(job);
-                const address = client?.address || `${job.suburb}, QLD`;
+          )}
+          {!teamRotaLoading && teamRotaError && (
+            <div style={{ background: '#fff', borderRadius: T.radius, padding: 20, color: T.danger, boxShadow: T.shadow }}>
+              Failed to load team rota: {teamRotaError}
+            </div>
+          )}
+
+          {!teamRotaLoading && !teamRotaError && (
+            <div style={{ background: '#fff', borderRadius: T.radius, boxShadow: T.shadow, overflow: 'hidden' }}>
+              {teamRotaDays.map((day, index) => {
+                const dateLabel = new Date(day.date).toLocaleDateString('en-AU', { weekday: 'short', day: '2-digit', month: '2-digit' });
                 return (
-                  <div key={job.id} style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', boxShadow: T.shadow }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>{job.client_name || job.clientName}</div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: teamColor }}>{start} - {end}</div>
-                    </div>
-                    <div style={{ fontSize: 12, color: T.textMuted }}>{address}</div>
-                    <div style={{ fontSize: 11, color: T.textLight, marginTop: 6 }}>{fmtMins(job.duration || 0)} scheduled</div>
+                  <div key={day.date} style={{ borderTop: index === 0 ? 'none' : `1px solid ${T.border}`, padding: '14px 12px' }}>
+                    <button
+                      onClick={() => setSelectedDate(day.date)}
+                      style={{ border: 'none', background: 'none', padding: 0, margin: 0, cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                    >
+                      <div style={{ fontSize: 14, fontWeight: 900, color: day.date === selectedDate ? teamColor : T.text, marginBottom: 2 }}>{dateLabel}</div>
+                      <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 10 }}>
+                        {day.shifts.length} shift{day.shifts.length === 1 ? '' : 's'} · {day.jobCount} job{day.jobCount === 1 ? '' : 's'}
+                      </div>
+                    </button>
+
+                    {day.shifts.length === 0 ? (
+                      <div style={{ fontSize: 12, color: T.textMuted, padding: '2px 0 4px' }}>No shifts scheduled</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {day.shifts.map((shift) => {
+                          const rowKey = `${day.date}_${shift.staffId}`;
+                          const isExpanded = expandedRotaRows.has(rowKey);
+                          return (
+                            <div key={rowKey} style={{ borderRadius: 10, border: `1px solid ${isExpanded ? teamColor : T.border}`, background: isExpanded ? `${teamColor}08` : '#fff', overflow: 'hidden' }}>
+                              <button
+                                onClick={() => toggleExpandedRotaRow(rowKey)}
+                                style={{ width: '100%', border: 'none', background: 'none', cursor: 'pointer', display: 'grid', gridTemplateColumns: '44px 1fr auto', gap: 10, alignItems: 'start', padding: '9px 8px', textAlign: 'left' }}
+                              >
+                                <div style={{ width: 44, height: 44, borderRadius: 10, background: shift.isYou ? `${teamColor}22` : T.bg, color: shift.isYou ? teamColor : T.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 900 }}>
+                                  {initialsFromName(shift.name)}
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 0.2, color: T.text }}>
+                                    {shift.shiftLabel} ({formatShiftMins(shift.shiftMinutes)})
+                                  </div>
+                                  <div style={{ fontSize: 14, color: T.textMuted, marginTop: 1 }}>
+                                    {shift.name}{shift.isYou ? ' · You' : ''} · {String(shift.role || 'staff').replace('_', ' ')}
+                                  </div>
+                                  <div style={{ fontSize: 14, color: T.textLight, marginTop: 2 }}>{shift.jobsPreview || 'No assigned jobs'}</div>
+                                </div>
+                                <div style={{ fontSize: 20, color: T.textLight, paddingTop: 6 }}>{isExpanded ? '⌃' : '⌄'}</div>
+                              </button>
+
+                              {isExpanded && (
+                                <div style={{ borderTop: `1px solid ${T.border}`, padding: '8px 10px 10px 62px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                  {shift.jobs.length === 0 ? (
+                                    <div style={{ fontSize: 12, color: T.textMuted }}>No jobs assigned.</div>
+                                  ) : (
+                                    shift.jobs.map((job, idx) => {
+                                      const nextJob = shift.jobs[idx + 1] || null;
+                                      const canGap = Number.isFinite(job.endMin) && Number.isFinite(nextJob?.startMin);
+                                      const gapMins = canGap ? (nextJob.startMin - job.endMin) : null;
+                                      const addressLabel = job.address || (job.suburb ? `${job.suburb}, QLD` : '');
+                                      return (
+                                        <div key={job.id}>
+                                          <div style={{ fontSize: 13, fontWeight: 800, color: T.text }}>
+                                            {(job.start || '—')} - {(job.end || '—')} · {job.clientName}
+                                          </div>
+                                          <div style={{ fontSize: 12, color: T.textMuted, marginTop: 1 }}>
+                                            {addressLabel || 'Address pending'}{job.frequency ? ` · ${job.frequency}` : ''}
+                                          </div>
+                                          {(job.bedrooms !== undefined && job.bedrooms !== null) && (
+                                            <div style={{ fontSize: 11, color: T.textLight, marginTop: 1 }}>
+                                              {job.bedrooms} bed · {job.bathrooms ?? 0} bath · {job.living ?? 0} living · {job.kitchen ?? 0} kitchen
+                                            </div>
+                                          )}
+                                          {(job.accessNotes || job.notes) && (
+                                            <div style={{ fontSize: 11, color: T.textLight, marginTop: 1 }}>
+                                              {job.accessNotes ? `Access: ${job.accessNotes}` : ''}
+                                              {job.accessNotes && job.notes ? ' · ' : ''}
+                                              {job.notes ? `Notes: ${job.notes}` : ''}
+                                            </div>
+                                          )}
+                                          {gapMins !== null && (
+                                            <div style={{ marginTop: 6, padding: '4px 8px', borderRadius: 8, background: gapMins < 0 ? '#FCEAEA' : T.bg, color: gapMins < 0 ? T.danger : T.textMuted, fontSize: 11, fontWeight: 700, display: 'inline-block' }}>
+                                              {gapMins < 0 ? `Overlap ${Math.abs(gapMins)}m` : `Travel gap ${gapMins}m`}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {selectedTeamRotaDay && (
+            <div style={{ marginTop: 12, background: T.blueLight, borderRadius: T.radius, padding: '10px 12px' }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: T.blue, marginBottom: 2 }}>
+                Selected Day: {new Date(selectedTeamRotaDay.date).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}
+              </div>
+              <div style={{ fontSize: 12, color: T.textMuted }}>
+                {selectedTeamRotaDay.shifts.length} team shift{selectedTeamRotaDay.shifts.length === 1 ? '' : 's'} · {selectedTeamRotaDay.jobCount} published job{selectedTeamRotaDay.jobCount === 1 ? '' : 's'}
+              </div>
             </div>
           )}
         </div>
