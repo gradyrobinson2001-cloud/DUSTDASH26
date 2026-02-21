@@ -18,7 +18,8 @@ ALTER TABLE public.floor_plans
   ADD COLUMN IF NOT EXISTS reference_image_updated_at TIMESTAMPTZ;
 
 ALTER TABLE public.rooms
-  ADD COLUMN IF NOT EXISTS section_key TEXT NOT NULL DEFAULT 'main';
+  ADD COLUMN IF NOT EXISTS section_key TEXT NOT NULL DEFAULT 'main',
+  ADD COLUMN IF NOT EXISTS doors JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS rooms_floor_section_idx
   ON public.rooms (floor_plan_id, section_key);

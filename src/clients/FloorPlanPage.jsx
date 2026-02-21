@@ -139,6 +139,46 @@ function normalizeSections(list) {
   return out.length > 0 ? out : DEFAULT_HOUSE_SECTIONS;
 }
 
+function normalizeDoor(door) {
+  const edgeRaw = String(door?.edge || "bottom").toLowerCase();
+  const edge = ["top", "right", "bottom", "left"].includes(edgeRaw) ? edgeRaw : "bottom";
+  const offset = clamp(Number(door?.offset ?? 0.5), 0, 1);
+  return {
+    id: String(door?.id || newId()),
+    edge,
+    offset,
+  };
+}
+
+function normalizeDoors(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((door) => normalizeDoor(door));
+}
+
+function roomDoorStyle(door, borderColor) {
+  const offsetPercent = `${(clamp(door?.offset ?? 0.5, 0, 1) * 100).toFixed(2)}%`;
+  const base = {
+    position: "absolute",
+    background: "#F5F0DC",
+    border: `1px solid ${borderColor}`,
+    borderRadius: 2,
+    boxSizing: "border-box",
+    zIndex: 5,
+    pointerEvents: "none",
+  };
+
+  if (door?.edge === "top") {
+    return { ...base, width: 28, height: 6, top: 1, left: `calc(${offsetPercent} - 14px)` };
+  }
+  if (door?.edge === "right") {
+    return { ...base, width: 6, height: 28, right: 1, top: `calc(${offsetPercent} - 14px)` };
+  }
+  if (door?.edge === "left") {
+    return { ...base, width: 6, height: 28, left: 1, top: `calc(${offsetPercent} - 14px)` };
+  }
+  return { ...base, width: 28, height: 6, bottom: 1, left: `calc(${offsetPercent} - 14px)` };
+}
+
 function newSectionItem(index) {
   const raw = slugifyLabel(`Section ${index + 1}`);
   return {
@@ -163,6 +203,7 @@ function normalizeRoom(room, legend, sections) {
         note: String(pin?.note || "").trim(),
       }))
     : [];
+  const doors = normalizeDoors(room?.doors);
 
   const key = String(room?.difficulty_level || room?.color_key || "");
   const sectionKey = String(room?.section_key || room?.sectionKey || "");
@@ -170,14 +211,15 @@ function normalizeRoom(room, legend, sections) {
   return {
     id: String(room?.id || newId()),
     name: String(room?.name || "Room").trim() || "Room",
-    x: snap(room?.x || 0),
-    y: snap(room?.y || 0),
-    width: Math.max(MIN_ROOM_WIDTH, snap(room?.width || 220)),
-    height: Math.max(MIN_ROOM_HEIGHT, snap(room?.height || 160)),
+    x: Math.max(0, Math.round(Number(room?.x) || 0)),
+    y: Math.max(0, Math.round(Number(room?.y) || 0)),
+    width: Math.max(MIN_ROOM_WIDTH, Math.round(Number(room?.width) || 220)),
+    height: Math.max(MIN_ROOM_HEIGHT, Math.round(Number(room?.height) || 160)),
     difficulty_level: allowedKeys.has(key) ? key : fallbackColorKey,
     section_key: allowedSections.has(sectionKey) ? sectionKey : fallbackSectionKey,
     notes: String(room?.notes || ""),
     pins,
+    doors,
   };
 }
 
@@ -197,6 +239,7 @@ function buildRoomFromBounds(bounds, idx, colorKey, sectionKey) {
     section_key: sectionKey,
     notes: "Imported from floor plan image",
     pins: [],
+    doors: [],
   };
 }
 
@@ -213,6 +256,7 @@ function createRoomTemplate(index = 0, colorKey = "standard", sectionKey = "main
     section_key: sectionKey,
     notes: "",
     pins: [],
+    doors: [],
   };
 }
 
@@ -572,6 +616,54 @@ export default function FloorPlanPage() {
     }));
   }, []);
 
+  const addDoorToRoom = useCallback((roomId) => {
+    setRooms((prev) => prev.map((room) => {
+      if (String(room.id) !== String(roomId)) return room;
+      const nextDoors = [...(room.doors || []), normalizeDoor({ id: newId(), edge: "bottom", offset: 0.5 })];
+      return { ...room, doors: nextDoors };
+    }));
+  }, []);
+
+  const updateDoor = useCallback((roomId, doorId, updates) => {
+    setRooms((prev) => prev.map((room) => {
+      if (String(room.id) !== String(roomId)) return room;
+      const nextDoors = (room.doors || []).map((door) => {
+        if (String(door.id) !== String(doorId)) return door;
+        return normalizeDoor({ ...door, ...updates });
+      });
+      return { ...room, doors: nextDoors };
+    }));
+  }, []);
+
+  const removeDoor = useCallback((roomId, doorId) => {
+    setRooms((prev) => prev.map((room) => {
+      if (String(room.id) !== String(roomId)) return room;
+      return { ...room, doors: (room.doors || []).filter((door) => String(door.id) !== String(doorId)) };
+    }));
+  }, []);
+
+  const confirmDeleteRoom = useCallback((roomId) => {
+    if (!roomId) return;
+    const room = rooms.find((r) => String(r.id) === String(roomId));
+    const roomName = room?.name || "this room";
+    if (!window.confirm(`Delete ${roomName}? This cannot be undone.`)) return;
+    removeRoom(roomId);
+  }, [removeRoom, rooms]);
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== "Delete") return;
+      if (!selectedRoomId) return;
+      const tag = String(event.target?.tagName || "").toLowerCase();
+      if (event.target?.isContentEditable) return;
+      if (["input", "textarea", "select", "button"].includes(tag)) return;
+      event.preventDefault();
+      confirmDeleteRoom(selectedRoomId);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirmDeleteRoom, selectedRoomId]);
+
   const refreshReferenceImageUrl = useCallback(async (path) => {
     if (!path) {
       setReferenceImageUrl("");
@@ -725,12 +817,15 @@ export default function FloorPlanPage() {
       let roomRows = [];
       const advancedRooms = await supabase
         .from("rooms")
-        .select("id, floor_plan_id, name, x, y, width, height, difficulty_level, section_key, notes")
+        .select("id, floor_plan_id, name, x, y, width, height, difficulty_level, section_key, doors, notes")
         .eq("floor_plan_id", floorPlanRow.id)
         .order("created_at", { ascending: true });
 
       if (advancedRooms.error) {
-        if (isMissingColumnError(advancedRooms.error, "section_key")) {
+        if (
+          isMissingColumnError(advancedRooms.error, "section_key")
+          || isMissingColumnError(advancedRooms.error, "doors")
+        ) {
           compatibilityMode = true;
           const legacyRooms = await supabase
             .from("rooms")
@@ -741,6 +836,7 @@ export default function FloorPlanPage() {
           roomRows = (legacyRooms.data || []).map((room) => ({
             ...room,
             section_key: sections[0]?.id || "main",
+            doors: [],
           }));
         } else {
           throw new Error(advancedRooms.error.message || "Failed to load rooms.");
@@ -1033,12 +1129,13 @@ export default function FloorPlanPage() {
           id: room.id,
           floor_plan_id: currentFloorPlanId,
           name: room.name,
-          x: snap(room.x),
-          y: snap(room.y),
-          width: Math.max(MIN_ROOM_WIDTH, snap(room.width)),
-          height: Math.max(MIN_ROOM_HEIGHT, snap(room.height)),
+          x: Math.max(0, Math.round(Number(room.x) || 0)),
+          y: Math.max(0, Math.round(Number(room.y) || 0)),
+          width: Math.max(MIN_ROOM_WIDTH, Math.round(Number(room.width) || MIN_ROOM_WIDTH)),
+          height: Math.max(MIN_ROOM_HEIGHT, Math.round(Number(room.height) || MIN_ROOM_HEIGHT)),
           difficulty_level: room.difficulty_level,
           section_key: room.section_key || normalizedSections[0]?.id || "main",
+          doors: normalizeDoors(room.doors || []),
           notes: room.notes || "",
           updated_at: now,
         }));
@@ -1047,9 +1144,16 @@ export default function FloorPlanPage() {
           .from("rooms")
           .upsert(roomPayload, { onConflict: "id" });
         if (roomUpsert.error) {
-          if (isMissingColumnError(roomUpsert.error, "section_key")) {
+          const missingSectionKey = isMissingColumnError(roomUpsert.error, "section_key");
+          const missingDoors = isMissingColumnError(roomUpsert.error, "doors");
+          if (missingSectionKey || missingDoors) {
             roomCompatibilityMode = true;
-            const roomPayloadLegacy = roomPayload.map(({ section_key, ...rest }) => rest);
+            const roomPayloadLegacy = roomPayload.map((row) => {
+              const next = { ...row };
+              if (missingSectionKey) delete next.section_key;
+              if (missingDoors) delete next.doors;
+              return next;
+            });
             const roomUpsertLegacy = await supabase
               .from("rooms")
               .upsert(roomPayloadLegacy, { onConflict: "id" });
@@ -1184,23 +1288,42 @@ export default function FloorPlanPage() {
   }, []);
 
   const roomCountLabel = `${rooms.length} room${rooms.length === 1 ? "" : "s"}`;
+  const ui = {
+    pageBg: "#EEEFEA",
+    panelBg: "#F8F8F5",
+    panelBorder: "#D3D8CE",
+    panelRadius: 12,
+    textStrong: "#26362E",
+    textMuted: "#6F7B72",
+    gridLine: "rgba(62,73,68,0.08)",
+  };
+  const toolbarBtn = {
+    padding: "10px 14px",
+    borderRadius: 11,
+    border: `1px solid ${ui.panelBorder}`,
+    background: "#F6F7F3",
+    color: "#3D4E47",
+    fontWeight: 700,
+    cursor: "pointer",
+    fontSize: 12,
+  };
 
   if (loading) {
     return (
-      <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: ui.pageBg, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ color: T.textMuted, fontSize: 14, fontWeight: 700 }}>Loading floor plan...</div>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: T.bg, padding: 16 }}>
-      <div style={{ maxWidth: 1460, margin: "0 auto" }}>
-        <div style={{ background: "#fff", borderRadius: T.radius, boxShadow: T.shadow, padding: "14px 16px", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+    <div style={{ minHeight: "100vh", background: ui.pageBg, padding: 16 }}>
+      <div style={{ maxWidth: 1540, margin: "0 auto" }}>
+        <div style={{ background: ui.panelBg, borderRadius: ui.panelRadius, border: `1px solid ${ui.panelBorder}`, padding: "14px 16px", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>Floor Plan Builder</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: T.text }}>{client?.name || "Client"}</div>
-            <div style={{ fontSize: 12, color: T.textLight }}>
+            <div style={{ fontSize: 35, fontWeight: 900, color: ui.textStrong, lineHeight: 1 }}>{client?.name || "Client"}</div>
+            <div style={{ fontSize: 12, color: ui.textMuted }}>
               {roomCountLabel} · {roomsInActiveSection.length} in {houseSections.find((s) => String(s.id) === String(activeSectionId))?.label || "section"}{floorPlanId ? " · existing plan" : " · new plan"}
             </div>
           </div>
@@ -1208,34 +1331,34 @@ export default function FloorPlanPage() {
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button
               onClick={() => navigate(-1)}
-              style={{ padding: "10px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: "#fff", color: T.textMuted, fontWeight: 700, cursor: "pointer", fontSize: 12 }}
+              style={{ ...toolbarBtn }}
             >
               ← Back
             </button>
             <button
               onClick={() => imageInputRef.current?.click()}
               disabled={uploadingImage}
-              style={{ padding: "10px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.blue}`, background: T.blueLight, color: T.blue, fontWeight: 700, cursor: uploadingImage ? "not-allowed" : "pointer", fontSize: 12, opacity: uploadingImage ? 0.7 : 1 }}
+              style={{ ...toolbarBtn, border: "1px solid #6E8990", color: "#486A73", background: "#ECF3F4", opacity: uploadingImage ? 0.7 : 1, cursor: uploadingImage ? "not-allowed" : "pointer" }}
             >
               {uploadingImage ? "Uploading..." : "Upload Floor Plan Image"}
             </button>
             <button
               onClick={runInterpretation}
               disabled={interpretingImage || !referenceImageUrl}
-              style={{ padding: "10px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.accent}`, background: T.accentLight, color: "#8B6914", fontWeight: 700, cursor: interpretingImage || !referenceImageUrl ? "not-allowed" : "pointer", fontSize: 12, opacity: interpretingImage || !referenceImageUrl ? 0.7 : 1 }}
+              style={{ ...toolbarBtn, border: "1px solid #B59145", color: "#7D6123", background: "#F4E8CD", opacity: interpretingImage || !referenceImageUrl ? 0.7 : 1, cursor: interpretingImage || !referenceImageUrl ? "not-allowed" : "pointer" }}
             >
               {interpretingImage ? "Interpreting..." : "Interpret Image"}
             </button>
             <button
               onClick={addRoom}
-              style={{ padding: "10px 14px", borderRadius: T.radiusSm, border: `1.5px solid ${T.blue}`, background: T.blueLight, color: T.blue, fontWeight: 700, cursor: "pointer", fontSize: 12 }}
+              style={{ ...toolbarBtn, border: "1px solid #6E8990", color: "#486A73", background: "#ECF3F4" }}
             >
               + Add Room
             </button>
             <button
               onClick={saveFloorPlan}
               disabled={saving || !canSave}
-              style={{ padding: "10px 16px", borderRadius: T.radiusSm, border: "none", background: T.primary, color: "#fff", fontWeight: 800, cursor: saving ? "not-allowed" : "pointer", fontSize: 12, opacity: saving ? 0.7 : 1 }}
+              style={{ ...toolbarBtn, border: "none", background: "#4F7A62", color: "#fff", fontWeight: 800, opacity: saving ? 0.7 : 1, cursor: saving ? "not-allowed" : "pointer" }}
             >
               {saving ? "Saving..." : "Save"}
             </button>
@@ -1255,7 +1378,7 @@ export default function FloorPlanPage() {
         />
 
         {savedAt && (
-          <div style={{ marginBottom: 8, fontSize: 12, color: T.textLight }}>
+          <div style={{ marginBottom: 8, fontSize: 12, color: ui.textMuted }}>
             Last saved: {new Date(savedAt).toLocaleString("en-AU")}
           </div>
         )}
@@ -1272,10 +1395,10 @@ export default function FloorPlanPage() {
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 350px", gap: 12, alignItems: "start" }}>
-          <div style={{ background: "#fff", borderRadius: T.radius, boxShadow: T.shadow, padding: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 370px", gap: 12, alignItems: "start" }}>
+          <div style={{ background: ui.panelBg, borderRadius: ui.panelRadius, border: `1px solid ${ui.panelBorder}`, padding: 12 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 10, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 12, color: T.textMuted, fontWeight: 700 }}>Canvas</div>
+              <div style={{ fontSize: 13, color: ui.textMuted, fontWeight: 800 }}>Canvas</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <select
                   value={activeSectionId}
@@ -1324,10 +1447,10 @@ export default function FloorPlanPage() {
                 position: "relative",
                 minHeight: CANVAS_HEIGHT,
                 borderRadius: 10,
-                border: `1px solid ${T.border}`,
+                border: `1px solid ${ui.panelBorder}`,
                 overflow: "hidden",
-                backgroundColor: "#FBFCFD",
-                backgroundImage: "linear-gradient(to right, rgba(35,47,50,0.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(35,47,50,0.06) 1px, transparent 1px)",
+                backgroundColor: "#F4F5F3",
+                backgroundImage: `linear-gradient(to right, ${ui.gridLine} 1px, transparent 1px), linear-gradient(to bottom, ${ui.gridLine} 1px, transparent 1px)`,
                 backgroundSize: `${GRID}px ${GRID}px`,
               }}
               onMouseDown={(e) => {
@@ -1362,6 +1485,10 @@ export default function FloorPlanPage() {
                 </div>
               )}
 
+              <div style={{ position: "absolute", left: 0, right: 0, bottom: 20, textAlign: "center", color: "rgba(87,95,89,0.28)", fontSize: 46, fontWeight: 500, letterSpacing: 2, pointerEvents: "none", userSelect: "none" }}>
+                FLOOR PLAN
+              </div>
+
               {roomsInActiveSection.map((room) => {
                 const meta = getColorMeta(room.difficulty_level);
                 const bg = normalizeHexColor(meta?.color || "#BFD7EF");
@@ -1375,8 +1502,8 @@ export default function FloorPlanPage() {
                     key={room.id}
                     bounds="parent"
                     dragHandleClassName="room-drag-handle"
-                    dragGrid={[GRID, GRID]}
-                    resizeGrid={[GRID, GRID]}
+                    dragGrid={[1, 1]}
+                    resizeGrid={[1, 1]}
                     size={{ width: room.width, height: room.height }}
                     position={{ x: room.x, y: room.y }}
                     minWidth={MIN_ROOM_WIDTH}
@@ -1388,25 +1515,25 @@ export default function FloorPlanPage() {
                       setSelectedRoomId(room.id);
                     }}
                     onDrag={(_, data) => {
-                      upsertRoom(room.id, { x: snap(data.x), y: snap(data.y) });
+                      upsertRoom(room.id, { x: Math.max(0, Math.round(data.x)), y: Math.max(0, Math.round(data.y)) });
                     }}
                     onDragStop={(_, data) => {
-                      upsertRoom(room.id, { x: snap(data.x), y: snap(data.y) });
+                      upsertRoom(room.id, { x: Math.max(0, Math.round(data.x)), y: Math.max(0, Math.round(data.y)) });
                     }}
                     onResize={(_, __, ref, ___, pos) => {
                       upsertRoom(room.id, {
-                        x: snap(pos.x),
-                        y: snap(pos.y),
-                        width: Math.max(MIN_ROOM_WIDTH, snap(ref.offsetWidth)),
-                        height: Math.max(MIN_ROOM_HEIGHT, snap(ref.offsetHeight)),
+                        x: Math.max(0, Math.round(pos.x)),
+                        y: Math.max(0, Math.round(pos.y)),
+                        width: Math.max(MIN_ROOM_WIDTH, Math.round(ref.offsetWidth)),
+                        height: Math.max(MIN_ROOM_HEIGHT, Math.round(ref.offsetHeight)),
                       });
                     }}
                     onResizeStop={(_, __, ref, ___, pos) => {
                       upsertRoom(room.id, {
-                        x: snap(pos.x),
-                        y: snap(pos.y),
-                        width: Math.max(MIN_ROOM_WIDTH, snap(ref.offsetWidth)),
-                        height: Math.max(MIN_ROOM_HEIGHT, snap(ref.offsetHeight)),
+                        x: Math.max(0, Math.round(pos.x)),
+                        y: Math.max(0, Math.round(pos.y)),
+                        width: Math.max(MIN_ROOM_WIDTH, Math.round(ref.offsetWidth)),
+                        height: Math.max(MIN_ROOM_HEIGHT, Math.round(ref.offsetHeight)),
                       });
                     }}
                     style={{ zIndex: isSelected ? 3 : 2 }}
@@ -1476,6 +1603,14 @@ export default function FloorPlanPage() {
                         />
                       ))}
 
+                      {(room.doors || []).map((door) => (
+                        <div
+                          key={door.id}
+                          style={roomDoorStyle(door, border)}
+                          title={`Door (${door.edge})`}
+                        />
+                      ))}
+
                       {isPinMode && (
                         <div style={{ position: "absolute", left: 8, bottom: 8, fontSize: 10, fontWeight: 700, color: "#4F6270", background: "rgba(255,255,255,0.88)", borderRadius: 8, padding: "3px 6px" }}>
                           Click to place pin
@@ -1488,7 +1623,7 @@ export default function FloorPlanPage() {
             </div>
           </div>
 
-          <div style={{ background: "#fff", borderRadius: T.radius, boxShadow: T.shadow, padding: "12px", position: "sticky", top: 10 }}>
+          <div style={{ background: ui.panelBg, borderRadius: ui.panelRadius, border: `1px solid ${ui.panelBorder}`, padding: "12px", position: "sticky", top: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
               House Sections
             </div>
@@ -1576,7 +1711,7 @@ export default function FloorPlanPage() {
 
             {!selectedRoom ? (
               <div style={{ color: T.textMuted, fontSize: 13 }}>
-                Select a room to edit its name, color meaning, notes and pins.
+                Select a room to edit its name, color meaning, notes, doors and pins.
               </div>
             ) : (
               <>
@@ -1626,6 +1761,60 @@ export default function FloorPlanPage() {
                   style={{ ...inputStyle, resize: "vertical", minHeight: 82 }}
                   placeholder="Special cleaning instructions for this room"
                 />
+
+                <div style={{ height: 1, background: T.borderLight, margin: "10px 0" }} />
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <label style={{ ...labelStyle, marginBottom: 0 }}>Doors</label>
+                  <button
+                    onClick={() => addDoorToRoom(selectedRoom.id)}
+                    style={{ border: `1px solid ${T.border}`, background: "#fff", color: T.text, borderRadius: 8, padding: "5px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    + Add Door
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 165, overflowY: "auto", marginBottom: 10 }}>
+                  {(selectedRoom.doors || []).map((door, idx) => (
+                    <div key={door.id} style={{ border: `1px solid ${T.borderLight}`, borderRadius: 8, padding: 7, background: T.bg }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: T.text }}>Door {idx + 1}</div>
+                        <button
+                          onClick={() => removeDoor(selectedRoom.id, door.id)}
+                          style={{ border: "none", background: "transparent", color: T.danger, cursor: "pointer", fontSize: 11, fontWeight: 700, padding: 0 }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                        <select
+                          value={door.edge || "bottom"}
+                          onChange={(e) => updateDoor(selectedRoom.id, door.id, { edge: e.target.value })}
+                          style={{ ...inputStyle, marginBottom: 0 }}
+                        >
+                          <option value="top">Top wall</option>
+                          <option value="right">Right wall</option>
+                          <option value="bottom">Bottom wall</option>
+                          <option value="left">Left wall</option>
+                        </select>
+                        <div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={Number(door.offset ?? 0.5)}
+                            onChange={(e) => updateDoor(selectedRoom.id, door.id, { offset: Number(e.target.value) })}
+                            style={{ width: "100%" }}
+                          />
+                          <div style={{ marginTop: 2, fontSize: 10, color: T.textLight }}>Position {(Number(door.offset ?? 0.5) * 100).toFixed(0)}%</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {(selectedRoom.doors || []).length === 0 && (
+                    <div style={{ fontSize: 11, color: T.textLight }}>No doors added yet.</div>
+                  )}
+                </div>
 
                 <div style={{ height: 1, background: T.borderLight, margin: "10px 0" }} />
 
@@ -1689,10 +1878,10 @@ export default function FloorPlanPage() {
                 <div style={{ height: 1, background: T.borderLight, margin: "10px 0" }} />
 
                 <button
-                  onClick={() => removeRoom(selectedRoom.id)}
+                  onClick={() => confirmDeleteRoom(selectedRoom.id)}
                   style={{ width: "100%", padding: "10px 12px", borderRadius: T.radiusSm, border: "none", background: T.dangerLight, color: T.danger, fontWeight: 700, cursor: "pointer" }}
                 >
-                  Delete Room
+                  Delete Room (Del)
                 </button>
               </>
             )}
