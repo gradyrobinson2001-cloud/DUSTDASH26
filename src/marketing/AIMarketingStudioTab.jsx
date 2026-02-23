@@ -25,36 +25,36 @@ const STYLE_PRESETS = [
   {
     id: "local_slots",
     label: "Suburb Slot Poster",
-    description: "Matches your current style with suburb + day/time line.",
+    description: "Closest match to your current suburb/day-time post style.",
   },
   {
     id: "promo_offer",
     label: "Promo Poster",
-    description: "Offer-led poster with stronger CTA for short-term promos.",
+    description: "Offer-led poster with stronger CTA and urgency.",
   },
   {
     id: "general",
     label: "General Social",
-    description: "Flexible campaign creative for mixed goals.",
+    description: "Flexible creative for mixed campaign goals.",
   },
 ];
 
 const MAX_REFERENCES = 3;
+const MAX_EMAILJS_INLINE_IMAGE_BYTES = 180_000;
 
 const SOCIAL_SUGGESTIONS = [
-  "Buderim, Thursday 12pm, fortnightly slot available. Create a suburb slot poster.",
-  "Mountain Creek Tuesdays 2pm fortnightly. Create a local slot poster with earthy style.",
-  "Maroochydore Friday 12:30pm or 2pm fortnightly. Create a polished slot poster.",
+  "Buderim Thursday 12pm fortnightly slot available. Create a suburb slot poster.",
+  "Mountain Creek Tuesdays 2pm fortnightly. Create a polished local slot poster.",
+  "Maroochydore Friday 12:30pm or 2pm fortnightly slot available. Create an Instagram poster.",
 ];
 
 const EMAIL_SUGGESTIONS = [
-  "We are running a flash promo on oven cleans for $50 for the next week. Build an email campaign.",
+  "We are running a flash promo on oven cleans for $50 this week. Build an email campaign.",
   "Create a reactivation campaign for clients who have not booked in the last 8 weeks.",
-  "Help me send a limited-time weekly cleaning slot campaign for Caloundra clients.",
+  "Create a limited-time campaign for Friday availability in Mudjimba.",
 ];
 
 const isLikelyEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
-const MAX_EMAILJS_INLINE_IMAGE_BYTES = 180_000;
 
 function escapeHtml(value) {
   return String(value || "")
@@ -142,10 +142,9 @@ function buildSmartPrompt({ prompt, stylePreset, channel }) {
       userPrompt,
       "",
       "Output goal:",
-      "- Create a suburb availability poster.",
-      "- Keep wording short and premium.",
-      "- Prioritize suburb name + day/time/frequency line.",
-      "- Keep it minimal and readable.",
+      "- Create a local suburb slot poster.",
+      "- Keep copy minimal and premium.",
+      "- Prioritize suburb name and day/time/frequency line.",
     ].join("\n");
   }
 
@@ -154,8 +153,8 @@ function buildSmartPrompt({ prompt, stylePreset, channel }) {
       userPrompt,
       "",
       "Output goal:",
-      "- Create a promotion poster with clear offer and urgency.",
-      "- Keep copy concise with one clear CTA.",
+      "- Create a clear offer-led poster with urgency.",
+      "- Keep one strong CTA.",
     ].join("\n");
   }
 
@@ -170,6 +169,36 @@ function suggestTemplateName({ campaignName, headline, prompt }) {
   const byPrompt = String(prompt || "").trim();
   if (byPrompt) return byPrompt.slice(0, 56);
   return `Campaign ${new Date().toLocaleDateString("en-AU")}`;
+}
+
+function TemplateList({ templates, loading, usingLocal, loadTemplate, removeTemplate }) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <div style={labelStyle}>Saved Templates</div>
+        <div style={{ fontSize: 10, color: T.textLight }}>{usingLocal ? "Local mode" : "Cloud sync"}</div>
+      </div>
+
+      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, maxHeight: 280, overflow: "auto" }}>
+        {loading && <div style={{ padding: 10, fontSize: 12, color: T.textMuted }}>Loading...</div>}
+        {!loading && templates.length === 0 && (
+          <div style={{ padding: 10, fontSize: 12, color: T.textLight }}>No templates saved.</div>
+        )}
+        {!loading && templates.map((row) => (
+          <div key={row.id} style={{ padding: "8px 10px", borderBottom: `1px solid ${T.borderLight}` }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: T.text }}>{row.name}</div>
+            <div style={{ fontSize: 11, color: T.textLight, margin: "3px 0 6px" }}>
+              {new Date(row.updated_at).toLocaleDateString("en-AU")}
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => loadTemplate(row)} style={smallActionBtn}>Load</button>
+              <button onClick={() => removeTemplate(row.id)} style={{ ...smallActionBtn, color: T.danger }}>Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function AIMarketingStudioTab({
@@ -229,6 +258,13 @@ export default function AIMarketingStudioTab({
   }, [clients, enquiries]);
 
   const suggestions = activeTab === TABS.email ? EMAIL_SUGGESTIONS : SOCIAL_SUGGESTIONS;
+  const activeStyleMeta = STYLE_PRESETS.find((row) => row.id === stylePreset) || STYLE_PRESETS[0];
+
+  const studioColumns = isMobile
+    ? "1fr"
+    : activeTab === TABS.email
+      ? "340px 1fr 320px"
+      : "340px 1fr 320px";
 
   const getAccessToken = async () => {
     if (!supabaseReady || !supabase) throw new Error("Supabase auth is not configured.");
@@ -285,6 +321,7 @@ export default function AIMarketingStudioTab({
         stylePreset,
         channel: activeTab,
       });
+
       const payload = {
         prompt: smartPrompt,
         channel: activeTab,
@@ -321,11 +358,7 @@ export default function AIMarketingStudioTab({
       });
 
       if (!campaignName.trim()) {
-        setCampaignName(suggestTemplateName({
-          campaignName: "",
-          headline: nextResult.headline,
-          prompt,
-        }));
+        setCampaignName(suggestTemplateName({ campaignName: "", headline: nextResult.headline, prompt }));
       }
 
       if (body?.warning) {
@@ -521,7 +554,7 @@ export default function AIMarketingStudioTab({
         <div>
           <h1 style={{ margin: 0, fontSize: isMobile ? 22 : 24, fontWeight: 900, color: T.text }}>AI Marketing Studio</h1>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: T.textMuted }}>
-            Prompt-first campaign generator for social posts and email promotions.
+            Prompt in, polished poster out. Tuned for local Sunshine Coast campaigns.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -541,39 +574,68 @@ export default function AIMarketingStudioTab({
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "340px 1fr 320px", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: studioColumns, gap: 14 }}>
         <div style={cardStyle}>
-          <div style={labelStyle}>Prompt</div>
+          <div style={{ ...labelStyle, marginBottom: 6 }}>Campaign Brief</div>
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            rows={7}
+            rows={6}
             placeholder={activeTab === TABS.email
-              ? "Example: We are running a flash promo on oven cleans for $50 for the next week."
-              : "Example: We have some slots available in Mudjimba on Fridays help me advertise this."}
-            style={{ ...inputStyle, resize: "vertical", minHeight: 140, lineHeight: 1.5 }}
+              ? "Example: We are running a flash promo on oven cleans for $50 this week."
+              : "Example: Buderim Thursday 12pm fortnightly slot available. Create a suburb slot poster."}
+            style={{ ...inputStyle, resize: "vertical", minHeight: 130, lineHeight: 1.5 }}
           />
 
           {activeTab === TABS.social && (
-            <div style={{ marginTop: 10 }}>
-              <div style={labelStyle}>Platform</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {SOCIAL_PLATFORMS.map((platform) => (
-                  <button
-                    key={platform.id}
-                    onClick={() => setSocialPlatform(platform.id)}
-                    style={{
-                      ...smallActionBtn,
-                      borderColor: socialPlatform === platform.id ? T.primary : T.border,
-                      color: socialPlatform === platform.id ? T.primaryDark : T.textMuted,
-                      background: socialPlatform === platform.id ? T.primaryLight : "#fff",
-                    }}
-                  >
-                    {platform.label}
-                  </button>
-                ))}
+            <>
+              <div style={{ marginTop: 10 }}>
+                <div style={labelStyle}>Style</div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {STYLE_PRESETS.map((preset) => {
+                    const selected = stylePreset === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        onClick={() => setStylePreset(preset.id)}
+                        style={{
+                          border: `1px solid ${selected ? T.primary : T.border}`,
+                          borderRadius: 10,
+                          background: selected ? T.primaryLight : "#fff",
+                          color: selected ? T.primaryDark : T.text,
+                          padding: "8px 10px",
+                          textAlign: "left",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 800 }}>{preset.label}</div>
+                        <div style={{ marginTop: 2, fontSize: 11, color: T.textMuted }}>{preset.description}</div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+
+              <div style={{ marginTop: 10 }}>
+                <div style={labelStyle}>Platform</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {SOCIAL_PLATFORMS.map((platform) => (
+                    <button
+                      key={platform.id}
+                      onClick={() => setSocialPlatform(platform.id)}
+                      style={{
+                        ...smallActionBtn,
+                        borderColor: socialPlatform === platform.id ? T.primary : T.border,
+                        color: socialPlatform === platform.id ? T.primaryDark : T.textMuted,
+                        background: socialPlatform === platform.id ? T.primaryLight : "#fff",
+                      }}
+                    >
+                      {platform.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
 
           <div style={{ marginTop: 12 }}>
@@ -593,7 +655,9 @@ export default function AIMarketingStudioTab({
               ))}
             </div>
             {references.length === 0 && (
-              <div style={{ marginTop: 8, fontSize: 12, color: T.textLight }}>Upload screenshots/photos to guide style and layout.</div>
+              <div style={{ marginTop: 8, fontSize: 12, color: T.textLight }}>
+                Upload examples/photos and AI will try to match the style.
+              </div>
             )}
           </div>
 
@@ -612,11 +676,20 @@ export default function AIMarketingStudioTab({
               cursor: generating ? "not-allowed" : "pointer",
             }}
           >
-            {generating ? "Generating..." : "Generate Campaign"}
+            {generating ? "Generating..." : "Generate Poster"}
           </button>
 
+          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 10, border: `1px solid ${T.borderLight}`, background: T.bg }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: T.text }}>Smart Mode</div>
+            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+              {activeTab === TABS.social
+                ? `Using ${activeStyleMeta.label}. AI prioritizes readable suburb poster layout.`
+                : "AI generates subject/body plus matching visual for email campaigns."}
+            </div>
+          </div>
+
           <div style={{ marginTop: 12 }}>
-            <div style={labelStyle}>Prompt Ideas</div>
+            <div style={labelStyle}>Quick Ideas</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {suggestions.map((item) => (
                 <button
@@ -629,19 +702,25 @@ export default function AIMarketingStudioTab({
               ))}
             </div>
           </div>
+
+          <button onClick={() => setShowAdvanced((prev) => !prev)} style={{ ...smallActionBtn, width: "100%", marginTop: 12 }}>
+            {showAdvanced ? "Hide Advanced Tools" : "Show Advanced Tools"}
+          </button>
+
+          {showAdvanced && (
+            <div style={{ marginTop: 10, borderTop: `1px dashed ${T.border}`, paddingTop: 10 }}>
+              <div style={labelStyle}>Template Name</div>
+              <input
+                value={campaignName}
+                onChange={(e) => setCampaignName(e.target.value)}
+                placeholder="Optional (auto-generated if blank)"
+                style={inputStyle}
+              />
+            </div>
+          )}
         </div>
 
         <div style={cardStyle}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-            <input
-              value={campaignName}
-              onChange={(e) => setCampaignName(e.target.value)}
-              placeholder="Template name"
-              style={{ ...inputStyle, flex: 1, minWidth: 200 }}
-            />
-            <div style={{ fontSize: 11, color: T.textLight }}>{result.imageSize || "No image yet"}</div>
-          </div>
-
           <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 10, background: "#fff" }}>
             {result.imageDataUrl ? (
               <img
@@ -669,7 +748,7 @@ export default function AIMarketingStudioTab({
             </div>
           </div>
 
-          {activeTab === TABS.social && (
+          {activeTab === TABS.social && showAdvanced && (
             <div style={{ marginTop: 12 }}>
               <div style={labelStyle}>Caption</div>
               <textarea
@@ -763,6 +842,7 @@ export default function AIMarketingStudioTab({
                   fontWeight: 800,
                   cursor: selectedRecipients.length === 0 ? "not-allowed" : "pointer",
                   opacity: sending ? 0.7 : 1,
+                  marginBottom: 14,
                 }}
               >
                 {sending ? "Sending..." : `Send to ${selectedRecipients.length} recipient${selectedRecipients.length === 1 ? "" : "s"}`}
@@ -770,31 +850,13 @@ export default function AIMarketingStudioTab({
             </>
           )}
 
-          <div style={{ marginTop: activeTab === TABS.email ? 16 : 0 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <div style={labelStyle}>Saved Templates</div>
-              <div style={{ fontSize: 10, color: T.textLight }}>{usingLocal ? "Local mode" : "Cloud sync"}</div>
-            </div>
-
-            <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, maxHeight: 280, overflow: "auto" }}>
-              {loading && <div style={{ padding: 10, fontSize: 12, color: T.textMuted }}>Loading...</div>}
-              {!loading && templates.length === 0 && (
-                <div style={{ padding: 10, fontSize: 12, color: T.textLight }}>No templates saved.</div>
-              )}
-              {!loading && templates.map((row) => (
-                <div key={row.id} style={{ padding: "8px 10px", borderBottom: `1px solid ${T.borderLight}` }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: T.text }}>{row.name}</div>
-                  <div style={{ fontSize: 11, color: T.textLight, margin: "3px 0 6px" }}>
-                    {new Date(row.updated_at).toLocaleDateString("en-AU")}
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={() => loadTemplate(row)} style={smallActionBtn}>Load</button>
-                    <button onClick={() => removeTemplate(row.id)} style={{ ...smallActionBtn, color: T.danger }}>Delete</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <TemplateList
+            templates={templates}
+            loading={loading}
+            usingLocal={usingLocal}
+            loadTemplate={loadTemplate}
+            removeTemplate={removeTemplate}
+          />
         </div>
       </div>
     </div>

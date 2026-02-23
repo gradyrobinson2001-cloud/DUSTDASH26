@@ -13,6 +13,13 @@ const PLATFORM_META = {
   email: { size: "1536x1024", label: "Email Banner" },
 };
 
+const STYLE_PRESETS = new Set(["local_slots", "promo_offer", "general"]);
+const KNOWN_SUBURBS = [
+  "Mudjimba", "Maroochydore", "Buderim", "Mooloolaba", "Noosa Heads", "Caloundra",
+  "Kawana Waters", "Birtinya", "Sippy Downs", "Alexandra Headland", "Mountain Creek",
+  "Minyama", "Twin Waters", "Forest Glen", "Mons", "Kuluin",
+];
+
 const EXPENSE_CATEGORY_OPTIONS = new Set([
   "supplies",
   "travel",
@@ -110,13 +117,8 @@ function escapeXml(value) {
 }
 
 function pickSuburbFromPrompt(prompt) {
-  const suburbs = [
-    "Mudjimba", "Maroochydore", "Buderim", "Mooloolaba", "Noosa Heads", "Caloundra",
-    "Kawana Waters", "Birtinya", "Sippy Downs", "Alexandra Headland", "Mountain Creek",
-    "Minyama", "Twin Waters", "Forest Glen", "Mons", "Kuluin",
-  ];
   const haystack = String(prompt || "").toLowerCase();
-  return suburbs.find((s) => haystack.includes(s.toLowerCase())) || "Sunshine Coast";
+  return KNOWN_SUBURBS.find((s) => haystack.includes(s.toLowerCase())) || "Sunshine Coast";
 }
 
 function pickServiceFromPrompt(prompt) {
@@ -128,11 +130,74 @@ function pickServiceFromPrompt(prompt) {
   return "Home Clean";
 }
 
-function buildFallbackCopy({ prompt, channel, platform }) {
+function detectFrequencyFromPrompt(prompt) {
+  const haystack = String(prompt || "").toLowerCase();
+  if (haystack.includes("fortnight")) return "FORTNIGHTLY";
+  if (haystack.includes("weekly")) return "WEEKLY";
+  if (haystack.includes("monthly")) return "MONTHLY";
+  if (haystack.includes("one-off") || haystack.includes("one off")) return "ONE-OFF";
+  return "";
+}
+
+function detectDayFromPrompt(prompt) {
+  const haystack = String(prompt || "").toLowerCase();
+  const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+  const found = days.find((day) => haystack.includes(day));
+  return found ? `${found[0].toUpperCase()}${found.slice(1).toUpperCase()}` : "";
+}
+
+function detectTimeFromPrompt(prompt) {
+  const text = String(prompt || "");
+  const matches = text.match(/(?:^|\s)(\d{1,2}(?::\d{2})?\s?(?:am|pm)?)/ig) || [];
+  const cleaned = matches
+    .map((token) => token.trim().toUpperCase().replace(/\s+/g, ""))
+    .filter((token) => /\d/.test(token))
+    .slice(0, 2);
+  if (cleaned.length === 0) return "";
+  if (cleaned.length === 1) return cleaned[0];
+  return `${cleaned[0]} OR ${cleaned[1]}`;
+}
+
+function buildScheduleLine(prompt) {
+  const day = detectDayFromPrompt(prompt);
+  const time = detectTimeFromPrompt(prompt);
+  const frequency = detectFrequencyFromPrompt(prompt);
+  const line = [day, time].filter(Boolean).join(" - ");
+  if (line && frequency) return `${line} | ${frequency}`;
+  if (line) return line;
+  if (frequency) return frequency;
+  return "LIMITED SLOTS AVAILABLE";
+}
+
+function buildFallbackCopy({ prompt, channel, platform, stylePreset = "general" }) {
   const suburb = pickSuburbFromPrompt(prompt);
   const service = pickServiceFromPrompt(prompt);
   const hasPromo = /\b(promo|special|flash|discount|offer|deal|\$|\d+%|save)\b/i.test(prompt);
   const hasSlots = /\b(slot|availability|available|openings|spaces?)\b/i.test(prompt);
+  const scheduleLine = buildScheduleLine(prompt);
+
+  if (channel === "social" && stylePreset === "local_slots") {
+    return normalizeCopyPayload({
+      headline: suburb,
+      subheadline: scheduleLine,
+      cta: "Message to book",
+      caption: `Now booking ${suburb} ${scheduleLine.toLowerCase()}. Message Dust Bunnies Cleaning to lock your spot.`,
+      email_subject: `Slots available in ${suburb}`,
+      email_body: `Hi there,\n\nWe now have availability in ${suburb}: ${scheduleLine}.\n\nReply to secure your preferred time.`,
+      poster_prompt: [
+        `Suburb slot poster for ${suburb}.`,
+        `Schedule line: ${scheduleLine}.`,
+        "Natural Sunshine Coast hero image background.",
+        "Minimal, elegant white text overlay.",
+      ].join(" "),
+      hashtags: [
+        "#sunshinecoast",
+        `#${suburb.replace(/\s+/g, "").toLowerCase()}`,
+        "#cleaningservice",
+        "#dustbunniescleaning",
+      ],
+    }, { prompt, channel, platform });
+  }
 
   const headline = hasPromo
     ? `${service} Special in ${suburb}`
@@ -537,7 +602,7 @@ async function callOpenAiJson(endpoint, payload, apiKey) {
   return body;
 }
 
-async function generateMarketingCopy({ prompt, channel, platform, references, apiKey }) {
+async function generateMarketingCopy({ prompt, channel, platform, stylePreset, references, apiKey }) {
   const userContent = [
     {
       type: "text",
@@ -545,6 +610,7 @@ async function generateMarketingCopy({ prompt, channel, platform, references, ap
         `User prompt: ${prompt}`,
         `Channel: ${channel}`,
         `Platform: ${platform}`,
+        `Style preset: ${stylePreset || "general"}`,
         "Audience: homeowners on the Sunshine Coast, Australia.",
         "Brand tone: earthy, trustworthy, premium but approachable.",
       ].join("\n"),
@@ -560,7 +626,7 @@ async function generateMarketingCopy({ prompt, channel, platform, references, ap
 
   const completion = await callOpenAiJson("/chat/completions", {
     model: TEXT_MODEL,
-    temperature: 0.8,
+    temperature: stylePreset === "local_slots" ? 0.45 : 0.8,
     messages: [
       {
         role: "system",
@@ -569,6 +635,12 @@ async function generateMarketingCopy({ prompt, channel, platform, references, ap
           "Return strict JSON only with keys:",
           "headline, subheadline, cta, caption, hashtags (array), email_subject, email_body, poster_prompt.",
           "Keep copy concise, sales-oriented, and realistic.",
+          stylePreset === "local_slots"
+            ? "For local_slots: headline should be suburb only. Subheadline should be day/time/frequency in uppercase and concise."
+            : "",
+          stylePreset === "promo_offer"
+            ? "For promo_offer: headline must clearly communicate the offer and urgency."
+            : "",
         ].join(" "),
       },
       {
@@ -583,14 +655,27 @@ async function generateMarketingCopy({ prompt, channel, platform, references, ap
   return normalizeCopyPayload(parsed, { prompt, channel, platform });
 }
 
-async function generateMarketingImage({ copy, channel, platform, apiKey }) {
+async function generateMarketingImage({ copy, channel, platform, stylePreset, apiKey }) {
   const platformInfo = PLATFORM_META[platform] || PLATFORM_META.instagram;
+  const styleBlock = stylePreset === "local_slots"
+    ? [
+        "Visual direction: premium local suburb slot poster.",
+        "Use a natural scenic Sunshine Coast photo style background.",
+        "Apply subtle dark overlay for text readability.",
+        "Text layout: large elegant centered suburb name, uppercase centered schedule line underneath.",
+        "Footer: 'Dust Bunnies Cleaning' + 'SUNSHINE COAST' near bottom center in white.",
+        "Keep poster minimal with no clutter, no stickers, no extra badges.",
+      ].join(" ")
+    : stylePreset === "promo_offer"
+      ? "Visual direction: clean offer poster with bold focal headline and strong CTA."
+      : "Visual direction: clean premium local social poster in earthy tones.";
   const imagePrompt = [
     copy.posterPrompt,
     `Use this headline: "${copy.headline}"`,
     `Use this supporting line: "${copy.subheadline}"`,
     `Use this CTA: "${copy.cta}"`,
     `Layout target: ${platformInfo.label}.`,
+    styleBlock,
     "Style: clean poster design, earthy tones, readable typography, professional social-media ad.",
     `Business name must appear as "Dust Bunnies Cleaning".`,
     channel === "email" ? "Design suitable for email campaign visual." : "Design suitable for social post.",
@@ -671,6 +756,8 @@ export default async function handler(req, res) {
     const prompt = toStringValue(body?.prompt);
     const channel = toStringValue(body?.channel, "social").toLowerCase();
     const platform = toStringValue(body?.platform, channel === "email" ? "email" : "instagram").toLowerCase();
+    const stylePresetRaw = toStringValue(body?.stylePreset, channel === "social" ? "local_slots" : "general").toLowerCase();
+    const stylePreset = STYLE_PRESETS.has(stylePresetRaw) ? stylePresetRaw : "general";
 
     if (!prompt || prompt.length < 8) {
       throw new ApiError(400, "Prompt is required (min 8 characters).");
@@ -688,24 +775,24 @@ export default async function handler(req, res) {
     let warning = null;
 
     if (!openAiApiKey) {
-      copy = buildFallbackCopy({ prompt, channel, platform });
+      copy = buildFallbackCopy({ prompt, channel, platform, stylePreset });
       imageDataUrl = fallbackPosterDataUrl(copy);
       warning = "OpenAI API key is missing. Generated in built-in template mode.";
     } else {
       try {
-        copy = await generateMarketingCopy({ prompt, channel, platform, references, apiKey: openAiApiKey });
+        copy = await generateMarketingCopy({ prompt, channel, platform, stylePreset, references, apiKey: openAiApiKey });
       } catch (copyErr) {
         console.error("[api/marketing/generate] copy generation failed", {
           userId: user.id,
           platform,
           error: copyErr?.message || copyErr,
         });
-        copy = buildFallbackCopy({ prompt, channel, platform });
+        copy = buildFallbackCopy({ prompt, channel, platform, stylePreset });
         warning = "AI copy generation failed. Using built-in template mode.";
       }
 
       try {
-        const image = await generateMarketingImage({ copy, channel, platform, apiKey: openAiApiKey });
+        const image = await generateMarketingImage({ copy, channel, platform, stylePreset, apiKey: openAiApiKey });
         imageDataUrl = image.imageDataUrl;
         imageSize = image.imageSize;
       } catch (imageErr) {
