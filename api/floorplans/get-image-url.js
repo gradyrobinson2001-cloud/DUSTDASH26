@@ -28,7 +28,7 @@ export default async function handler(req, res) {
       throw new ApiError(500, envErr.message || "Server environment is misconfigured.");
     }
 
-    await requireProfile(req, admin, { roles: ["admin"], requireActive: true });
+    const { user, profile } = await requireProfile(req, admin, { roles: ["admin", "staff"], requireActive: true });
     const body = await parseJsonBody(req);
     const storagePath = String(body?.storagePath || "").trim();
     const clientId = String(body?.clientId || "").trim();
@@ -38,6 +38,25 @@ export default async function handler(req, res) {
     }
     if (clientId && parseClientPrefix(storagePath) !== clientId) {
       throw new ApiError(403, "Path does not match client.");
+    }
+    if (profile.role === "staff") {
+      if (!clientId) {
+        throw new ApiError(400, "Client id is required for staff floor plan access.");
+      }
+      const { data: assignedJob, error: assignedJobError } = await admin
+        .from("scheduled_jobs")
+        .select("id")
+        .eq("client_id", clientId)
+        .contains("assigned_staff", [user.id])
+        .eq("is_published", true)
+        .limit(1)
+        .maybeSingle();
+      if (assignedJobError) {
+        throw new ApiError(500, "Failed to verify floor plan access.", assignedJobError.message);
+      }
+      if (!assignedJob) {
+        throw new ApiError(403, "You are not assigned to this client's published jobs.");
+      }
     }
 
     const { data, error } = await admin.storage

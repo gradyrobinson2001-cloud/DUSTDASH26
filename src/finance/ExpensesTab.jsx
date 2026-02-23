@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, supabaseReady } from "../lib/supabase";
 import { T } from "../shared";
 
@@ -83,6 +83,33 @@ function estimateGst(amount, gstClaimable, text = "") {
   return Math.round((normalizedAmount / 11) * 100) / 100;
 }
 
+function extractLikelyAmountLocal(text) {
+  const raw = String(text || "");
+  if (!raw.trim()) return 0;
+  const lines = raw.split(/\r?\n+/).map((line) => line.trim()).filter(Boolean);
+  const moneyPattern = /\$?\s*\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})|\$?\s*\d{1,6}/g;
+  const ranked = [];
+
+  for (const line of lines) {
+    const tokens = line.match(moneyPattern) || [];
+    if (!tokens.length) continue;
+    const normalized = line.toLowerCase();
+    for (const token of tokens) {
+      const amount = Number(String(token).replace(/[^\d.]/g, ""));
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) continue;
+      let score = 0;
+      if (/\$/.test(token)) score += 10;
+      if (/(grand\s*total|total\s*due|amount\s*due|to\s*pay|total|payment|card)/i.test(normalized)) score += 60;
+      if (/(gst|tax|change|discount|qty|item|order|receipt\s*no|invoice\s*no)/i.test(normalized)) score -= 20;
+      ranked.push({ amount: Math.round(amount * 100) / 100, score });
+    }
+  }
+
+  if (!ranked.length) return 0;
+  ranked.sort((a, b) => (b.score - a.score) || (b.amount - a.amount));
+  return ranked[0].amount || 0;
+}
+
 function toDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -121,6 +148,7 @@ async function optimizeReceipt(file) {
 async function buildReceiptVariants(file) {
   const optimized = await optimizeReceipt(file);
   let ocrVariant = "";
+  let boostedVariant = "";
   try {
     const image = await loadImage(optimized);
     const canvas = document.createElement("canvas");
@@ -141,16 +169,31 @@ async function buildReceiptVariants(file) {
       }
       ctx.putImageData(frame, 0, 0);
       ocrVariant = canvas.toDataURL("image/jpeg", 0.9);
+
+      const boostCanvas = document.createElement("canvas");
+      const boostScale = 1.35;
+      boostCanvas.width = Math.max(1, Math.round(image.width * boostScale));
+      boostCanvas.height = Math.max(1, Math.round(image.height * boostScale));
+      const boostCtx = boostCanvas.getContext("2d");
+      if (boostCtx) {
+        boostCtx.imageSmoothingEnabled = true;
+        boostCtx.imageSmoothingQuality = "high";
+        boostCtx.filter = "grayscale(1) contrast(1.7) brightness(1.2)";
+        boostCtx.drawImage(image, 0, 0, boostCanvas.width, boostCanvas.height);
+        boostedVariant = boostCanvas.toDataURL("image/jpeg", 0.92);
+      }
     }
   } catch {
     ocrVariant = "";
+    boostedVariant = "";
   }
-  return { optimized, ocrVariant };
+  return { optimized, ocrVariant, boostedVariant };
 }
 
 function normalizeAiExpenseResult(payload, fallback) {
   if (!payload || typeof payload !== "object") return fallback;
-  const amount = Math.max(0, toNumber(payload.amount, fallback.amount));
+  const inferredAmount = extractLikelyAmountLocal(`${payload?.reasoning || ""}\n${payload?.notes || ""}\n${fallback?.notes || ""}`);
+  const amount = Math.max(0, toNumber(payload.amount, fallback.amount || inferredAmount));
   const gstClaimable = payload.gst_claimable !== false;
   const category = String(payload.category || fallback.category || "uncategorized").trim().toLowerCase();
   const validCategory = CATEGORY_OPTIONS.some((row) => row.id === category) ? category : fallback.category;
@@ -215,6 +258,9 @@ export default function ExpensesTab({
   const [budgetMonth, setBudgetMonth] = useState(() => monthKey(new Date()));
   const [budgetDrafts, setBudgetDrafts] = useState({});
   const [budgetSaving, setBudgetSaving] = useState(false);
+  const [showAdvancedForm, setShowAdvancedForm] = useState(false);
+  const [analysisWarning, setAnalysisWarning] = useState("");
+  const receiptInputRef = useRef(null);
 
   const months = useMemo(() => {
     const unique = new Set((expenses || []).map((row) => monthKey(row.expense_date)));
@@ -534,10 +580,12 @@ export default function ExpensesTab({
     const expenseDate = dateOverride ?? form.expense_date;
     const notes = notesOverride ?? form.notes;
     const prompt = (promptOverride || [
-      vendor ? `Vendor: ${vendor}` : "",
-      amount ? `Amount: ${amount}` : "",
-      expenseDate ? `Date: ${expenseDate}` : "",
-      notes ? `Notes: ${notes}` : "",
+      "Task: Extract bookkeeping fields from this expense/receipt.",
+      "Priority: detect final payable total amount (not subtotal or GST line).",
+      vendor ? `Known vendor hint: ${vendor}` : "Known vendor hint: unknown",
+      amount ? `Known amount hint: ${amount}` : "Known amount hint: unknown",
+      expenseDate ? `Known date hint: ${expenseDate}` : "",
+      notes ? `Extra notes: ${notes}` : "",
       resolvedFileName ? `Receipt filename: ${resolvedFileName}` : "",
     ].filter(Boolean).join("\n")).trim();
 
@@ -582,9 +630,11 @@ export default function ExpensesTab({
         amount: normalized.amount ? String(normalized.amount) : prev.amount,
         gst_amount: normalized.gst_amount ? String(normalized.gst_amount) : prev.gst_amount,
       }));
+      setAnalysisWarning(String(body?.warning || "").trim());
       showToast(body?.warning ? `AI analysis complete (${body.warning})` : "AI analysis complete.");
     })().catch((err) => {
       console.error("[expenses:ai-analysis] failed", err);
+      setAnalysisWarning("");
       showToast(`AI analysis failed: ${err.message}`);
       handleSmartCategorizeLocal();
     }).finally(() => {
@@ -607,11 +657,12 @@ export default function ExpensesTab({
     }
 
     try {
+      setAnalysisWarning("");
       const variants = await buildReceiptVariants(file);
       setForm((prev) => ({
         ...prev,
         receipt_data_url: variants.optimized,
-        receipt_ocr_data_url: variants.ocrVariant,
+        receipt_ocr_data_url: variants.boostedVariant || variants.ocrVariant,
         receipt_file_name: file.name || prev.receipt_file_name,
       }));
       showToast("Receipt uploaded. Running AI analysis...");
@@ -621,7 +672,7 @@ export default function ExpensesTab({
           prevOrBlank(form.amount, "Amount unknown"),
           prevOrBlank(form.notes, "No extra notes"),
         ].join("\n"),
-        referencesOverride: [variants.optimized, variants.ocrVariant],
+        referencesOverride: [variants.optimized, variants.ocrVariant, variants.boostedVariant].filter(Boolean),
         fileNameOverride: file.name || form.receipt_file_name,
         vendorOverride: form.vendor,
         amountOverride: form.amount,
@@ -637,10 +688,10 @@ export default function ExpensesTab({
   };
 
   const onSaveExpense = async () => {
-    const vendor = String(form.vendor || "").trim();
+    const vendor = String(form.vendor || "").trim() || (form.receipt_file_name ? "Receipt Expense" : "");
     const amount = Math.max(0, toNumber(form.amount, 0));
     if (!vendor) {
-      showToast("Vendor is required.");
+      showToast("Add a vendor or upload a receipt first.");
       return;
     }
     if (!amount) {
@@ -677,6 +728,7 @@ export default function ExpensesTab({
       });
       showToast("Expense saved.");
       setForm(initialFormState());
+      setAnalysisWarning("");
     } catch (err) {
       console.error("[expenses:save] failed", err);
       showToast(`Failed to save expense: ${err.message}`);
@@ -792,25 +844,60 @@ export default function ExpensesTab({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "360px 1fr", gap: 12 }}>
-        <section style={panelStyle}>
-          <div style={panelHeaderStyle}>Add Expense</div>
-          <FormLabel>Date</FormLabel>
-          <input
-            type="date"
-            value={toDateInputValue(form.expense_date)}
-            onChange={(e) => setForm((prev) => ({ ...prev, expense_date: e.target.value }))}
-            style={inputStyle}
-          />
+        <section style={{ ...panelStyle, padding: 14 }}>
+          <div style={{ ...panelHeaderStyle, marginBottom: 4 }}>Quick Expense Capture</div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 10 }}>
+            Upload a receipt and let AI prefill the expense. Only adjust what is wrong.
+          </div>
 
-          <FormLabel>Vendor</FormLabel>
           <input
-            value={form.vendor}
-            onChange={(e) => setForm((prev) => ({ ...prev, vendor: e.target.value }))}
-            placeholder="e.g. Bunnings Maroochydore"
-            style={inputStyle}
+            ref={receiptInputRef}
+            type="file"
+            accept="image/*"
+            onChange={onReceiptSelected}
+            style={{ display: "none" }}
           />
+          <button
+            onClick={() => receiptInputRef.current?.click()}
+            disabled={saving || analyzing}
+            style={{
+              width: "100%",
+              border: `1.5px dashed ${T.primary}`,
+              background: "linear-gradient(180deg, #F8FBF7 0%, #EEF5EC 100%)",
+              borderRadius: 12,
+              padding: "16px 12px",
+              marginBottom: 10,
+              textAlign: "left",
+              cursor: saving || analyzing ? "not-allowed" : "pointer",
+              opacity: saving || analyzing ? 0.7 : 1,
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 900, color: T.primaryDark, marginBottom: 3 }}>+ Upload Receipt</div>
+            <div style={{ fontSize: 11, color: T.textMuted }}>
+              Auto-detect amount, vendor, date, GST, and category.
+            </div>
+          </button>
+
+          {form.receipt_data_url && (
+            <div style={{ marginBottom: 10, border: `1px solid ${T.borderLight}`, borderRadius: 10, overflow: "hidden", background: "#FAFBF8" }}>
+              <img src={form.receipt_data_url} alt="Receipt preview" style={{ width: "100%", display: "block", maxHeight: 200, objectFit: "cover" }} />
+              <div style={{ padding: "6px 8px", fontSize: 11, color: T.textMuted }}>
+                {form.receipt_file_name || "receipt.jpg"}
+                {form.receipt_ocr_data_url ? " · AI optimized" : ""}
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div>
+              <FormLabel>Vendor</FormLabel>
+              <input
+                value={form.vendor}
+                onChange={(e) => setForm((prev) => ({ ...prev, vendor: e.target.value }))}
+                placeholder="Auto-filled from receipt"
+                style={inputStyle}
+              />
+            </div>
             <div>
               <FormLabel>Amount (AUD)</FormLabel>
               <input
@@ -819,19 +906,7 @@ export default function ExpensesTab({
                 step="0.01"
                 value={form.amount}
                 onChange={(e) => setForm((prev) => ({ ...prev, amount: e.target.value }))}
-                placeholder="0.00"
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <FormLabel>GST Amount</FormLabel>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.gst_amount}
-                onChange={(e) => setForm((prev) => ({ ...prev, gst_amount: e.target.value }))}
-                placeholder="Auto"
+                placeholder="Auto-filled from receipt"
                 style={inputStyle}
               />
             </div>
@@ -851,52 +926,29 @@ export default function ExpensesTab({
               </select>
             </div>
             <div>
-              <FormLabel>Payment Method</FormLabel>
-              <select
-                value={form.payment_method}
-                onChange={(e) => setForm((prev) => ({ ...prev, payment_method: e.target.value }))}
+              <FormLabel>Date</FormLabel>
+              <input
+                type="date"
+                value={toDateInputValue(form.expense_date)}
+                onChange={(e) => setForm((prev) => ({ ...prev, expense_date: e.target.value }))}
                 style={inputStyle}
-              >
-                {PAYMENT_METHODS.map((option) => (
-                  <option key={option} value={option}>{option.replaceAll("_", " ")}</option>
-                ))}
-              </select>
+              />
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <input
-              id="gst-claimable"
-              type="checkbox"
-              checked={form.gst_claimable}
-              onChange={(e) => setForm((prev) => ({ ...prev, gst_claimable: e.target.checked }))}
-            />
-            <label htmlFor="gst-claimable" style={{ fontSize: 12, color: T.text }}>GST claimable</label>
-          </div>
-
-          <FormLabel>Notes</FormLabel>
-          <textarea
-            value={form.notes}
-            onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-            rows={3}
-            style={{ ...inputStyle, resize: "vertical", minHeight: 80 }}
-            placeholder="Any context for this expense..."
-          />
-
-          <FormLabel>Receipt Photo</FormLabel>
-          <input type="file" accept="image/*" onChange={onReceiptSelected} />
-          {form.receipt_data_url && (
-            <div style={{ marginTop: 8, border: `1px solid ${T.borderLight}`, borderRadius: 10, overflow: "hidden" }}>
-              <img src={form.receipt_data_url} alt="Receipt preview" style={{ width: "100%", display: "block", maxHeight: 220, objectFit: "cover" }} />
-              <div style={{ padding: "6px 8px", fontSize: 11, color: T.textMuted }}>
-                {form.receipt_file_name || "receipt.jpg"}
-                {form.receipt_ocr_data_url ? " · OCR enhanced" : ""}
-              </div>
+          {form.receipt_data_url && !Number(form.amount || 0) && !analyzing && (
+            <div style={{ marginTop: 2, marginBottom: 8, border: `1px solid ${T.accent}`, background: T.accentLight, color: "#8B6914", borderRadius: 10, padding: "8px 10px", fontSize: 12 }}>
+              Amount not detected yet. Tap "Re-analyze Receipt" or enter the total manually.
+            </div>
+          )}
+          {analysisWarning && (
+            <div style={{ marginTop: 2, marginBottom: 8, border: `1px solid ${T.accent}`, background: "#FFF8ED", color: "#8B6914", borderRadius: 10, padding: "8px 10px", fontSize: 12 }}>
+              {analysisWarning}
             </div>
           )}
 
           {(form.ai_suggested_category || form.ai_confidence > 0) && (
-            <div style={{ marginTop: 8, background: T.primaryLight, borderRadius: 10, padding: "8px 10px" }}>
+            <div style={{ marginTop: 2, marginBottom: 8, background: T.primaryLight, borderRadius: 10, padding: "8px 10px" }}>
               <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 2 }}>AI Suggestion</div>
               <div style={{ fontSize: 13, fontWeight: 800, color: T.primaryDark }}>
                 {categoryMeta(form.ai_suggested_category || form.category)?.label || "Uncategorized"} · {Math.round((form.ai_confidence || 0) * 100)}%
@@ -907,27 +959,83 @@ export default function ExpensesTab({
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-            <button
-              onClick={handleSmartCategorizeLocal}
-              disabled={saving || analyzing}
-              style={{ ...secondaryBtnStyle, opacity: saving || analyzing ? 0.7 : 1, cursor: saving || analyzing ? "not-allowed" : "pointer" }}
-            >
-              Smart Categorize
-            </button>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 4 }}>
             <button
               onClick={() => runAiExpenseAnalysis()}
               disabled={saving || analyzing}
               style={{ ...secondaryBtnStyle, opacity: saving || analyzing ? 0.7 : 1, cursor: saving || analyzing ? "not-allowed" : "pointer" }}
             >
-              {analyzing ? "Analyzing..." : "Analyze with AI"}
+              {analyzing ? "Analyzing..." : "Re-analyze Receipt"}
+            </button>
+            <button
+              onClick={() => setShowAdvancedForm((prev) => !prev)}
+              style={secondaryBtnStyle}
+            >
+              {showAdvancedForm ? "Hide Advanced" : "Show Advanced"}
             </button>
           </div>
+
+          {showAdvancedForm && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${T.border}` }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <FormLabel>Payment Method</FormLabel>
+                  <select
+                    value={form.payment_method}
+                    onChange={(e) => setForm((prev) => ({ ...prev, payment_method: e.target.value }))}
+                    style={inputStyle}
+                  >
+                    {PAYMENT_METHODS.map((option) => (
+                      <option key={option} value={option}>{option.replaceAll("_", " ")}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <FormLabel>GST Amount</FormLabel>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.gst_amount}
+                    onChange={(e) => setForm((prev) => ({ ...prev, gst_amount: e.target.value }))}
+                    placeholder="Auto"
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <input
+                  id="gst-claimable"
+                  type="checkbox"
+                  checked={form.gst_claimable}
+                  onChange={(e) => setForm((prev) => ({ ...prev, gst_claimable: e.target.checked }))}
+                />
+                <label htmlFor="gst-claimable" style={{ fontSize: 12, color: T.text }}>GST claimable</label>
+              </div>
+
+              <FormLabel>Notes</FormLabel>
+              <textarea
+                value={form.notes}
+                onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
+                rows={3}
+                style={{ ...inputStyle, resize: "vertical", minHeight: 80 }}
+                placeholder="Optional context..."
+              />
+              <button
+                onClick={handleSmartCategorizeLocal}
+                disabled={saving || analyzing}
+                style={{ ...secondaryBtnStyle, width: "100%", opacity: saving || analyzing ? 0.7 : 1, cursor: saving || analyzing ? "not-allowed" : "pointer" }}
+              >
+                Smart Categorize
+              </button>
+            </div>
+          )}
 
           <button
             onClick={onSaveExpense}
             disabled={saving || analyzing}
-            style={{ ...primaryBtnStyle, width: "100%", marginTop: 8, opacity: saving || analyzing ? 0.7 : 1, cursor: saving || analyzing ? "not-allowed" : "pointer" }}
+            style={{ ...primaryBtnStyle, width: "100%", marginTop: 10, opacity: saving || analyzing ? 0.7 : 1, cursor: saving || analyzing ? "not-allowed" : "pointer" }}
           >
             {saving ? "Saving..." : "Save Expense"}
           </button>

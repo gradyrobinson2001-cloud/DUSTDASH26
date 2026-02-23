@@ -21,12 +21,30 @@ const SOCIAL_PLATFORMS = [
   { id: "facebook", label: "Facebook Feed" },
 ];
 
+const STYLE_PRESETS = [
+  {
+    id: "local_slots",
+    label: "Suburb Slot Poster",
+    description: "Matches your current style with suburb + day/time line.",
+  },
+  {
+    id: "promo_offer",
+    label: "Promo Poster",
+    description: "Offer-led poster with stronger CTA for short-term promos.",
+  },
+  {
+    id: "general",
+    label: "General Social",
+    description: "Flexible campaign creative for mixed goals.",
+  },
+];
+
 const MAX_REFERENCES = 3;
 
 const SOCIAL_SUGGESTIONS = [
-  "We have a few Friday slots in Mudjimba. Help me create a high-converting Instagram post.",
-  "Create a Facebook promo for end-of-lease bond cleans in Maroochydore this week.",
-  "We have before/after photos from this week. Create a trust-building local campaign post.",
+  "Buderim, Thursday 12pm, fortnightly slot available. Create a suburb slot poster.",
+  "Mountain Creek Tuesdays 2pm fortnightly. Create a local slot poster with earthy style.",
+  "Maroochydore Friday 12:30pm or 2pm fortnightly. Create a polished slot poster.",
 ];
 
 const EMAIL_SUGGESTIONS = [
@@ -114,6 +132,46 @@ function initialResult() {
   };
 }
 
+function buildSmartPrompt({ prompt, stylePreset, channel }) {
+  const userPrompt = String(prompt || "").trim();
+  if (!userPrompt) return "";
+  if (channel === "email") return userPrompt;
+
+  if (stylePreset === "local_slots") {
+    return [
+      userPrompt,
+      "",
+      "Output goal:",
+      "- Create a suburb availability poster.",
+      "- Keep wording short and premium.",
+      "- Prioritize suburb name + day/time/frequency line.",
+      "- Keep it minimal and readable.",
+    ].join("\n");
+  }
+
+  if (stylePreset === "promo_offer") {
+    return [
+      userPrompt,
+      "",
+      "Output goal:",
+      "- Create a promotion poster with clear offer and urgency.",
+      "- Keep copy concise with one clear CTA.",
+    ].join("\n");
+  }
+
+  return userPrompt;
+}
+
+function suggestTemplateName({ campaignName, headline, prompt }) {
+  const explicit = String(campaignName || "").trim();
+  if (explicit) return explicit.slice(0, 56);
+  const byHeadline = String(headline || "").trim();
+  if (byHeadline) return byHeadline.slice(0, 56);
+  const byPrompt = String(prompt || "").trim();
+  if (byPrompt) return byPrompt.slice(0, 56);
+  return `Campaign ${new Date().toLocaleDateString("en-AU")}`;
+}
+
 export default function AIMarketingStudioTab({
   clients,
   enquiries,
@@ -125,6 +183,8 @@ export default function AIMarketingStudioTab({
 
   const [activeTab, setActiveTab] = useState(TABS.social);
   const [socialPlatform, setSocialPlatform] = useState("instagram");
+  const [stylePreset, setStylePreset] = useState("local_slots");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [campaignName, setCampaignName] = useState("");
   const [references, setReferences] = useState([]);
@@ -220,10 +280,16 @@ export default function AIMarketingStudioTab({
     setGenerating(true);
     try {
       const token = await getAccessToken();
-      const payload = {
+      const smartPrompt = buildSmartPrompt({
         prompt: prompt.trim(),
+        stylePreset,
+        channel: activeTab,
+      });
+      const payload = {
+        prompt: smartPrompt,
         channel: activeTab,
         platform: activeTab === TABS.email ? "email" : socialPlatform,
+        stylePreset: activeTab === TABS.social ? stylePreset : "general",
         references: references.map((ref) => ref.dataUrl),
       };
 
@@ -255,7 +321,11 @@ export default function AIMarketingStudioTab({
       });
 
       if (!campaignName.trim()) {
-        setCampaignName((nextResult.headline || prompt).slice(0, 56));
+        setCampaignName(suggestTemplateName({
+          campaignName: "",
+          headline: nextResult.headline,
+          prompt,
+        }));
       }
 
       if (body?.warning) {
@@ -272,11 +342,12 @@ export default function AIMarketingStudioTab({
   };
 
   const saveTemplate = async () => {
-    const name = campaignName.trim();
-    if (!name) {
-      showToast("Name this template before saving.");
-      return;
-    }
+    const name = suggestTemplateName({
+      campaignName,
+      headline: result.headline,
+      prompt,
+    });
+    if (!campaignName.trim()) setCampaignName(name);
 
     await upsertTemplate({
       name,
@@ -284,6 +355,7 @@ export default function AIMarketingStudioTab({
       data: {
         activeTab,
         socialPlatform,
+        stylePreset,
         result: {
           ...result,
           imageDataUrl: "",
@@ -301,6 +373,7 @@ export default function AIMarketingStudioTab({
     setCampaignName(template?.name || "");
     setActiveTab(data?.activeTab === TABS.email ? TABS.email : TABS.social);
     setSocialPlatform(data?.socialPlatform || "instagram");
+    setStylePreset(data?.stylePreset || "local_slots");
     setResult({ ...initialResult(), ...(data?.result || {}) });
     setEmailDraft({
       subject: data?.emailDraft?.subject || data?.result?.emailSubject || "",

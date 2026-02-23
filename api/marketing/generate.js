@@ -237,14 +237,70 @@ function detectExpenseCategory(text) {
   return "uncategorized";
 }
 
+function parseMoneyToken(token) {
+  const raw = String(token || "").trim();
+  if (!raw) return 0;
+  let cleaned = raw.replace(/[^\d.,-]/g, "");
+  if (!cleaned || cleaned === "." || cleaned === ",") return 0;
+
+  const dotCount = (cleaned.match(/\./g) || []).length;
+  const commaCount = (cleaned.match(/,/g) || []).length;
+
+  if (commaCount > 0 && dotCount > 0) {
+    cleaned = cleaned.replace(/,/g, "");
+  } else if (commaCount > 0 && dotCount === 0) {
+    const decimalLike = /,\d{2}$/.test(cleaned);
+    cleaned = decimalLike ? cleaned.replace(",", ".") : cleaned.replace(/,/g, "");
+  }
+
+  const value = Number(cleaned);
+  if (!Number.isFinite(value) || value <= 0 || value > 1_000_000) return 0;
+  return Math.round(value * 100) / 100;
+}
+
 function extractAmountFromText(text) {
   const raw = String(text || "");
+  if (!raw.trim()) return 0;
+
+  const lines = raw.split(/\r?\n+/).map((line) => line.trim()).filter(Boolean);
+  const moneyPattern = /\$?\s*\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{2})|\$?\s*\d{1,6}/g;
+  const ranked = [];
+
+  for (const line of lines) {
+    const tokens = line.match(moneyPattern) || [];
+    if (!tokens.length) continue;
+    const normalizedLine = line.toLowerCase();
+
+    for (const token of tokens) {
+      const amount = parseMoneyToken(token);
+      if (!amount) continue;
+      let score = 0;
+      if (/\$/.test(token)) score += 12;
+      if (/\d+[.,]\d{2}$/.test(token.trim())) score += 6;
+      if (/(grand\s*total|total\s*due|amount\s*due|balance\s*due|to\s*pay|total|payment|card|eftpos|visa|mastercard|debit)/i.test(normalizedLine)) score += 80;
+      if (/(subtotal|sub-total)/i.test(normalizedLine)) score += 20;
+      if (/(gst|tax|vat|change|cash\s*tendered|discount|saving|qty|item|unit\s*price|price\s*per|abn|invoice\s*no|order\s*no|receipt\s*no|phone|fax)/i.test(normalizedLine)) score -= 35;
+      if (amount <= 1) score -= 20;
+      ranked.push({ amount, score, line: normalizedLine });
+    }
+  }
+
+  if (ranked.length > 0) {
+    ranked.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.amount - a.amount;
+    });
+    const best = ranked[0];
+    if (best.score >= 0) return best.amount;
+
+    const maxFallback = ranked.reduce((max, row) => Math.max(max, row.amount), 0);
+    if (maxFallback > 0) return maxFallback;
+  }
+
   const withDecimals = raw.match(/\$?\s*\d{1,4}(?:,\d{3})*(?:\.\d{2})/g) || [];
-  const withSymbol = raw.match(/\$\s*\d{1,4}(?:,\d{3})*/g) || [];
-  const candidates = [...withDecimals, ...withSymbol];
-  for (const candidate of candidates) {
-    const value = Number(String(candidate).replace(/[^\d.]/g, ""));
-    if (Number.isFinite(value) && value > 0 && value < 1_000_000) return Math.round(value * 100) / 100;
+  for (const candidate of withDecimals) {
+    const value = parseMoneyToken(candidate);
+    if (value > 0) return value;
   }
   return 0;
 }
@@ -411,7 +467,52 @@ async function generateExpenseAnalysis({ prompt, fileName, references, apiKey })
 
   const raw = completion?.choices?.[0]?.message?.content || "";
   const parsed = JSON.parse(cleanJsonText(raw));
-  return normalizeExpenseAnalysisPayload(parsed, fallback);
+  const normalized = normalizeExpenseAnalysisPayload(parsed, fallback);
+
+  if ((Number(normalized.amount || 0) <= 0.01) && Array.isArray(references) && references.length > 0) {
+    try {
+      const amountOnly = await callOpenAiJson("/chat/completions", {
+        model: TEXT_MODEL,
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You read receipts and return strict JSON only.",
+              "Return keys: amount, confidence, reasoning.",
+              "amount must be the final payable total in AUD (number).",
+              "If uncertain return amount 0 and low confidence.",
+            ].join(" "),
+          },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Extract the final payable total from this receipt image." },
+              ...references.map((dataUrl) => ({ type: "image_url", image_url: { url: dataUrl } })),
+            ],
+          },
+        ],
+      }, apiKey);
+
+      const amountRaw = amountOnly?.choices?.[0]?.message?.content || "";
+      const amountJson = JSON.parse(cleanJsonText(amountRaw));
+      const extractedAmount = Number(amountJson?.amount);
+      if (Number.isFinite(extractedAmount) && extractedAmount > 0) {
+        normalized.amount = Math.round(extractedAmount * 100) / 100;
+        if (normalized.gst_claimable !== false) {
+          normalized.gst_amount = Math.round((normalized.amount / 11) * 100) / 100;
+        }
+        const confidenceBoost = Math.max(0, Math.min(1, Number(amountJson?.confidence || 0.5)));
+        normalized.confidence = Math.max(normalized.confidence || 0.55, confidenceBoost);
+        const reason = toStringValue(amountJson?.reasoning, "");
+        normalized.reasoning = reason || normalized.reasoning || "Amount extracted from receipt total line.";
+      }
+    } catch (amountErr) {
+      console.error("[api/marketing/generate] amount-only retry failed", amountErr?.message || amountErr);
+    }
+  }
+
+  return normalized;
 }
 
 async function callOpenAiJson(endpoint, payload, apiKey) {

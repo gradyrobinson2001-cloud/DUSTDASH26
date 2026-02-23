@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, supabaseReady } from '../lib/supabase';
 
+const CLOCK_LOCAL_PREFIX = 'dustdash_staff_time_entries_';
+
 const toIsoDate = (value) => {
   if (!value) return null;
   const d = new Date(value);
@@ -19,6 +21,59 @@ const parseJsonSafe = async (res) => {
     return await res.json();
   } catch {
     return {};
+  }
+};
+
+const normalizeApiErrorMessage = (body, status) => {
+  const top = String(body?.error || '').trim();
+  const detail = String(body?.details || '').trim();
+  if (top && detail) return `${top}: ${detail}`;
+  if (top) return top;
+  if (detail) return detail;
+  return `Request failed (${status})`;
+};
+
+const isMissingClockTableError = (err) => {
+  const code = String(err?.code || '');
+  const message = String(err?.message || '').toLowerCase();
+  const details = String(err?.details || '').toLowerCase();
+  const haystack = `${message} ${details}`;
+  if (code === '42P01') return true;
+  return (
+    haystack.includes('staff_time_entries')
+    && (
+      haystack.includes('does not exist')
+      || haystack.includes('could not find table')
+      || haystack.includes('schema cache')
+      || haystack.includes('relation')
+    )
+  );
+};
+
+const localKey = (staffId) => `${CLOCK_LOCAL_PREFIX}${String(staffId || 'all')}`;
+
+const readLocalEntries = (staffId, weekStart) => {
+  try {
+    const raw = localStorage.getItem(localKey(staffId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    const rows = Array.isArray(parsed) ? parsed : [];
+    const weekStartIso = toIsoDate(weekStart);
+    if (!weekStartIso) return rows;
+    const weekEndIso = addDays(weekStartIso, 6);
+    return rows.filter((row) => {
+      const d = String(row?.work_date || '');
+      return d >= weekStartIso && d <= weekEndIso;
+    });
+  } catch {
+    return [];
+  }
+};
+
+const saveLocalEntries = (staffId, rows) => {
+  try {
+    localStorage.setItem(localKey(staffId), JSON.stringify(Array.isArray(rows) ? rows : []));
+  } catch {
+    // ignore local storage failures
   }
 };
 
@@ -48,7 +103,10 @@ export function useStaffTimeEntries({ staffId = null, weekStart = null } = {}) {
     });
     const body = await parseJsonSafe(res);
     if (!res.ok || body?.error) {
-      throw new Error(body?.error || body?.details || `Request failed (${res.status})`);
+      const err = new Error(normalizeApiErrorMessage(body, res.status));
+      if (body?.code) err.code = body.code;
+      if (body?.details) err.details = body.details;
+      throw err;
     }
     return Array.isArray(body?.entries) ? body.entries : [];
   }, [staffId, weekStart]);
@@ -81,12 +139,22 @@ export function useStaffTimeEntries({ staffId = null, weekStart = null } = {}) {
         setError(null);
         setTimeEntries(rows);
       } catch (apiError) {
+        if (isMissingClockTableError(apiError)) {
+          setError(null);
+          setTimeEntries(readLocalEntries(staffId, weekStart));
+          return;
+        }
         // Fallback keeps local/dev and partial server deployments usable.
         try {
           const rows = await fetchViaSupabase();
           setError(null);
           setTimeEntries(rows);
         } catch (dbError) {
+          if (isMissingClockTableError(dbError)) {
+            setError(null);
+            setTimeEntries(readLocalEntries(staffId, weekStart));
+            return;
+          }
           setError(dbError || apiError);
           return;
         }
@@ -95,10 +163,11 @@ export function useStaffTimeEntries({ staffId = null, weekStart = null } = {}) {
       fetchingRef.current = false;
       setLoading(false);
     }
-  }, [fetchViaApi, fetchViaSupabase]);
+  }, [fetchViaApi, fetchViaSupabase, staffId, weekStart]);
 
   useEffect(() => {
     if (!supabaseReady) {
+      setTimeEntries(readLocalEntries(staffId, weekStart));
       setLoading(false);
       return;
     }
@@ -117,6 +186,11 @@ export function useStaffTimeEntries({ staffId = null, weekStart = null } = {}) {
       supabase.removeChannel(channel);
     };
   }, [staffId, weekStart, refreshTimeEntries]);
+
+  useEffect(() => {
+    if (!staffId) return;
+    saveLocalEntries(staffId, timeEntries);
+  }, [staffId, timeEntries]);
 
   return { timeEntries, setTimeEntries, loading, error, refreshTimeEntries };
 }

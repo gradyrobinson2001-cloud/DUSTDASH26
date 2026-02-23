@@ -12,22 +12,28 @@ const asStringArray = (value) => {
 
 const normalize = (value) => String(value || "").trim().toLowerCase();
 
+const isMissingColumnError = (error) => {
+  const code = String(error?.code || "");
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return code === "42703" || message.includes("column") || message.includes("does not exist");
+};
+
 const snapshotProfile = (job) => ({
   id: job?.client_id || `job-${job?.id || Date.now()}`,
   name: job?.client_name || "Client",
-  address: job?.suburb ? `${job.suburb}, QLD` : "",
+  address: job?.address || (job?.suburb ? `${job.suburb}, QLD` : ""),
   suburb: job?.suburb || "",
   notes: job?.notes || "",
-  access_notes: "",
-  frequency: "",
-  preferred_day: "",
-  preferred_time: "",
-  bedrooms: null,
-  bathrooms: null,
-  living: null,
-  kitchen: null,
-  email: "",
-  phone: "",
+  access_notes: job?.access_notes || job?.accessNotes || "",
+  frequency: job?.frequency || "",
+  preferred_day: job?.preferred_day || job?.preferredDay || "",
+  preferred_time: job?.preferred_time || job?.preferredTime || "",
+  bedrooms: job?.bedrooms ?? null,
+  bathrooms: job?.bathrooms ?? null,
+  living: job?.living ?? null,
+  kitchen: job?.kitchen ?? null,
+  email: job?.email || "",
+  phone: job?.phone || "",
   source: "job_snapshot",
 });
 
@@ -51,9 +57,11 @@ export default async function handler(req, res) {
       return sendJson(res, 200, { ok: true, profilesByJob: {} });
     }
 
+    const basicJobSelect = "id, client_id, client_name, suburb, notes, assigned_staff, is_published";
+    const extendedJobSelect = `${basicJobSelect}, address, access_notes, frequency, preferred_day, preferred_time, bedrooms, bathrooms, living, kitchen, email, phone`;
     let jobsQuery = admin
       .from("scheduled_jobs")
-      .select("id, client_id, client_name, suburb, notes, assigned_staff, is_published")
+      .select(extendedJobSelect)
       .in("id", jobIds);
 
     // Staff can only fetch profiles for jobs assigned to them and published to rota.
@@ -61,7 +69,19 @@ export default async function handler(req, res) {
       jobsQuery = jobsQuery.contains("assigned_staff", [user.id]).eq("is_published", true);
     }
 
-    const { data: jobs, error: jobsError } = await jobsQuery;
+    let { data: jobs, error: jobsError } = await jobsQuery;
+    if (jobsError && isMissingColumnError(jobsError)) {
+      let basicQuery = admin
+        .from("scheduled_jobs")
+        .select(basicJobSelect)
+        .in("id", jobIds);
+      if (profile.role === "staff") {
+        basicQuery = basicQuery.contains("assigned_staff", [user.id]).eq("is_published", true);
+      }
+      const fallbackJobs = await basicQuery;
+      jobs = fallbackJobs.data;
+      jobsError = fallbackJobs.error;
+    }
     if (jobsError) {
       console.error("[api/staff/job-client-profiles] jobs query failed", { userId: user.id, jobsError });
       throw new ApiError(500, "Failed to load jobs.", jobsError.message);

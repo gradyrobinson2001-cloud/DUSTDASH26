@@ -9,6 +9,7 @@ import CustomerForm from './CustomerForm'
 import QuotePreview from './QuotePreview'
 import CleanerPortal from './CleanerPortal'
 import FloorPlanPage from './clients/FloorPlanPage'
+import StaffFloorPlanView from './clients/StaffFloorPlanView'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -21,6 +22,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route path="/form"       element={<CustomerForm />} />
           <Route path="/quote/:id"  element={<QuotePreview />} />
           <Route path="/cleaner"    element={<CleanerPortal />} />
+          <Route path="/cleaner/floorplan/:id" element={<StaffFloorPlanView />} />
           <Route path="/" element={<Navigate to="/dashboard/today" replace />} />
           <Route path="/dashboard/clients/:id/floorplan" element={
             <RequireAdmin>

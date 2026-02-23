@@ -34,6 +34,7 @@ const DEMO_CLIENTS = [
 ];
 
 const DEFAULT_BREAK_MINUTES = 30;
+const CLOCK_LOCAL_PREFIX = 'dustdash_staff_time_entries_';
 
 // ─── Helpers ─────────────────────────────────────────────
 function fmtSecs(s) {
@@ -199,9 +200,54 @@ function buildJobSnapshotProfile(job) {
   };
 }
 
+function isMissingClockTableMessage(raw) {
+  const msg = String(raw || '').toLowerCase();
+  return (
+    msg.includes('staff_time_entries')
+    && (
+      msg.includes('does not exist')
+      || msg.includes('could not find table')
+      || msg.includes('schema cache')
+      || msg.includes('relation')
+    )
+  );
+}
+
+function clockLocalKey(staffId) {
+  return `${CLOCK_LOCAL_PREFIX}${String(staffId || 'unknown')}`;
+}
+
+function readLocalClockEntries(staffId) {
+  try {
+    const raw = localStorage.getItem(clockLocalKey(staffId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalClockEntries(staffId, rows) {
+  try {
+    localStorage.setItem(clockLocalKey(staffId), JSON.stringify(Array.isArray(rows) ? rows : []));
+  } catch {
+    // ignore local write failures
+  }
+}
+
+function filterClockEntriesForWeek(rows, weekStart) {
+  if (!weekStart) return Array.isArray(rows) ? rows : [];
+  const weekEnd = shiftDays(weekStart, 6);
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const d = String(row?.work_date || '');
+    return d >= weekStart && d <= weekEnd;
+  });
+}
+
 // ─── Component ────────────────────────────────────────────
 export default function CleanerPortal() {
   const [profile,      setProfile]      = useState(null);
+  const [authHydrating, setAuthHydrating] = useState(true);
   const [demoMode,     setDemoMode]     = useState(false);
   const [activeTab,    setActiveTab]    = useState('today');
   const [selectedDate, setSelectedDate] = useState(TODAY);
@@ -221,6 +267,7 @@ export default function CleanerPortal() {
   const [teamRotaError, setTeamRotaError] = useState('');
   const [rotaViewMode, setRotaViewMode] = useState('all');
   const [expandedRotaRows, setExpandedRotaRows] = useState(() => new Set());
+  const [clockOfflineFallback, setClockOfflineFallback] = useState(false);
 
   const timerRefs = useRef({});
   const cameraRef = useRef(null);
@@ -266,6 +313,64 @@ export default function CleanerPortal() {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  useEffect(() => {
+    if (!supabaseReady || demoMode) {
+      setAuthHydrating(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadStaffProfile = async (session) => {
+      const user = session?.user || null;
+      if (!user) {
+        if (!cancelled) {
+          setProfile(null);
+          setAuthHydrating(false);
+        }
+        return;
+      }
+
+      const { data: prof, error: profErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      if (cancelled) return;
+
+      if (profErr || !prof || prof.role !== 'staff' || !prof.is_active) {
+        console.error('[staff:auth-hydrate] invalid staff profile', profErr);
+        await supabase.auth.signOut();
+        setProfile(null);
+        setAuthHydrating(false);
+        return;
+      }
+
+      setProfile(prof);
+      setAuthHydrating(false);
+    };
+
+    supabase.auth.getSession().then(async ({ data, error }) => {
+      if (cancelled) return;
+      if (error) {
+        console.error('[staff:auth-hydrate] failed to load session', error);
+        setAuthHydrating(false);
+        return;
+      }
+      await loadStaffProfile(data?.session || null);
+    });
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      loadStaffProfile(session || null);
+    });
+
+    return () => {
+      cancelled = true;
+      subscription?.subscription?.unsubscribe?.();
+    };
+  }, [demoMode]);
 
   const enableStaffNotifications = useCallback(async () => {
     if (!notificationSupported) {
@@ -322,8 +427,8 @@ export default function CleanerPortal() {
 
   const normalizeClockError = useCallback((rawMessage) => {
     const msg = String(rawMessage || '').toLowerCase();
-    if (msg.includes('staff_time_entries') && msg.includes('does not exist')) {
-      return 'Time tracking database is not deployed yet. Run migration 20260220_staff_time_tracking.sql.';
+    if (isMissingClockTableMessage(msg)) {
+      return 'Clock sync is temporarily unavailable. Entries are saved locally on this device.';
     }
     if (msg.includes('failed to fetch') || msg.includes('network')) {
       return 'Network issue while syncing clock times. Please retry.';
@@ -349,6 +454,58 @@ export default function CleanerPortal() {
       return next;
     });
   }, [setTimeEntries]);
+
+  const applyLocalClockFallback = useCallback((action) => {
+    if (!staffId) return { ok: false, message: 'Staff account missing.' };
+    const existing = readLocalClockEntries(staffId);
+    const rows = Array.isArray(existing) ? [...existing] : [];
+    const index = rows.findIndex((row) => String(row?.work_date || '') === selectedDate);
+    const current = index >= 0 ? rows[index] : null;
+    const now = new Date().toISOString();
+
+    if (action === 'clock_in') {
+      if (current?.clock_in_at && current?.clock_out_at) {
+        return { ok: false, message: 'You have already clocked out for this day.' };
+      }
+      if (current?.clock_in_at && !current?.clock_out_at) {
+        return { ok: true, message: '✅ Already clocked in (local sync mode).' };
+      }
+      const nextEntry = {
+        id: current?.id || `local_clock_${staffId}_${selectedDate}`,
+        staff_id: staffId,
+        work_date: selectedDate,
+        clock_in_at: now,
+        clock_out_at: null,
+        break_minutes: breakMinutes,
+        source: 'local_fallback',
+        created_at: current?.created_at || now,
+        updated_at: now,
+      };
+      if (index >= 0) rows[index] = nextEntry;
+      else rows.unshift(nextEntry);
+      writeLocalClockEntries(staffId, rows);
+      setTimeEntries(filterClockEntriesForWeek(rows, weekStart));
+      return { ok: true, message: '✅ Clocked in (local sync mode).' };
+    }
+
+    if (action === 'clock_out') {
+      if (!current?.clock_in_at) return { ok: false, message: 'You need to clock in first.' };
+      if (current?.clock_out_at) return { ok: true, message: '✅ Already clocked out (local sync mode).' };
+      const nextEntry = {
+        ...current,
+        break_minutes: breakMinutes,
+        clock_out_at: now,
+        updated_at: now,
+      };
+      if (index >= 0) rows[index] = nextEntry;
+      else rows.unshift(nextEntry);
+      writeLocalClockEntries(staffId, rows);
+      setTimeEntries(filterClockEntriesForWeek(rows, weekStart));
+      return { ok: true, message: '✅ Clocked out (local sync mode).' };
+    }
+
+    return { ok: false, message: 'Unsupported clock action.' };
+  }, [breakMinutes, selectedDate, setTimeEntries, staffId, weekStart]);
 
   useEffect(() => {
     if (demoMode || !staffId) return;
@@ -579,7 +736,10 @@ export default function CleanerPortal() {
     let body = {};
     try { body = await res.json(); } catch {}
     if (!res.ok || body?.error) {
-      throw new Error(body?.error || body?.details || `Request failed (${res.status})`);
+      const top = String(body?.error || '').trim();
+      const details = String(body?.details || '').trim();
+      const message = top && details ? `${top}: ${details}` : (top || details || `Request failed (${res.status})`);
+      throw new Error(message);
     }
     return body?.entry || null;
   }, [breakMinutes]);
@@ -610,16 +770,25 @@ export default function CleanerPortal() {
       } else {
         const entry = await callStaffClockApi('clock_in', selectedDate);
         upsertLiveTimeEntry(entry);
+        setClockOfflineFallback(false);
         await refreshTimeEntries();
         showToast('✅ Clocked in');
       }
     } catch (err) {
       console.error('[staff:clock-in] failed', err);
+      if (!demoMode && isMissingClockTableMessage(err?.message)) {
+        const fallback = applyLocalClockFallback('clock_in');
+        if (fallback.ok) {
+          setClockOfflineFallback(true);
+          showToast(fallback.message);
+          return;
+        }
+      }
       showToast(`❌ Clock in failed: ${normalizeClockError(err?.message)}`);
     } finally {
       setClockActionLoading(false);
     }
-  }, [breakMinutes, callStaffClockApi, demoMode, normalizeClockError, refreshTimeEntries, selectedDate, showToast, upsertLiveTimeEntry]);
+  }, [applyLocalClockFallback, breakMinutes, callStaffClockApi, demoMode, normalizeClockError, refreshTimeEntries, selectedDate, showToast, upsertLiveTimeEntry]);
 
   const handleClockOut = useCallback(async () => {
     if (!window.confirm(`Are you sure you want to clock out for ${selectedDate}?`)) return;
@@ -636,16 +805,25 @@ export default function CleanerPortal() {
       } else {
         const entry = await callStaffClockApi('clock_out', selectedDate);
         upsertLiveTimeEntry(entry);
+        setClockOfflineFallback(false);
         await refreshTimeEntries();
         showToast('✅ Clocked out');
       }
     } catch (err) {
       console.error('[staff:clock-out] failed', err);
+      if (!demoMode && isMissingClockTableMessage(err?.message)) {
+        const fallback = applyLocalClockFallback('clock_out');
+        if (fallback.ok) {
+          setClockOfflineFallback(true);
+          showToast(fallback.message);
+          return;
+        }
+      }
       showToast(`❌ Clock out failed: ${normalizeClockError(err?.message)}`);
     } finally {
       setClockActionLoading(false);
     }
-  }, [breakMinutes, callStaffClockApi, demoMode, normalizeClockError, refreshTimeEntries, selectedDate, showToast, upsertLiveTimeEntry]);
+  }, [applyLocalClockFallback, breakMinutes, callStaffClockApi, demoMode, normalizeClockError, refreshTimeEntries, selectedDate, showToast, upsertLiveTimeEntry]);
 
   // ── Photo upload ──────────────────────────────────────
   const handlePhotoFile = useCallback(async (e) => {
@@ -860,6 +1038,14 @@ export default function CleanerPortal() {
   // ══════════════════════════════════════════════════════
   // ── AUTH SCREEN ────────────────────────────────────────
   // ══════════════════════════════════════════════════════
+  if (authHydrating && !demoMode) {
+    return (
+      <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.textMuted }}>
+        Restoring session...
+      </div>
+    );
+  }
+
   if (!profile && !demoMode) {
     return (
       <StaffLogin
@@ -997,9 +1183,14 @@ export default function CleanerPortal() {
         <div style={{ padding: '16px 16px 0' }}>
           {/* Daily clock in/out */}
           <div style={{ background: '#fff', borderRadius: T.radius, padding: '14px 14px', marginBottom: 16, boxShadow: T.shadow }}>
-            {timeEntriesError && (
+            {timeEntriesError && !isMissingClockTableMessage(timeEntriesError?.message || '') && (
               <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: '#FCEAEA', color: T.danger, fontSize: 12, fontWeight: 600 }}>
                 Clock sync warning: {normalizeClockError(timeEntriesError?.message || 'Failed to load time entries')}
+              </div>
+            )}
+            {clockOfflineFallback && (
+              <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: T.blueLight, color: T.blue, fontSize: 12, fontWeight: 700 }}>
+                Clock sync is in local fallback mode. Entries are saved on this device until server sync is available.
               </div>
             )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
@@ -1109,7 +1300,10 @@ export default function CleanerPortal() {
                 const startT     = job.start_time || job.startTime || '';
                 const actualDur  = job.actual_duration || job.actualDuration || job.duration;
                 const extras     = job.extras || [];
-                const address    = client?.address || job?.address || `${job.suburb}, QLD`;
+                const clientNameDisplay = client?.name || job?.client_name || job?.clientName || 'Client';
+                const address    = client?.address || job?.address || '';
+                const suburbLabel = job?.suburb || client?.suburb || '';
+                const addressLabel = address || (suburbLabel ? `${suburbLabel}, QLD` : 'Address not provided');
                 const accessNote = client?.access_notes || client?.accessNotes || job?.access_notes || job?.accessNotes;
                 const clientNote = client?.notes || job?.notes;
                 const freq       = client?.frequency || job?.frequency;
@@ -1124,7 +1318,8 @@ export default function CleanerPortal() {
                 const hasJobSnapshot = Boolean(clientFromSnapshot);
                 const mapsDestination = client?.lat && client?.lng
                   ? `${client.lat},${client.lng}`
-                  : address;
+                  : (addressLabel || suburbLabel || '');
+                const floorPlanClientId = demoMode ? null : (client?.id || job?.client_id || job?.clientId || null);
 
                 return (
                   <div key={job.id} style={{ background: '#fff', borderRadius: T.radius, overflow: 'hidden', boxShadow: T.shadow }}>
@@ -1142,7 +1337,7 @@ export default function CleanerPortal() {
                             {isDone   && <span>✓ Done</span>}
                             {isRunning && <span>In Progress</span>}
                           </div>
-                          <div style={{ fontSize: 18, fontWeight: 800, color: T.text }}>{job.client_name || job.clientName}</div>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: T.text }}>{clientNameDisplay}</div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontSize: 16, fontWeight: 700, color: teamColor }}>{startT}</div>
@@ -1168,7 +1363,10 @@ export default function CleanerPortal() {
                       )}
 
                       {/* Address */}
-                      <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 8 }}>{address}</div>
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 10, color: T.textLight, fontWeight: 800, letterSpacing: 0.5 }}>FULL ADDRESS</div>
+                        <div style={{ fontSize: 13, color: T.textMuted }}>{addressLabel}</div>
+                      </div>
 
                       {/* Contact */}
                       {(email || phone) && (
@@ -1192,7 +1390,7 @@ export default function CleanerPortal() {
                         </div>
                       )}
 
-                      {/* Rooms */}
+                      {/* Property details */}
                       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
                         {bedrooms !== undefined && bedrooms !== null && <span style={{ fontSize: 13 }}>{bedrooms} bed</span>}
                         {bathrooms !== undefined && bathrooms !== null && <span style={{ fontSize: 13 }}>{bathrooms} bath</span>}
@@ -1203,7 +1401,7 @@ export default function CleanerPortal() {
                         {preferredTime && <span style={{ fontSize: 13 }}>{preferredTime}</span>}
                         {!client && !clientsLoading && !hasJobSnapshot && (
                           <span style={{ fontSize: 12, color: T.danger }}>
-                            Client profile unavailable for this job
+                            Using scheduled job details only (full client profile unavailable)
                           </span>
                         )}
                       </div>
@@ -1221,24 +1419,32 @@ export default function CleanerPortal() {
                     </div>
 
                     {/* Access & notes */}
-                    {(accessNote || clientNote) && (
-                      <div style={{ padding: '10px 16px', background: '#FFFDF5', borderBottom: `1px solid ${T.border}` }}>
-                        {accessNote && (
-                          <div style={{ display: 'flex', gap: 8, marginBottom: clientNote ? 6 : 0 }}>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{accessNote}</span>
-                          </div>
-                        )}
-                        {clientNote && (
-                          <div style={{ display: 'flex', gap: 8 }}>
-                            <span style={{ fontSize: 13, color: T.textMuted }}>{clientNote}</span>
-                          </div>
-                        )}
+                    <div style={{ padding: '10px 16px', background: '#FFFDF5', borderBottom: `1px solid ${T.border}` }}>
+                      <div style={{ fontSize: 10, color: T.textLight, fontWeight: 800, letterSpacing: 0.5, marginBottom: 6 }}>
+                        JOB NOTES
                       </div>
-                    )}
+                      {accessNote && (
+                        <div style={{ display: 'flex', gap: 8, marginBottom: clientNote ? 6 : 0 }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: T.textLight, letterSpacing: 0.4 }}>ACCESS</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{accessNote}</span>
+                        </div>
+                      )}
+                      {clientNote && (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: T.textLight, letterSpacing: 0.4 }}>SPECIAL NOTES</span>
+                          <span style={{ fontSize: 13, color: T.textMuted }}>{clientNote}</span>
+                        </div>
+                      )}
+                      {!accessNote && !clientNote && (
+                        <div style={{ fontSize: 12, color: T.textLight }}>
+                          No special notes for this job.
+                        </div>
+                      )}
+                    </div>
 
                     {/* Action buttons */}
                     <div style={{ padding: '14px 16px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
                         <button
                           onClick={() => {
                             const dest = encodeURIComponent(mapsDestination);
@@ -1266,6 +1472,18 @@ export default function CleanerPortal() {
                           title="Waze"
                         >
                           <img src="/waze-mark.svg" alt="Waze" style={{ width: 24, height: 24, display: 'block' }} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!floorPlanClientId) return;
+                            window.location.href = `/cleaner/floorplan/${floorPlanClientId}`;
+                          }}
+                          disabled={!floorPlanClientId}
+                          style={{ padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', color: T.text, fontSize: 11, fontWeight: 800, cursor: floorPlanClientId ? 'pointer' : 'not-allowed', opacity: floorPlanClientId ? 1 : 0.45 }}
+                          aria-label="View floor plan"
+                          title="View Floor Plan"
+                        >
+                          Plan
                         </button>
                         <button
                           onClick={() => setExpandedJob(isExp ? null : job.id)}
