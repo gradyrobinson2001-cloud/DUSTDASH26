@@ -36,6 +36,7 @@ const EMAIL_SUGGESTIONS = [
 ];
 
 const isLikelyEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+const MAX_EMAILJS_INLINE_IMAGE_BYTES = 180_000;
 
 function escapeHtml(value) {
   return String(value || "")
@@ -89,6 +90,11 @@ function fileNameFromHeadline(headline, suffix = "poster") {
     .replace(/(^-|-$)/g, "")
     .slice(0, 52) || "campaign";
   return `${base}-${suffix}.png`;
+}
+
+function estimateDataUrlBytes(dataUrl) {
+  const payload = String(dataUrl || "").split(",")[1] || "";
+  return Math.ceil((payload.length * 3) / 4);
 }
 
 function initialResult() {
@@ -324,7 +330,12 @@ export default function AIMarketingStudioTab({
       return;
     }
     if (!EMAILJS_SERVICE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_MARKETING_TEMPLATE_ID) {
-      showToast("Marketing email is not configured.");
+      const missing = [
+        !EMAILJS_SERVICE_ID ? "VITE_EMAILJS_SERVICE_ID" : null,
+        !EMAILJS_PUBLIC_KEY ? "VITE_EMAILJS_PUBLIC_KEY" : null,
+        !EMAILJS_MARKETING_TEMPLATE_ID ? "VITE_EMAILJS_MARKETING_TEMPLATE_ID" : null,
+      ].filter(Boolean).join(", ");
+      showToast(`Marketing email is not configured (${missing}).`);
       return;
     }
 
@@ -344,13 +355,21 @@ export default function AIMarketingStudioTab({
     setSending(true);
     let ok = 0;
     let failed = 0;
+    let firstErrorMessage = "";
 
     try {
       const bodyHtml = escapeHtml(body).replace(/\n/g, "<br/>");
       const headline = escapeHtml(result.headline || "Dust Bunnies Cleaning");
-      const imageTag = result.imageDataUrl
-        ? `<img src="${result.imageDataUrl}" alt="${headline}" style="max-width:100%;height:auto;border-radius:12px;border:1px solid #dce4d9;display:block;margin:12px 0;"/>`
+      const imageBytes = estimateDataUrlBytes(result.imageDataUrl);
+      const inlinePosterDataUri = imageBytes > 0 && imageBytes <= MAX_EMAILJS_INLINE_IMAGE_BYTES
+        ? result.imageDataUrl
         : "";
+      const imageTag = inlinePosterDataUri
+        ? `<img src="${inlinePosterDataUri}" alt="${headline}" style="max-width:100%;height:auto;border-radius:12px;border:1px solid #dce4d9;display:block;margin:12px 0;"/>`
+        : "";
+      if (result.imageDataUrl && !inlinePosterDataUri) {
+        showToast("Poster is large, so emails will send without inline image to avoid delivery errors.");
+      }
 
       for (const target of targets) {
         try {
@@ -371,15 +390,23 @@ export default function AIMarketingStudioTab({
             {
               to_email: target.email,
               to_name: target.name,
+              email: target.email,
+              name: target.name,
               customer_name: target.name.split(" ")[0] || target.name,
               customer_email: target.email,
               subject,
+              title: subject,
               headline: result.headline || "Dust Bunnies Cleaning",
+              subheadline: result.subheadline || "",
               message: htmlMessage,
-              poster_data_uri: result.imageDataUrl || "",
+              message_html: htmlMessage,
+              poster_data_uri: inlinePosterDataUri || "",
+              poster_url: inlinePosterDataUri || "",
               cta_text: result.cta || "Book now",
+              cta_link: "",
               offer_line: result.subheadline || "",
               reply_to: import.meta.env.VITE_BUSINESS_EMAIL || target.email,
+              from_name: "Dust Bunnies Cleaning",
             },
             EMAILJS_PUBLIC_KEY,
           );
@@ -398,6 +425,9 @@ export default function AIMarketingStudioTab({
           }
         } catch (err) {
           failed += 1;
+          if (!firstErrorMessage) {
+            firstErrorMessage = err?.text || err?.message || "Unknown send error";
+          }
           console.error("[marketing:send-email] failed", { email: target.email, err });
         }
       }
@@ -405,7 +435,11 @@ export default function AIMarketingStudioTab({
       setSending(false);
     }
 
-    showToast(failed ? `Sent ${ok}, failed ${failed}` : `Sent campaign to ${ok} recipients`);
+    if (failed) {
+      showToast(`Sent ${ok}, failed ${failed}${firstErrorMessage ? ` (${firstErrorMessage})` : ""}`);
+    } else {
+      showToast(`Sent campaign to ${ok} recipients`);
+    }
   };
 
   return (

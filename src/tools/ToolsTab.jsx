@@ -2,9 +2,7 @@ import React, { useState, useMemo } from "react";
 import { T } from "../shared";
 import { optimiseRoute, routeSummary } from "../utils/routeOptimiser";
 import { useScheduledJobs } from "../hooks/useScheduledJobs";
-import { getGoogleMapsApiKey, isGoogleMapsKeyConfigured } from "../config/maps";
-
-const GOOGLE_MAPS_API_KEY = getGoogleMapsApiKey();
+import { isGoogleMapsKeyConfigured, setGoogleMapsApiKey } from "../config/maps";
 
 export default function ToolsTab({
   scheduleClients,
@@ -13,6 +11,7 @@ export default function ToolsTab({
   scheduleSettings,
   mapsLoaded,
   mapsError,
+  mapsApiKey,
   mapRef,
   distanceFrom,
   setDistanceFrom,
@@ -29,7 +28,8 @@ export default function ToolsTab({
   setToolsMapMode,
   isMobile,
 }) {
-  const apiKeyMissing = !isGoogleMapsKeyConfigured(GOOGLE_MAPS_API_KEY) || mapsError === "missing_key";
+  const apiKeyMissing = !isGoogleMapsKeyConfigured(mapsApiKey) || mapsError === "missing_key";
+  const [apiKeyInput, setApiKeyInput] = useState("");
   const mapClients = Array.isArray(allClients) ? allClients.filter(c => c?.name) : [];
   const activeCount = mapClients.filter(c => String(c.status || "active").toLowerCase() === "active").length;
   const pausedCount = mapClients.filter(c => String(c.status || "").toLowerCase() === "paused").length;
@@ -51,7 +51,30 @@ export default function ToolsTab({
           </div>
         )}
         {apiKeyMissing && (
-          <div style={{ padding: "8px 16px", background: T.dangerLight, borderRadius: T.radiusSm, fontSize: 12, color: T.danger }}>⚠️ Add Google Maps API key to enable</div>
+          <div style={{ padding: "8px 16px", background: T.dangerLight, borderRadius: T.radiusSm, fontSize: 12, color: T.danger }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ Google Maps API key missing</div>
+            <div style={{ marginBottom: 6 }}>
+              Add `VITE_GOOGLE_MAPS_API_KEY` in Vercel and redeploy, or paste a key below for this browser.
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <input
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="AIza..."
+                style={{ minWidth: 220, padding: "6px 8px", borderRadius: 6, border: `1px solid ${T.border}`, fontSize: 12 }}
+              />
+              <button
+                onClick={() => {
+                  const next = setGoogleMapsApiKey(apiKeyInput);
+                  if (!isGoogleMapsKeyConfigured(next)) return;
+                  setApiKeyInput("");
+                }}
+                style={{ border: "none", borderRadius: 6, background: T.primary, color: "#fff", fontSize: 12, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}
+              >
+                Save Key
+              </button>
+            </div>
+          </div>
         )}
       </div>
 

@@ -5,8 +5,8 @@ import { supabase, supabaseReady } from "../lib/supabase";
 import { T } from "../shared";
 
 const GRID = 20;
-const MIN_ROOM_WIDTH = 120;
-const MIN_ROOM_HEIGHT = 100;
+const MIN_ROOM_WIDTH = 60;
+const MIN_ROOM_HEIGHT = 60;
 const CANVAS_HEIGHT = 700;
 const LOCAL_KEY_PREFIX = "floorplan_client_";
 const MAX_IMAGE_MB = 15;
@@ -495,11 +495,13 @@ async function detectRoomFromPoint({
   const raw = ctx.getImageData(0, 0, w, h).data;
   const size = w * h;
   const bright = new Uint8Array(size);
+  const wall = new Uint8Array(size);
 
   for (let i = 0; i < size; i += 1) {
     const p = i * 4;
     const lum = (0.2126 * raw[p]) + (0.7152 * raw[p + 1]) + (0.0722 * raw[p + 2]);
     bright[i] = lum > 224 ? 1 : 0;
+    wall[i] = lum < 188 ? 1 : 0;
   }
 
   // Erode bright regions slightly to avoid leaking through thin door openings.
@@ -667,6 +669,87 @@ async function detectRoomFromPoint({
   const fill = count / boxArea;
   if (fill < 0.45) return null;
 
+  // Snap bounds toward nearby wall lines for tighter room fitting.
+  const integral = new Int32Array((w + 1) * (h + 1));
+  for (let y = 1; y <= h; y += 1) {
+    let row = 0;
+    for (let x = 1; x <= w; x += 1) {
+      row += wall[(y - 1) * w + (x - 1)] ? 1 : 0;
+      integral[y * (w + 1) + x] = integral[(y - 1) * (w + 1) + x] + row;
+    }
+  }
+  const rectSum = (x1, y1, x2, y2) => {
+    const ax = clamp(Math.floor(Math.min(x1, x2)), 0, w);
+    const bx = clamp(Math.ceil(Math.max(x1, x2)), 0, w);
+    const ay = clamp(Math.floor(Math.min(y1, y2)), 0, h);
+    const by = clamp(Math.ceil(Math.max(y1, y2)), 0, h);
+    if (bx <= ax || by <= ay) return 0;
+    const idx = (yy, xx) => (yy * (w + 1)) + xx;
+    return integral[idx(by, bx)] - integral[idx(ay, bx)] - integral[idx(by, ax)] + integral[idx(ay, ax)];
+  };
+  const yPad = Math.max(4, Math.floor(boxH * 0.08));
+  const xPad = Math.max(4, Math.floor(boxW * 0.08));
+  const minYScan = clamp(minY + yPad, 0, h - 1);
+  const maxYScan = clamp(maxY - yPad, 0, h - 1);
+  const minXScan = clamp(minX + xPad, 0, w - 1);
+  const maxXScan = clamp(maxX - xPad, 0, w - 1);
+  const edgeScan = 26;
+
+  const bestColumnNear = (originX) => {
+    let bestX = originX;
+    let bestScore = -1e9;
+    for (let x = clamp(originX - edgeScan, 0, w - 1); x <= clamp(originX + edgeScan, 0, w - 1); x += 1) {
+      const wallCount = rectSum(x - 1, minYScan, x + 2, maxYScan + 1);
+      const distancePenalty = Math.abs(x - originX) * 2.6;
+      const score = wallCount - distancePenalty;
+      if (score > bestScore) {
+        bestScore = score;
+        bestX = x;
+      }
+    }
+    return bestX;
+  };
+  const bestRowNear = (originY) => {
+    let bestY = originY;
+    let bestScore = -1e9;
+    for (let y = clamp(originY - edgeScan, 0, h - 1); y <= clamp(originY + edgeScan, 0, h - 1); y += 1) {
+      const wallCount = rectSum(minXScan, y - 1, maxXScan + 1, y + 2);
+      const distancePenalty = Math.abs(y - originY) * 2.6;
+      const score = wallCount - distancePenalty;
+      if (score > bestScore) {
+        bestScore = score;
+        bestY = y;
+      }
+    }
+    return bestY;
+  };
+
+  const snappedLeft = bestColumnNear(minX);
+  const snappedRight = bestColumnNear(maxX);
+  const snappedTop = bestRowNear(minY);
+  const snappedBottom = bestRowNear(maxY);
+
+  let refinedMinX = Math.min(snappedLeft, snappedRight);
+  let refinedMaxX = Math.max(snappedLeft, snappedRight);
+  let refinedMinY = Math.min(snappedTop, snappedBottom);
+  let refinedMaxY = Math.max(snappedTop, snappedBottom);
+
+  if ((refinedMaxX - refinedMinX) < 16 || (refinedMaxY - refinedMinY) < 16) {
+    refinedMinX = minX;
+    refinedMaxX = maxX;
+    refinedMinY = minY;
+    refinedMaxY = maxY;
+  }
+
+  minX = refinedMinX;
+  maxX = refinedMaxX;
+  minY = refinedMinY;
+  maxY = refinedMaxY;
+
+  const finalW = (maxX - minX) + 1;
+  const finalH = (maxY - minY) + 1;
+  if (finalW < 14 || finalH < 14) return null;
+
   const scaleX = targetWidth / w;
   const scaleY = targetHeight / h;
   return buildRoomFromBounds({
@@ -734,6 +817,8 @@ export default function FloorPlanPage() {
   const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [pinModeRoomId, setPinModeRoomId] = useState(null);
   const [pinDraftNote, setPinDraftNote] = useState("");
+  const [inlineRenameRoomId, setInlineRenameRoomId] = useState(null);
+  const [inlineRenameValue, setInlineRenameValue] = useState("");
 
   const [referenceImagePath, setReferenceImagePath] = useState("");
   const [referenceImageUrl, setReferenceImageUrl] = useState("");
@@ -792,6 +877,15 @@ export default function FloorPlanPage() {
     }
   }, [activeSectionId, rooms, selectedRoomId]);
 
+  useEffect(() => {
+    if (!inlineRenameRoomId) return;
+    const roomExists = rooms.some((room) => String(room.id) === String(inlineRenameRoomId));
+    if (!roomExists) {
+      setInlineRenameRoomId(null);
+      setInlineRenameValue("");
+    }
+  }, [inlineRenameRoomId, rooms]);
+
   const upsertRoom = useCallback((roomId, updates) => {
     setRooms((prev) => prev.map((room) => (
       String(room.id) === String(roomId)
@@ -804,7 +898,24 @@ export default function FloorPlanPage() {
     setRooms((prev) => prev.filter((room) => String(room.id) !== String(roomId)));
     setSelectedRoomId((prev) => (String(prev) === String(roomId) ? null : prev));
     setPinModeRoomId((prev) => (String(prev) === String(roomId) ? null : prev));
+    setInlineRenameRoomId((prev) => (String(prev) === String(roomId) ? null : prev));
   }, []);
+
+  const beginInlineRename = useCallback((room) => {
+    if (!room?.id) return;
+    setSelectedRoomId(room.id);
+    setInlineRenameRoomId(room.id);
+    setInlineRenameValue(String(room.name || ""));
+  }, []);
+
+  const commitInlineRename = useCallback((room, nextValue) => {
+    if (!room?.id) return;
+    const trimmed = String(nextValue || "").trim();
+    const fallback = String(room.name || "Room").trim() || "Room";
+    upsertRoom(room.id, { name: trimmed || fallback });
+    setInlineRenameRoomId((prev) => (String(prev) === String(room.id) ? null : prev));
+    setInlineRenameValue("");
+  }, [upsertRoom]);
 
   const addRoom = useCallback(() => {
     setRooms((prev) => {
@@ -849,11 +960,15 @@ export default function FloorPlanPage() {
       );
       if (existing) {
         upsertRoom(existing.id, {
+          x: detected.x,
+          y: detected.y,
+          width: detected.width,
+          height: detected.height,
           difficulty_level: paintColorKey || defaultColorKey,
           section_key: activeSectionId || defaultSectionKey,
         });
         setSelectedRoomId(existing.id);
-        setNotice(`Updated "${existing.name || "Room"}" color from click.`);
+        setNotice(`Updated "${existing.name || "Room"}" to detected room bounds and color.`);
         return;
       }
 
@@ -1873,16 +1988,61 @@ export default function FloorPlanPage() {
                       onMouseDown={() => {
                         setSelectedRoomId(room.id);
                       }}
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
                         setSelectedRoomId(room.id);
 
                         if (annotateFromImageMode && !isPinMode) {
-                          upsertRoom(room.id, {
-                            difficulty_level: paintColorKey || defaultColorKey,
-                            section_key: activeSectionId || room.section_key || defaultSectionKey,
-                          });
-                          setNotice(`Applied "${getColorMeta(paintColorKey)?.label || "selected color"}" to ${room.name || "room"}.`);
+                          const canvasRect = canvasRef.current?.getBoundingClientRect();
+                          if (!canvasRect || !referenceImageUrl) {
+                            upsertRoom(room.id, {
+                              difficulty_level: paintColorKey || defaultColorKey,
+                              section_key: activeSectionId || room.section_key || defaultSectionKey,
+                            });
+                            setNotice(`Applied "${getColorMeta(paintColorKey)?.label || "selected color"}" to ${room.name || "room"}.`);
+                            return;
+                          }
+
+                          setAddingFromImage(true);
+                          setError("");
+                          setNotice("");
+                          try {
+                            const clickX = clamp(e.clientX - canvasRect.left, 0, canvasRect.width);
+                            const clickY = clamp(e.clientY - canvasRect.top, 0, canvasRect.height);
+                            const detected = await detectRoomFromPoint({
+                              imageUrl: referenceImageUrl,
+                              targetWidth: Math.max(1, Math.round(canvasRect.width)),
+                              targetHeight: Math.max(1, Math.round(canvasRect.height)),
+                              clickX,
+                              clickY,
+                              roomIndex: rooms.length,
+                              defaultColorKey,
+                              sectionKey: activeSectionId || room.section_key || defaultSectionKey,
+                            });
+
+                            if (detected) {
+                              upsertRoom(room.id, {
+                                x: detected.x,
+                                y: detected.y,
+                                width: detected.width,
+                                height: detected.height,
+                                difficulty_level: paintColorKey || defaultColorKey,
+                                section_key: activeSectionId || room.section_key || defaultSectionKey,
+                              });
+                              setNotice(`Refit "${room.name || "room"}" to detected walls and applied "${getColorMeta(paintColorKey)?.label || "selected color"}".`);
+                            } else {
+                              upsertRoom(room.id, {
+                                difficulty_level: paintColorKey || defaultColorKey,
+                                section_key: activeSectionId || room.section_key || defaultSectionKey,
+                              });
+                              setNotice(`Could not refit walls from this click. Applied "${getColorMeta(paintColorKey)?.label || "selected color"}" only.`);
+                            }
+                          } catch (err) {
+                            console.error("[floor-plan] room refit from overlay click failed", err);
+                            setError(err?.message || "Failed to refit room from click.");
+                          } finally {
+                            setAddingFromImage(false);
+                          }
                           return;
                         }
 
@@ -1939,18 +2099,130 @@ export default function FloorPlanPage() {
                             gap: 6,
                             maxWidth: "calc(100% - 14px)",
                           }}>
-                            <div style={{ fontSize: 11, fontWeight: 800, color: "#27453C", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {room.name || "Room"}
-                            </div>
+                            {String(inlineRenameRoomId) === String(room.id) ? (
+                              <input
+                                autoFocus
+                                value={inlineRenameValue}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => setInlineRenameValue(e.target.value)}
+                                onBlur={() => commitInlineRename(room, inlineRenameValue)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    commitInlineRename(room, inlineRenameValue);
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    setInlineRenameRoomId(null);
+                                    setInlineRenameValue("");
+                                  }
+                                }}
+                                style={{
+                                  minWidth: 56,
+                                  width: 130,
+                                  maxWidth: "100%",
+                                  fontSize: 11,
+                                  fontWeight: 800,
+                                  color: "#27453C",
+                                  border: `1px solid ${border}80`,
+                                  borderRadius: 6,
+                                  background: "#FFFFFF",
+                                  padding: "1px 6px",
+                                  outline: "none",
+                                }}
+                              />
+                            ) : (
+                              <button
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  beginInlineRename(room);
+                                }}
+                                title="Click to rename room"
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 800,
+                                  color: "#27453C",
+                                  whiteSpace: "nowrap",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  border: "none",
+                                  background: "transparent",
+                                  padding: 0,
+                                  margin: 0,
+                                  cursor: "text",
+                                  textAlign: "left",
+                                  maxWidth: 130,
+                                }}
+                              >
+                                {room.name || "Room"}
+                              </button>
+                            )}
                             <div style={{ fontSize: 10, fontWeight: 700, color: "#47655A", opacity: 0.9 }}>
                               {meta?.label || "Color"}
                             </div>
                           </div>
                         ) : (
                           <>
-                            <div style={{ fontSize: 12, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "70%" }}>
-                              {room.name || "Room"}
-                            </div>
+                            {String(inlineRenameRoomId) === String(room.id) ? (
+                              <input
+                                autoFocus
+                                value={inlineRenameValue}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => setInlineRenameValue(e.target.value)}
+                                onBlur={() => commitInlineRename(room, inlineRenameValue)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    commitInlineRename(room, inlineRenameValue);
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    setInlineRenameRoomId(null);
+                                    setInlineRenameValue("");
+                                  }
+                                }}
+                                style={{
+                                  minWidth: 56,
+                                  width: 150,
+                                  maxWidth: "70%",
+                                  fontSize: 12,
+                                  fontWeight: 800,
+                                  color: text,
+                                  border: `1px solid ${border}90`,
+                                  borderRadius: 6,
+                                  background: "rgba(255,255,255,0.92)",
+                                  padding: "2px 6px",
+                                  outline: "none",
+                                }}
+                              />
+                            ) : (
+                              <button
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  beginInlineRename(room);
+                                }}
+                                title="Click to rename room"
+                                style={{
+                                  fontSize: 12,
+                                  fontWeight: 800,
+                                  whiteSpace: "nowrap",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  maxWidth: "70%",
+                                  border: "none",
+                                  background: "transparent",
+                                  color: text,
+                                  padding: 0,
+                                  margin: 0,
+                                  cursor: "text",
+                                  textAlign: "left",
+                                }}
+                              >
+                                {room.name || "Room"}
+                              </button>
+                            )}
                             <div style={{ fontSize: 10, fontWeight: 700, opacity: 0.92 }}>
                               {meta?.label || "Color"}
                             </div>

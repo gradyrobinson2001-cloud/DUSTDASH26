@@ -36,6 +36,12 @@ function calcWorkedMinutes(entry) {
   return Math.max(0, grossMinutes - breakMinutes);
 }
 
+function isMissingOnConflictConstraint(err) {
+  const code = String(err?.code || "");
+  const message = String(err?.message || "").toLowerCase();
+  return code === "42P10" || message.includes("no unique or exclusion constraint matching the on conflict");
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed." });
 
@@ -86,15 +92,30 @@ export default async function handler(req, res) {
     const breakMinutes = clampBreakMinutes(body?.breakMinutes);
     const now = new Date().toISOString();
 
-    const { data: existing, error: existingError } = await admin
+    const { data: existingRows, error: existingError } = await admin
       .from("staff_time_entries")
       .select("*")
       .eq("staff_id", targetStaffId)
       .eq("work_date", workDate)
-      .maybeSingle();
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .limit(10);
     if (existingError) throw new ApiError(500, "Failed to load clock entry.", existingError.message);
 
-    let entry = existing;
+    const rows = Array.isArray(existingRows) ? existingRows : [];
+    const openEntry = rows.find((row) => row?.clock_in_at && !row?.clock_out_at) || null;
+    const closedEntry = rows.find((row) => row?.clock_in_at && row?.clock_out_at) || null;
+    const draftEntry = rows.find((row) => !row?.clock_in_at) || null;
+
+    if (rows.length > 1) {
+      console.warn("[api/staff/clock] duplicate entries detected for staff/date", {
+        staffId: targetStaffId,
+        workDate,
+        count: rows.length,
+      });
+    }
+
+    let entry = openEntry || closedEntry || draftEntry || null;
 
     if (action === "clock_in") {
       if (entry?.clock_in_at && entry?.clock_out_at) {
@@ -119,13 +140,39 @@ export default async function handler(req, res) {
         updated_at: now,
       };
 
-      const { data, error } = await admin
-        .from("staff_time_entries")
-        .upsert(payload, { onConflict: "staff_id,work_date" })
-        .select("*")
-        .single();
-      if (error) throw new ApiError(500, "Failed to clock in.", error.message);
-      entry = data;
+      if (entry?.id) {
+        const { data, error } = await admin
+          .from("staff_time_entries")
+          .update(payload)
+          .eq("id", entry.id)
+          .select("*")
+          .single();
+        if (error) throw new ApiError(500, "Failed to clock in.", error.message);
+        entry = data;
+      } else {
+        const { data, error } = await admin
+          .from("staff_time_entries")
+          .upsert(payload, { onConflict: "staff_id,work_date" })
+          .select("*")
+          .single();
+
+        if (error) {
+          if (!isMissingOnConflictConstraint(error)) {
+            throw new ApiError(500, "Failed to clock in.", error.message);
+          }
+          const fallbackInsert = await admin
+            .from("staff_time_entries")
+            .insert(payload)
+            .select("*")
+            .single();
+          if (fallbackInsert.error) {
+            throw new ApiError(500, "Failed to clock in.", fallbackInsert.error.message);
+          }
+          entry = fallbackInsert.data;
+        } else {
+          entry = data;
+        }
+      }
     }
 
     if (action === "clock_out") {
@@ -148,8 +195,7 @@ export default async function handler(req, res) {
           break_minutes: breakMinutes,
           updated_at: now,
         })
-        .eq("staff_id", targetStaffId)
-        .eq("work_date", workDate)
+        .eq("id", entry.id)
         .select("*")
         .single();
       if (error) throw new ApiError(500, "Failed to clock out.", error.message);

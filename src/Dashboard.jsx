@@ -26,6 +26,7 @@ import { usePhotos }           from "./hooks/usePhotos";
 import { useProfiles }         from "./hooks/useProfiles";
 import { useStaffTimeEntries } from "./hooks/useStaffTimeEntries";
 import { useStaffBroadcast }   from "./hooks/useStaffBroadcast";
+import { useExpenses }         from "./hooks/useExpenses";
 import { useBrowserNotifications } from "./hooks/useBrowserNotifications";
 
 import { Toast, Modal } from "./components/ui";
@@ -37,6 +38,7 @@ import EmailCenterTab  from "./emails/EmailCenterTab";
 import AIMarketingStudioTab from "./marketing/AIMarketingStudioTab";
 import PaymentsTab     from "./finance/PaymentsTab";
 import PayrollTab      from "./finance/PayrollTab";
+import ExpensesTab     from "./finance/ExpensesTab";
 import PhotosTab       from "./photos/PhotosTab";
 import ToolsTab        from "./tools/ToolsTab";
 import CalendarTab     from "./scheduling/CalendarTab";
@@ -77,7 +79,6 @@ const EMAILJS_BULK_TEMPLATE_ID     =
   EMAILJS_UNIVERSAL_TEMPLATE_ID ||
   EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY           = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
-const GOOGLE_MAPS_API_KEY          = getGoogleMapsApiKey();
 const isLikelyEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 
 const PAGE_TO_PATH = {
@@ -214,6 +215,18 @@ export default function Dashboard() {
   const { timeEntries: staffTimeEntries }                               = useStaffTimeEntries();
   const { activeBroadcast, publishBroadcast, clearBroadcast }           = useStaffBroadcast();
   const {
+    expenses,
+    budgets: expenseBudgets,
+    error: expensesError,
+    addExpense,
+    updateExpense,
+    removeExpense,
+    refreshExpenses,
+    refreshBudgets,
+    upsertBudget,
+    removeBudget,
+  } = useExpenses();
+  const {
     supported: notificationSupported,
     permission: notificationPermission,
     enabled: notificationsEnabled,
@@ -271,6 +284,7 @@ export default function Dashboard() {
   const [toolsMapMode,       setToolsMapMode]        = useState("clients");
   const [mapsLoaded,         setMapsLoaded]          = useState(false);
   const [mapsError,          setMapsError]           = useState("");
+  const [mapsApiKey,         setMapsApiKey]          = useState(() => getGoogleMapsApiKey());
   const mapRef         = useRef(null);
   const mapInstanceRef = useRef(null);
   const mapMarkersRef  = useRef([]);
@@ -346,6 +360,8 @@ export default function Dashboard() {
         refreshEmailHistory(),
         refreshProfiles(),
         refreshPhotos(),
+        refreshExpenses(),
+        refreshBudgets(),
       ]);
     } finally {
       refreshAllDataRunningRef.current = false;
@@ -358,6 +374,8 @@ export default function Dashboard() {
     refreshPhotos,
     refreshProfiles,
     refreshQuotes,
+    refreshExpenses,
+    refreshBudgets,
     refreshScheduledJobs,
   ]);
 
@@ -448,6 +466,16 @@ export default function Dashboard() {
     prevEnqCount.current = enquiries.length;
   }, [enquiries, notifyBrowser, showToast]);
 
+  useEffect(() => {
+    const syncMapsApiKey = () => setMapsApiKey(getGoogleMapsApiKey());
+    window.addEventListener("dustdash:maps-key-updated", syncMapsApiKey);
+    window.addEventListener("storage", syncMapsApiKey);
+    return () => {
+      window.removeEventListener("dustdash:maps-key-updated", syncMapsApiKey);
+      window.removeEventListener("storage", syncMapsApiKey);
+    };
+  }, []);
+
   // Google Maps
   useEffect(() => {
     if (window.google?.maps) {
@@ -455,11 +483,13 @@ export default function Dashboard() {
       setMapsError("");
       return;
     }
-    if (!isGoogleMapsKeyConfigured(GOOGLE_MAPS_API_KEY)) {
+    if (!isGoogleMapsKeyConfigured(mapsApiKey)) {
+      setMapsLoaded(false);
       setMapsError("missing_key");
       return;
     }
 
+    setMapsError("");
     const onLoad = () => {
       setMapsLoaded(true);
       setMapsError("");
@@ -470,7 +500,13 @@ export default function Dashboard() {
       showToast("⚠️ Google Maps failed to load. Check API key and domain restrictions.");
     };
 
+    const scriptSrc = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(mapsApiKey)}&libraries=places`;
     let script = document.getElementById("google-maps-script");
+    if (script && script.getAttribute("data-maps-key") !== mapsApiKey) {
+      script.remove();
+      script = null;
+      setMapsLoaded(false);
+    }
     if (script) {
       script.addEventListener("load", onLoad);
       script.addEventListener("error", onError);
@@ -482,7 +518,8 @@ export default function Dashboard() {
 
     script = document.createElement("script");
     script.id = "google-maps-script";
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places`;
+    script.setAttribute("data-maps-key", mapsApiKey);
+    script.src = scriptSrc;
     script.async = true;
     script.defer = true;
     script.onload = onLoad;
@@ -492,7 +529,7 @@ export default function Dashboard() {
       script.onload = null;
       script.onerror = null;
     };
-  }, [showToast]);
+  }, [mapsApiKey, showToast]);
 
   useEffect(() => {
     if (page === "tools" && mapsLoaded && mapRef.current && !mapInstanceRef.current) {
@@ -1164,6 +1201,7 @@ export default function Dashboard() {
   const quotesNeedingFollowUp = enquiries.filter(e => e.status === "quote_sent" && daysSince(e.quote_sent_at || e.quoteSentAt || e.timestamp) >= 3);
   const unpaidJobsCount       = scheduledJobs.filter(j => j.status === "completed" && j.payment_status !== "paid" && j.paymentStatus !== "paid").length;
   const addonServices         = Object.entries(pricing).filter(([_, v]) => v.category === "addon");
+  const expenseNeedsReview    = expenses.filter((row) => row.status !== "approved" || Number(row.ai_confidence || 0) < 0.62).length;
 
   useEffect(() => {
     if (!supabaseReady || !supabase) {
@@ -1217,7 +1255,7 @@ export default function Dashboard() {
         { id: "quotes", label: "Quotes", icon: "💰", badge: quotes.filter(q => q.status === "pending_approval").length, roles: ["admin", "finance"] },
         { id: "payments", label: "Invoices", icon: "🧾", badge: unpaidJobsCount, roles: ["admin", "finance"] },
         { id: "payroll", label: "Payroll", icon: "💵", badge: 0, roles: ["admin", "finance"] },
-        { id: "expenses", label: "Expenses", icon: "📚", badge: 0, roles: ["admin", "finance"] },
+        { id: "expenses", label: "Expenses", icon: "📚", badge: expenseNeedsReview, roles: ["admin", "finance"] },
         { id: "profit_reports", label: "Profit Reports", icon: "📉", badge: 0, roles: ["admin", "finance"] },
       ],
     },
@@ -1249,7 +1287,7 @@ export default function Dashboard() {
         { id: "ai_summary", label: "AI Job Summary", icon: "🤖", badge: 0, roles: ["admin"] },
       ],
     },
-  ]), [clients.length, floorPlanCount, quotes, unpaidJobsCount, quotesNeedingFollowUp.length]);
+  ]), [clients.length, expenseNeedsReview, floorPlanCount, quotes, unpaidJobsCount, quotesNeedingFollowUp.length]);
 
   const notificationsCount = useMemo(() => {
     const today = new Date();
@@ -1447,7 +1485,7 @@ export default function Dashboard() {
         {page === "payroll"  && <PayrollTab showToast={showToast} isMobile={isMobile} />}
         {page === "payments" && <PaymentsTab scheduledJobs={scheduledJobs} setScheduledJobs={setScheduledJobs} scheduleClients={scheduleClients} invoices={invoices} setInvoices={setInvoices} paymentFilter={paymentFilter} setPaymentFilter={setPaymentFilter} setShowInvoiceModal={setShowInvoiceModal} showToast={showToast} isMobile={isMobile} />}
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} showToast={showToast} isMobile={isMobile} refreshPhotos={refreshPhotos} getSignedUrl={getSignedUrl} />}
-        {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} allClients={clients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} toolsMapMode={toolsMapMode} setToolsMapMode={setToolsMapMode} isMobile={isMobile} />}
+        {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} allClients={clients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapsApiKey={mapsApiKey} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} toolsMapMode={toolsMapMode} setToolsMapMode={setToolsMapMode} isMobile={isMobile} />}
         {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} photos={photos} />}
         {page === "rota"     && <RotaTab
           scheduledJobs={scheduledJobs}
@@ -1508,7 +1546,18 @@ export default function Dashboard() {
         {page === "form"     && <FormTab showToast={showToast} isMobile={isMobile} />}
         {page === "pricing"  && <PricingTab pricing={pricing} setEditPriceModal={setEditPriceModal} setAddServiceModal={setAddServiceModal} removeService={removeService} isMobile={isMobile} />}
         {page === "analytics" && <ComingSoonTab title="Analytics" description="Weekly trends, conversion rates, and staff efficiency dashboards can be surfaced here." />}
-        {page === "expenses" && <ComingSoonTab title="Expenses" description="Track expense claims, categories, and supplier bills in this finance workspace." />}
+        {page === "expenses" && <ExpensesTab
+          expenses={expenses}
+          budgets={expenseBudgets}
+          addExpense={addExpense}
+          updateExpense={updateExpense}
+          removeExpense={removeExpense}
+          upsertBudget={upsertBudget}
+          removeBudget={removeBudget}
+          loadError={expensesError}
+          showToast={showToast}
+          isMobile={isMobile}
+        />}
         {page === "profit_reports" && <ComingSoonTab title="Profit Reports" description="Build margin and P&L views by day, week, suburb, and staff team." />}
         {page === "sms_marketing" && <ComingSoonTab title="SMS Marketing" description="Template-driven SMS campaigns and reminders can be managed from this tab." />}
         {page === "review_requests" && <ComingSoonTab title="Review Requests" description="Queue and send post-job review requests automatically after completion." />}
