@@ -11,26 +11,23 @@ import { T } from './shared';
 import { calcPayrollBreakdown, calcWorkedMinutesFromEntry, fmtCurrency } from './utils/payroll';
 
 // ═══════════════════════════════════════════════════════════
-// STAFF PORTAL
+// STAFF PORTAL — Minimal Redesign
 // Auth: StaffLogin (email + password → Supabase session)
-// Data: Supabase Realtime — filters by assigned_staff + is_published
-// Photos: Supabase Storage
-// Tabs: Today | Rota | Hours | Payslips
+// Tabs: Today | Group Rota | Hours
 // ═══════════════════════════════════════════════════════════
 
-// ─── Demo data ───────────────────────────────────────────
 const TODAY = new Date().toISOString().split('T')[0];
 
 const DEMO_JOBS = [
-  { id: 'demo_1', client_id: 'dc1', client_name: 'Sarah Mitchell', suburb: 'Buderim',   date: TODAY, start_time: '08:00', end_time: '10:15', duration: 135, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 3, bathrooms: 2, living: 1, kitchen: 1, extras: ['oven'] },
-  { id: 'demo_2', client_id: 'dc2', client_name: 'James Cooper',   suburb: 'Maroochydore', date: TODAY, start_time: '10:45', end_time: '12:45', duration: 120, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 4, bathrooms: 2, living: 2, kitchen: 1, extras: [] },
-  { id: 'demo_3', client_id: 'dc3', client_name: 'Emma Collins',   suburb: 'Mooloolaba', date: TODAY, start_time: '13:30', end_time: '15:30', duration: 120, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 2, bathrooms: 1, living: 1, kitchen: 1, extras: ['windows'] },
+  { id: 'demo_1', client_id: 'dc1', client_name: 'Sarah Mitchell', suburb: 'Buderim', date: TODAY, start_time: '08:00', end_time: '10:15', duration: 135, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 3, bathrooms: 2, living: 1, kitchen: 1, extras: ['oven'] },
+  { id: 'demo_2', client_id: 'dc2', client_name: 'James Cooper', suburb: 'Maroochydore', date: TODAY, start_time: '10:45', end_time: '12:45', duration: 120, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 4, bathrooms: 2, living: 2, kitchen: 1, extras: [] },
+  { id: 'demo_3', client_id: 'dc3', client_name: 'Emma Collins', suburb: 'Mooloolaba', date: TODAY, start_time: '13:30', end_time: '15:30', duration: 120, assigned_staff: ['demo'], is_published: true, job_status: 'scheduled', bedrooms: 2, bathrooms: 1, living: 1, kitchen: 1, extras: ['windows'] },
 ];
 
 const DEMO_CLIENTS = [
-  { id: 'dc1', name: 'Sarah Mitchell', address: '23 Ballinger Crescent, Buderim QLD 4556',      notes: '2 dogs – keep gate closed',           access_notes: 'Key under front doormat, alarm 1234#', frequency: 'weekly' },
-  { id: 'dc2', name: 'James Cooper',   address: '15 Duporth Avenue, Maroochydore QLD 4558',     notes: 'Baby sleeps 1–3pm, please be quiet',  access_notes: 'Ring doorbell, client WFH',           frequency: 'fortnightly' },
-  { id: 'dc3', name: 'Emma Collins',   address: '5 Parkyn Parade, Mooloolaba QLD 4557',         notes: '',                                    access_notes: 'Lockbox side gate – code 5678',       frequency: 'weekly' },
+  { id: 'dc1', name: 'Sarah Mitchell', address: '23 Ballinger Crescent, Buderim QLD 4556', notes: '2 dogs – keep gate closed', access_notes: 'Key under front doormat, alarm 1234#', frequency: 'weekly' },
+  { id: 'dc2', name: 'James Cooper', address: '15 Duporth Avenue, Maroochydore QLD 4558', notes: 'Baby sleeps 1–3pm, please be quiet', access_notes: 'Ring doorbell, client WFH', frequency: 'fortnightly' },
+  { id: 'dc3', name: 'Emma Collins', address: '5 Parkyn Parade, Mooloolaba QLD 4557', notes: '', access_notes: 'Lockbox side gate – code 5678', frequency: 'weekly' },
 ];
 
 const DEFAULT_BREAK_MINUTES = 30;
@@ -47,7 +44,7 @@ function fmtMins(m) {
 }
 function fmtHours(hours) {
   const n = Number(hours) || 0;
-  return `${n.toFixed(2)}h`;
+  return `${n.toFixed(1)}h`;
 }
 function fmtTime(iso) {
   if (!iso) return '—';
@@ -57,7 +54,7 @@ function fmtTime(iso) {
 }
 function weekDays(anchorDate) {
   const d = new Date(anchorDate);
-  const day = d.getDay(); // 0=Sun
+  const day = d.getDay();
   const mon = new Date(d); mon.setDate(d.getDate() - ((day + 6) % 7));
   return Array.from({ length: 7 }, (_, i) => {
     const dd = new Date(mon); dd.setDate(mon.getDate() + i);
@@ -80,17 +77,17 @@ function fmtWeekRange(monday) {
   const s = new Date(monday);
   s.setDate(m.getDate() + 6);
   const opts = { day: 'numeric', month: 'short' };
-  return `${m.toLocaleDateString('en-AU', opts)} - ${s.toLocaleDateString('en-AU', opts)}`;
+  return `${m.toLocaleDateString('en-AU', opts)} – ${s.toLocaleDateString('en-AU', opts)}`;
 }
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const DAY_SUFFIX = ['th', 'st', 'nd', 'rd'];
+const DAY_LABELS_FULL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 function dayOrdinalLabel(dateStr) {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return '--';
   const day = d.getDate();
   const modulo100 = day % 100;
-  const suffix = (modulo100 >= 11 && modulo100 <= 13) ? 'th' : (DAY_SUFFIX[day % 10] || 'th');
+  const suffix = (modulo100 >= 11 && modulo100 <= 13) ? 'th' : (['th', 'st', 'nd', 'rd'][day % 10] || 'th');
   return `${day}${suffix}`;
 }
 
@@ -137,25 +134,21 @@ function normalizePhone(v) {
 function resolveClientProfile(job, clients) {
   const list = Array.isArray(clients) ? clients : [];
   if (!list.length) return null;
-
   const clientId = job?.client_id || job?.clientId;
   if (clientId) {
     const byId = list.find(c => String(c.id) === String(clientId));
     if (byId) return byId;
   }
-
   const jobEmail = normalizeText(job?.email);
   if (jobEmail) {
     const byEmail = list.find(c => normalizeText(c?.email) === jobEmail);
     if (byEmail) return byEmail;
   }
-
   const jobPhone = normalizePhone(job?.phone);
   if (jobPhone) {
     const byPhone = list.find(c => normalizePhone(c?.phone) === jobPhone);
     if (byPhone) return byPhone;
   }
-
   const jobName = normalizeText(job?.client_name || job?.clientName);
   const jobSuburb = normalizeText(job?.suburb);
   if (jobName) {
@@ -165,7 +158,6 @@ function resolveClientProfile(job, clients) {
     );
     if (byNameSuburb) return byNameSuburb;
   }
-
   return null;
 }
 
@@ -177,9 +169,7 @@ function buildJobSnapshotProfile(job) {
   const hasSnapshot =
     Boolean(job?.address || job?.email || job?.phone || job?.notes || job?.access_notes || job?.accessNotes || job?.frequency || job?.preferred_day || job?.preferredDay || job?.preferred_time || job?.preferredTime) ||
     [bedrooms, bathrooms, living, kitchen].some(v => v !== null && v !== undefined);
-
   if (!hasSnapshot) return null;
-
   return {
     id: job?.client_id || job?.clientId || `job-${job?.id || Date.now()}`,
     name: job?.client_name || job?.clientName || "Client",
@@ -190,10 +180,7 @@ function buildJobSnapshotProfile(job) {
     frequency: job?.frequency || "",
     preferred_day: job?.preferred_day || job?.preferredDay || "",
     preferred_time: job?.preferred_time || job?.preferredTime || "",
-    bedrooms,
-    bathrooms,
-    living,
-    kitchen,
+    bedrooms, bathrooms, living, kitchen,
     email: job?.email || "",
     phone: job?.phone || "",
     source: "job_snapshot",
@@ -204,12 +191,7 @@ function isMissingClockTableMessage(raw) {
   const msg = String(raw || '').toLowerCase();
   return (
     msg.includes('staff_time_entries')
-    && (
-      msg.includes('does not exist')
-      || msg.includes('could not find table')
-      || msg.includes('schema cache')
-      || msg.includes('relation')
-    )
+    && (msg.includes('does not exist') || msg.includes('could not find table') || msg.includes('schema cache') || msg.includes('relation'))
   );
 }
 
@@ -222,17 +204,13 @@ function readLocalClockEntries(staffId) {
     const raw = localStorage.getItem(clockLocalKey(staffId));
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 function writeLocalClockEntries(staffId, rows) {
   try {
     localStorage.setItem(clockLocalKey(staffId), JSON.stringify(Array.isArray(rows) ? rows : []));
-  } catch {
-    // ignore local write failures
-  }
+  } catch {}
 }
 
 function filterClockEntriesForWeek(rows, weekStart) {
@@ -244,19 +222,56 @@ function filterClockEntriesForWeek(rows, weekStart) {
   });
 }
 
+// ─── Design Tokens ──────────────────────────────────────
+const S = {
+  // Colors - refined palette
+  bg: '#F7F6F3',
+  card: '#FFFFFF',
+  cardAlt: '#FAFAF8',
+  primary: '#2D3B35',
+  primarySoft: '#3D5A4C',
+  accent: '#5B7F62',
+  accentLight: '#EDF3EE',
+  accentPale: '#F4F8F5',
+  warm: '#C8A765',
+  warmLight: '#FBF6EC',
+  text: '#1A1A1A',
+  textSecondary: '#6B6B6B',
+  textTertiary: '#9B9B9B',
+  border: '#EBEBEB',
+  borderLight: '#F2F2F2',
+  danger: '#D4645C',
+  dangerLight: '#FDF0EF',
+  success: '#5B7F62',
+  successLight: '#EDF3EE',
+  blue: '#4A7C8A',
+  blueLight: '#EBF4F6',
+  // Shadows
+  shadow: '0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)',
+  shadowMd: '0 4px 12px rgba(0,0,0,0.06)',
+  shadowLg: '0 12px 32px rgba(0,0,0,0.08)',
+  // Radii
+  r: 16,
+  rSm: 12,
+  rXs: 8,
+  rPill: 100,
+  // Transitions
+  transition: 'all 0.2s ease',
+};
+
 // ─── Component ────────────────────────────────────────────
 export default function CleanerPortal() {
-  const [profile,      setProfile]      = useState(null);
+  const [profile, setProfile] = useState(null);
   const [authHydrating, setAuthHydrating] = useState(true);
-  const [demoMode,     setDemoMode]     = useState(false);
-  const [activeTab,    setActiveTab]    = useState('today');
+  const [demoMode, setDemoMode] = useState(false);
+  const [activeTab, setActiveTab] = useState('today');
   const [selectedDate, setSelectedDate] = useState(TODAY);
-  const [expandedJob,  setExpandedJob]  = useState(null);
-  const [photoType,    setPhotoType]    = useState('before');
-  const [toast,        setToast]        = useState(null);
+  const [expandedJob, setExpandedJob] = useState(null);
+  const [photoType, setPhotoType] = useState('before');
+  const [toast, setToast] = useState(null);
   const [activeTimers, setActiveTimers] = useState({});
-  const [localPhotos,  setLocalPhotos]  = useState({});
-  const [payslips,     setPayslips]     = useState([]);
+  const [localPhotos, setLocalPhotos] = useState({});
+  const [payslips, setPayslips] = useState([]);
   const [jobClientProfiles, setJobClientProfiles] = useState({});
   const [clockActionLoading, setClockActionLoading] = useState(false);
   const [breakMinutes, setBreakMinutes] = useState(DEFAULT_BREAK_MINUTES);
@@ -268,18 +283,15 @@ export default function CleanerPortal() {
   const [rotaViewMode, setRotaViewMode] = useState('all');
   const [expandedRotaRows, setExpandedRotaRows] = useState(() => new Set());
   const [clockOfflineFallback, setClockOfflineFallback] = useState(false);
+  const [rotaSelectedDay, setRotaSelectedDay] = useState(null);
 
   const timerRefs = useRef({});
   const cameraRef = useRef(null);
-  const fileRef   = useRef(null);
+  const fileRef = useRef(null);
   const uploadJobRef = useRef(null);
 
   const staffId = demoMode ? 'demo' : profile?.id;
-
-  // ── Hooks ──────────────────────────────────────────────
-  // For staff portal: useScheduledJobs filters by assigned_staff + is_published
-  // Week for date strip
-  const weekDates = weekDays(selectedDate);
+  const weekDates_ = weekDays(selectedDate);
   const weekStart = getMonday(selectedDate);
 
   const { scheduledJobs, updateJob, refreshScheduledJobs } = useScheduledJobs(staffId ? { staffId } : {});
@@ -295,123 +307,68 @@ export default function CleanerPortal() {
     notify: notifyBrowser,
   } = useBrowserNotifications('dustdash_staff_notifications');
 
-  // ── Active jobs for selected date ──────────────────────
   const allJobs = demoMode ? DEMO_JOBS : scheduledJobs;
   const allClients = demoMode ? DEMO_CLIENTS : clients;
   const allTimeEntries = demoMode ? demoTimeEntries : timeEntries;
 
   const dayJobs = allJobs
-    .filter(j => {
-      const jDate = j.date;
-      return jDate === selectedDate && !j.is_break && !j.isBreak;
-    })
+    .filter(j => j.date === selectedDate && !j.is_break && !j.isBreak)
     .sort((a, b) => (a.start_time || a.startTime || '').localeCompare(b.start_time || b.startTime || ''));
   const dayJobIdsKey = dayJobs.map(j => String(j.id)).sort().join('|');
 
-  // ── Toast helper ───────────────────────────────────────
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   }, []);
 
+  // ── Auth hydration ─────────────────────────────────────
   useEffect(() => {
-    if (!supabaseReady || demoMode) {
-      setAuthHydrating(false);
-      return;
-    }
-
+    if (!supabaseReady || demoMode) { setAuthHydrating(false); return; }
     let cancelled = false;
-
     const loadStaffProfile = async (session) => {
       const user = session?.user || null;
-      if (!user) {
-        if (!cancelled) {
-          setProfile(null);
-          setAuthHydrating(false);
-        }
-        return;
-      }
-
-      const { data: prof, error: profErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
+      if (!user) { if (!cancelled) { setProfile(null); setAuthHydrating(false); } return; }
+      const { data: prof, error: profErr } = await supabase.from('profiles').select('*').eq('id', user.id).single();
       if (cancelled) return;
-
       if (profErr || !prof || prof.role !== 'staff' || !prof.is_active) {
-        console.error('[staff:auth-hydrate] invalid staff profile', profErr);
         await supabase.auth.signOut();
-        setProfile(null);
-        setAuthHydrating(false);
-        return;
+        setProfile(null); setAuthHydrating(false); return;
       }
-
-      setProfile(prof);
-      setAuthHydrating(false);
+      setProfile(prof); setAuthHydrating(false);
     };
-
     supabase.auth.getSession().then(async ({ data, error }) => {
       if (cancelled) return;
-      if (error) {
-        console.error('[staff:auth-hydrate] failed to load session', error);
-        setAuthHydrating(false);
-        return;
-      }
+      if (error) { setAuthHydrating(false); return; }
       await loadStaffProfile(data?.session || null);
     });
-
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
       loadStaffProfile(session || null);
     });
-
-    return () => {
-      cancelled = true;
-      subscription?.subscription?.unsubscribe?.();
-    };
+    return () => { cancelled = true; subscription?.subscription?.unsubscribe?.(); };
   }, [demoMode]);
 
   const enableStaffNotifications = useCallback(async () => {
-    if (!notificationSupported) {
-      showToast('⚠️ Browser notifications are not supported on this device.');
-      return;
-    }
+    if (!notificationSupported) { showToast('Notifications not supported on this device.'); return; }
     const result = await requestNotificationPermission();
-    if (result.ok) showToast('🔔 Notifications enabled');
-    else if (result.reason === 'denied') showToast('❌ Notifications blocked in browser settings');
+    if (result.ok) showToast('Notifications enabled');
+    else if (result.reason === 'denied') showToast('Notifications blocked in browser settings');
   }, [notificationSupported, requestNotificationPermission, showToast]);
 
   const prevBroadcastIdRef = useRef(null);
   useEffect(() => {
     const id = activeBroadcast?.id || null;
-    if (!id) {
-      prevBroadcastIdRef.current = null;
-      return;
-    }
+    if (!id) { prevBroadcastIdRef.current = null; return; }
     if (prevBroadcastIdRef.current && prevBroadcastIdRef.current !== id && document.visibilityState !== 'visible') {
-      notifyBrowser({
-        title: 'New owner broadcast',
-        body: String(activeBroadcast?.message || '').slice(0, 120),
-        tag: 'staff-broadcast',
-        requireInteraction: true,
-      });
+      notifyBrowser({ title: 'New owner broadcast', body: String(activeBroadcast?.message || '').slice(0, 120), tag: 'staff-broadcast', requireInteraction: true });
     }
     prevBroadcastIdRef.current = id;
   }, [activeBroadcast?.id, activeBroadcast?.message, notifyBrowser]);
 
   const prevDayJobsCountRef = useRef(dayJobs.length);
   useEffect(() => {
-    if (demoMode) {
-      prevDayJobsCountRef.current = dayJobs.length;
-      return;
-    }
+    if (demoMode) { prevDayJobsCountRef.current = dayJobs.length; return; }
     if (dayJobs.length > prevDayJobsCountRef.current && document.visibilityState !== 'visible') {
-      notifyBrowser({
-        title: 'New job assigned',
-        body: `${dayJobs.length} job${dayJobs.length === 1 ? '' : 's'} scheduled for ${new Date(selectedDate).toLocaleDateString('en-AU')}`,
-        tag: 'staff-jobs',
-      });
+      notifyBrowser({ title: 'New job assigned', body: `${dayJobs.length} job${dayJobs.length === 1 ? '' : 's'} scheduled`, tag: 'staff-jobs' });
     }
     prevDayJobsCountRef.current = dayJobs.length;
   }, [dayJobs.length, demoMode, notifyBrowser, selectedDate]);
@@ -419,21 +376,16 @@ export default function CleanerPortal() {
   const toggleExpandedRotaRow = useCallback((rowKey) => {
     setExpandedRotaRows((prev) => {
       const next = new Set(prev);
-      if (next.has(rowKey)) next.delete(rowKey);
-      else next.add(rowKey);
+      if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey);
       return next;
     });
   }, []);
 
   const normalizeClockError = useCallback((rawMessage) => {
     const msg = String(rawMessage || '').toLowerCase();
-    if (isMissingClockTableMessage(msg)) {
-      return 'Clock sync is temporarily unavailable. Entries are saved locally on this device.';
-    }
-    if (msg.includes('failed to fetch') || msg.includes('network')) {
-      return 'Network issue while syncing clock times. Please retry.';
-    }
-    return rawMessage || 'Unknown clock error';
+    if (isMissingClockTableMessage(msg)) return 'Clock sync temporarily unavailable. Saved locally.';
+    if (msg.includes('failed to fetch') || msg.includes('network')) return 'Network issue. Please retry.';
+    return rawMessage || 'Unknown error';
   }, []);
 
   const upsertLiveTimeEntry = useCallback((entry) => {
@@ -446,11 +398,7 @@ export default function CleanerPortal() {
         const sameStaffDate = String(row?.staff_id || '') === String(entry?.staff_id || '') && String(row?.work_date || '') === String(entry?.work_date || '');
         return sameId || sameStaffDate;
       });
-      if (idx >= 0) {
-        next[idx] = { ...next[idx], ...entry };
-      } else {
-        next.unshift(entry);
-      }
+      if (idx >= 0) next[idx] = { ...next[idx], ...entry }; else next.unshift(entry);
       return next;
     });
   }, [setTimeEntries]);
@@ -462,158 +410,98 @@ export default function CleanerPortal() {
     const index = rows.findIndex((row) => String(row?.work_date || '') === selectedDate);
     const current = index >= 0 ? rows[index] : null;
     const now = new Date().toISOString();
-
     if (action === 'clock_in') {
-      if (current?.clock_in_at && current?.clock_out_at) {
-        return { ok: false, message: 'You have already clocked out for this day.' };
-      }
-      if (current?.clock_in_at && !current?.clock_out_at) {
-        return { ok: true, message: '✅ Already clocked in (local sync mode).' };
-      }
-      const nextEntry = {
-        id: current?.id || `local_clock_${staffId}_${selectedDate}`,
-        staff_id: staffId,
-        work_date: selectedDate,
-        clock_in_at: now,
-        clock_out_at: null,
-        break_minutes: breakMinutes,
-        source: 'local_fallback',
-        created_at: current?.created_at || now,
-        updated_at: now,
-      };
-      if (index >= 0) rows[index] = nextEntry;
-      else rows.unshift(nextEntry);
+      if (current?.clock_in_at && current?.clock_out_at) return { ok: false, message: 'Already clocked out today.' };
+      if (current?.clock_in_at && !current?.clock_out_at) return { ok: true, message: 'Already clocked in (local).' };
+      const nextEntry = { id: current?.id || `local_clock_${staffId}_${selectedDate}`, staff_id: staffId, work_date: selectedDate, clock_in_at: now, clock_out_at: null, break_minutes: breakMinutes, source: 'local_fallback', created_at: current?.created_at || now, updated_at: now };
+      if (index >= 0) rows[index] = nextEntry; else rows.unshift(nextEntry);
       writeLocalClockEntries(staffId, rows);
       setTimeEntries(filterClockEntriesForWeek(rows, weekStart));
-      return { ok: true, message: '✅ Clocked in (local sync mode).' };
+      return { ok: true, message: 'Clocked in (local).' };
     }
-
     if (action === 'clock_out') {
-      if (!current?.clock_in_at) return { ok: false, message: 'You need to clock in first.' };
-      if (current?.clock_out_at) return { ok: true, message: '✅ Already clocked out (local sync mode).' };
-      const nextEntry = {
-        ...current,
-        break_minutes: breakMinutes,
-        clock_out_at: now,
-        updated_at: now,
-      };
-      if (index >= 0) rows[index] = nextEntry;
-      else rows.unshift(nextEntry);
+      if (!current?.clock_in_at) return { ok: false, message: 'Clock in first.' };
+      if (current?.clock_out_at) return { ok: true, message: 'Already clocked out (local).' };
+      const nextEntry = { ...current, break_minutes: breakMinutes, clock_out_at: now, updated_at: now };
+      if (index >= 0) rows[index] = nextEntry; else rows.unshift(nextEntry);
       writeLocalClockEntries(staffId, rows);
       setTimeEntries(filterClockEntriesForWeek(rows, weekStart));
-      return { ok: true, message: '✅ Clocked out (local sync mode).' };
+      return { ok: true, message: 'Clocked out (local).' };
     }
-
-    return { ok: false, message: 'Unsupported clock action.' };
+    return { ok: false, message: 'Unsupported action.' };
   }, [breakMinutes, selectedDate, setTimeEntries, staffId, weekStart]);
 
+  // ── Data refresh ──────────────────────────────────────
   useEffect(() => {
     if (demoMode || !staffId) return;
-    const refresh = async () => {
-      await Promise.allSettled([
-        refreshScheduledJobs?.(),
-        refreshTimeEntries?.(),
-      ]);
-    };
+    const refresh = async () => { await Promise.allSettled([refreshScheduledJobs?.(), refreshTimeEntries?.()]); };
     refresh();
-    const onFocus = () => { refresh(); };
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') refresh();
-    };
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState === 'visible') refresh();
-    }, 15000);
+    const onFocus = () => refresh();
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    const intervalId = window.setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 15000);
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
+    return () => { window.clearInterval(intervalId); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVisible); };
   }, [demoMode, refreshScheduledJobs, refreshTimeEntries, staffId]);
 
-  // ── Team rota overview (all staff) ────────────────────
+  // ── Team rota ─────────────────────────────────────────
   useEffect(() => {
     if (activeTab !== 'rota') return;
     if (demoMode) {
       setTeamRotaJobs(DEMO_JOBS);
-      setTeamRotaStaffById({
-        demo: { id: 'demo', full_name: 'Demo Staff', role: 'staff' },
-      });
+      setTeamRotaStaffById({ demo: { id: 'demo', full_name: 'Demo Staff', role: 'staff' } });
       setTeamRotaError('');
       return;
     }
     if (!supabaseReady || !supabase || !profile?.id) return;
-
     let cancelled = false;
     const loadRota = async () => {
-      setTeamRotaLoading(true);
-      setTeamRotaError('');
+      setTeamRotaLoading(true); setTeamRotaError('');
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         const token = data?.session?.access_token;
-        if (!token) throw new Error('Session expired. Please sign in again.');
-
-        const res = await fetch('/api/staff/rota-overview', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ weekStart }),
-        });
-        let body = {};
-        try { body = await res.json(); } catch {}
-        if (!res.ok || body?.error) {
-          throw new Error(body?.error || body?.details || `Request failed (${res.status})`);
-        }
+        if (!token) throw new Error('Session expired.');
+        const res = await fetch('/api/staff/rota-overview', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ weekStart }) });
+        let body = {}; try { body = await res.json(); } catch {}
+        if (!res.ok || body?.error) throw new Error(body?.error || body?.details || `Failed (${res.status})`);
         if (cancelled) return;
         setTeamRotaJobs(Array.isArray(body?.jobs) ? body.jobs : []);
         setTeamRotaStaffById(body?.staffById || {});
       } catch (err) {
         if (cancelled) return;
-        console.error('[staff:rota-overview] failed', err);
-        setTeamRotaJobs([]);
-        setTeamRotaStaffById({});
-        setTeamRotaError(err?.message || 'Failed to load team rota.');
-      } finally {
-        if (!cancelled) setTeamRotaLoading(false);
-      }
+        setTeamRotaJobs([]); setTeamRotaStaffById({});
+        setTeamRotaError(err?.message || 'Failed to load rota.');
+      } finally { if (!cancelled) setTeamRotaLoading(false); }
     };
-
     loadRota();
     return () => { cancelled = true; };
   }, [activeTab, demoMode, profile?.id, weekStart]);
 
-  useEffect(() => {
-    setExpandedRotaRows(new Set());
-  }, [weekStart, rotaViewMode]);
+  useEffect(() => { setExpandedRotaRows(new Set()); }, [weekStart, rotaViewMode]);
 
-  // ── Timer management ───────────────────────────────────
+  // ── Timers ────────────────────────────────────────────
   useEffect(() => {
     dayJobs.forEach(job => {
       const arrivedAt = job.actual_start_at || job.actualStartAt || job.arrived_at || job.arrivedAt;
-      const status    = job.status || job.job_status || job.jobStatus;
+      const status = job.status || job.job_status || job.jobStatus;
       if (status === 'in_progress' && arrivedAt && !timerRefs.current[job.id]) {
         const start = new Date(arrivedAt).getTime();
         timerRefs.current[job.id] = setInterval(() => {
           setActiveTimers(p => ({ ...p, [job.id]: Math.floor((Date.now() - start) / 1000) }));
         }, 1000);
       } else if (status !== 'in_progress' && timerRefs.current[job.id]) {
-        clearInterval(timerRefs.current[job.id]);
-        delete timerRefs.current[job.id];
+        clearInterval(timerRefs.current[job.id]); delete timerRefs.current[job.id];
       }
     });
     return () => Object.values(timerRefs.current).forEach(clearInterval);
   }, [dayJobs]);
 
-  // ── Load Supabase photos for day jobs ─────────────────
+  // ── Photos ────────────────────────────────────────────
   useEffect(() => {
     if (demoMode) return;
     const jobIdSet = new Set(dayJobs.map(j => String(j.id)));
     const relevant = supaPhotos.filter(p => jobIdSet.has(String(p.job_id)));
-
     const buildMap = async () => {
       const map = {};
       for (const p of relevant) {
@@ -628,68 +516,36 @@ export default function CleanerPortal() {
     buildMap();
   }, [dayJobIdsKey, demoMode, getSignedUrl, supaPhotos]);
 
-  // ── Load client profiles for visible jobs via secure API fallback ─────
+  // ── Client profiles for jobs ──────────────────────────
   useEffect(() => {
-    if (demoMode) {
-      setJobClientProfiles({});
-      return;
-    }
-
+    if (demoMode) { setJobClientProfiles({}); return; }
     const loadProfiles = async () => {
-      if (!supabaseReady || dayJobs.length === 0) {
-        setJobClientProfiles({});
-        return;
-      }
+      if (!supabaseReady || dayJobs.length === 0) { setJobClientProfiles({}); return; }
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         const token = data?.session?.access_token;
-        if (!token) throw new Error('Missing session token');
-
-        const res = await fetch('/api/staff/job-client-profiles', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ jobIds: dayJobs.map(j => j.id) }),
-        });
-        let body = {};
-        try {
-          body = await res.json();
-        } catch {}
-
-        if (!res.ok || body?.error) {
-          throw new Error(body?.error || body?.details || `Request failed (${res.status})`);
-        }
-
+        if (!token) throw new Error('Missing session');
+        const res = await fetch('/api/staff/job-client-profiles', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ jobIds: dayJobs.map(j => j.id) }) });
+        let body = {}; try { body = await res.json(); } catch {}
+        if (!res.ok || body?.error) throw new Error(body?.error || body?.details || `Failed (${res.status})`);
         setJobClientProfiles(body?.profilesByJob || {});
-      } catch (err) {
-        console.error('[staff:client-profiles] failed', err);
-        setJobClientProfiles({});
-      }
+      } catch (err) { setJobClientProfiles({}); }
     };
-
     loadProfiles();
   }, [demoMode, dayJobIdsKey]);
 
-  // ── Load payslips ─────────────────────────────────────
+  // ── Payslips ──────────────────────────────────────────
   useEffect(() => {
     if (!supabaseReady || !profile?.id || demoMode) return;
-    supabase
-      .from('payslips')
-      .select('*, payroll_records(week_start, gross_pay, net_pay, tax_withheld, super_amount, hours_worked)')
-      .eq('staff_id', profile.id)
-      .order('created_at', { ascending: false })
-      .then(({ data }) => setPayslips(data ?? []));
+    supabase.from('payslips').select('*, payroll_records(week_start, gross_pay, net_pay, tax_withheld, super_amount, hours_worked)').eq('staff_id', profile.id).order('created_at', { ascending: false }).then(({ data }) => setPayslips(data ?? []));
   }, [profile, demoMode]);
 
-  // ── Job status update ─────────────────────────────────
+  // ── Job actions ───────────────────────────────────────
   const updateJobStatus = useCallback(async (jobId, newStatus) => {
     const now = new Date().toISOString();
     const job = allJobs.find(j => j.id === jobId);
     if (!job) return;
-
     const arrivedAt = job.actual_start_at || job.actualStartAt || job.arrived_at || job.arrivedAt;
     const updates = { status: newStatus };
     if (newStatus === 'in_progress') {
@@ -700,312 +556,168 @@ export default function CleanerPortal() {
       }, 1000);
     } else if (newStatus === 'completed') {
       updates.actual_end_at = now;
-      if (arrivedAt) {
-        const actualMinutes = Math.max(15, Math.round((new Date(now) - new Date(arrivedAt)) / 60000));
-        updates.actual_duration = actualMinutes;
-      }
+      if (arrivedAt) updates.actual_duration = Math.max(15, Math.round((new Date(now) - new Date(arrivedAt)) / 60000));
       if (timerRefs.current[jobId]) { clearInterval(timerRefs.current[jobId]); delete timerRefs.current[jobId]; }
     }
-
     if (!demoMode) {
-      try { await updateJob(jobId, updates); } catch (e) { showToast('Update failed'); return; }
+      try { await updateJob(jobId, updates); } catch { showToast('Update failed'); return; }
     }
-
-    showToast(newStatus === 'in_progress' ? 'Timer started!' : 'Job completed!');
+    showToast(newStatus === 'in_progress' ? 'Timer started' : 'Job completed');
   }, [allJobs, demoMode, updateJob, showToast]);
 
   const callStaffClockApi = useCallback(async (action, workDate) => {
-    if (!supabaseReady || !supabase) throw new Error('Supabase auth is not configured.');
+    if (!supabaseReady || !supabase) throw new Error('Auth not configured.');
     const { data, error } = await supabase.auth.getSession();
-    if (error) throw new Error(error.message || 'Failed to load auth session.');
+    if (error) throw new Error(error.message);
     const token = data?.session?.access_token;
-    if (!token) throw new Error('Session expired. Please sign in again.');
-
-    const res = await fetch('/api/staff/clock', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        action,
-        workDate,
-        breakMinutes,
-      }),
-    });
-    let body = {};
-    try { body = await res.json(); } catch {}
+    if (!token) throw new Error('Session expired.');
+    const res = await fetch('/api/staff/clock', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action, workDate, breakMinutes }) });
+    let body = {}; try { body = await res.json(); } catch {}
     if (!res.ok || body?.error) {
       const top = String(body?.error || '').trim();
       const details = String(body?.details || '').trim();
-      const message = top && details ? `${top}: ${details}` : (top || details || `Request failed (${res.status})`);
-      throw new Error(message);
+      throw new Error(top && details ? `${top}: ${details}` : (top || details || `Failed (${res.status})`));
     }
     return body?.entry || null;
   }, [breakMinutes]);
 
   const handleClockIn = useCallback(async () => {
-    if (!window.confirm(`Are you sure you want to clock in for ${selectedDate}?`)) return;
+    if (!window.confirm(`Clock in for ${new Date(selectedDate).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}?`)) return;
     setClockActionLoading(true);
     try {
       if (demoMode) {
         const now = new Date().toISOString();
         setDemoTimeEntries(prev => {
           const existing = prev.find(entry => entry.work_date === selectedDate);
-          if (existing?.clock_out_at) return prev;
-          if (existing?.clock_in_at) return prev;
-          return [
-            ...prev.filter(entry => entry.work_date !== selectedDate),
-            {
-              id: `demo_clock_${selectedDate}`,
-              staff_id: 'demo',
-              work_date: selectedDate,
-              clock_in_at: now,
-              clock_out_at: null,
-              break_minutes: breakMinutes,
-            },
-          ];
+          if (existing?.clock_out_at || existing?.clock_in_at) return prev;
+          return [...prev.filter(entry => entry.work_date !== selectedDate), { id: `demo_clock_${selectedDate}`, staff_id: 'demo', work_date: selectedDate, clock_in_at: now, clock_out_at: null, break_minutes: breakMinutes }];
         });
-        showToast('✅ Clocked in');
+        showToast('Clocked in');
       } else {
         const entry = await callStaffClockApi('clock_in', selectedDate);
-        upsertLiveTimeEntry(entry);
-        setClockOfflineFallback(false);
-        await refreshTimeEntries();
-        showToast('✅ Clocked in');
+        upsertLiveTimeEntry(entry); setClockOfflineFallback(false);
+        await refreshTimeEntries(); showToast('Clocked in');
       }
     } catch (err) {
-      console.error('[staff:clock-in] failed', err);
       if (!demoMode && isMissingClockTableMessage(err?.message)) {
         const fallback = applyLocalClockFallback('clock_in');
-        if (fallback.ok) {
-          setClockOfflineFallback(true);
-          showToast(fallback.message);
-          return;
-        }
+        if (fallback.ok) { setClockOfflineFallback(true); showToast(fallback.message); return; }
       }
-      showToast(`❌ Clock in failed: ${normalizeClockError(err?.message)}`);
-    } finally {
-      setClockActionLoading(false);
-    }
+      showToast(`Clock in failed: ${normalizeClockError(err?.message)}`);
+    } finally { setClockActionLoading(false); }
   }, [applyLocalClockFallback, breakMinutes, callStaffClockApi, demoMode, normalizeClockError, refreshTimeEntries, selectedDate, showToast, upsertLiveTimeEntry]);
 
   const handleClockOut = useCallback(async () => {
-    if (!window.confirm(`Are you sure you want to clock out for ${selectedDate}?`)) return;
+    if (!window.confirm(`Clock out for ${new Date(selectedDate).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}?`)) return;
     setClockActionLoading(true);
     try {
       if (demoMode) {
         const now = new Date().toISOString();
-        setDemoTimeEntries(prev => prev.map(entry => (
-          entry.work_date === selectedDate
-            ? { ...entry, clock_out_at: entry.clock_out_at || now, break_minutes: breakMinutes }
-            : entry
-        )));
-        showToast('✅ Clocked out');
+        setDemoTimeEntries(prev => prev.map(entry => (entry.work_date === selectedDate ? { ...entry, clock_out_at: entry.clock_out_at || now, break_minutes: breakMinutes } : entry)));
+        showToast('Clocked out');
       } else {
         const entry = await callStaffClockApi('clock_out', selectedDate);
-        upsertLiveTimeEntry(entry);
-        setClockOfflineFallback(false);
-        await refreshTimeEntries();
-        showToast('✅ Clocked out');
+        upsertLiveTimeEntry(entry); setClockOfflineFallback(false);
+        await refreshTimeEntries(); showToast('Clocked out');
       }
     } catch (err) {
-      console.error('[staff:clock-out] failed', err);
       if (!demoMode && isMissingClockTableMessage(err?.message)) {
         const fallback = applyLocalClockFallback('clock_out');
-        if (fallback.ok) {
-          setClockOfflineFallback(true);
-          showToast(fallback.message);
-          return;
-        }
+        if (fallback.ok) { setClockOfflineFallback(true); showToast(fallback.message); return; }
       }
-      showToast(`❌ Clock out failed: ${normalizeClockError(err?.message)}`);
-    } finally {
-      setClockActionLoading(false);
-    }
+      showToast(`Clock out failed: ${normalizeClockError(err?.message)}`);
+    } finally { setClockActionLoading(false); }
   }, [applyLocalClockFallback, breakMinutes, callStaffClockApi, demoMode, normalizeClockError, refreshTimeEntries, selectedDate, showToast, upsertLiveTimeEntry]);
 
   // ── Photo upload ──────────────────────────────────────
   const handlePhotoFile = useCallback(async (e) => {
     const files = e.target.files;
     const jobId = uploadJobRef.current?.jobId;
-    const type  = uploadJobRef.current?.type;
+    const type = uploadJobRef.current?.type;
     if (!files?.length || !jobId) return;
-
     const job = allJobs.find(j => j.id === jobId);
-
     for (const file of files) {
       if (demoMode) {
         const url = URL.createObjectURL(file);
         setLocalPhotos(prev => ({
           ...prev,
-          [jobId]: {
-            before: prev[jobId]?.before || [],
-            after:  prev[jobId]?.after  || [],
-            [type]: [...(prev[jobId]?.[type] || []), { url, uploaded_at: new Date().toISOString() }],
-          },
+          [jobId]: { before: prev[jobId]?.before || [], after: prev[jobId]?.after || [], [type]: [...(prev[jobId]?.[type] || []), { url, uploaded_at: new Date().toISOString() }] },
         }));
-        showToast(`${type === 'before' ? 'Before' : 'After'} photo added!`);
+        showToast(`${type === 'before' ? 'Before' : 'After'} photo added`);
         continue;
       }
-
       try {
-        await uploadPhoto({
-          jobId,
-          clientId:   job?.client_id || job?.clientId,
-          date:        selectedDate,
-          type,
-          file,
-          uploadedBy: profile?.id,
-        });
-        showToast(`${type === 'before' ? 'Before' : 'After'} photo uploaded!`);
-      } catch (err) {
-        console.error('Photo upload failed:', err);
-        showToast(`Upload failed: ${err?.message || 'Try again.'}`);
-      }
+        await uploadPhoto({ jobId, clientId: job?.client_id || job?.clientId, date: selectedDate, type, file, uploadedBy: profile?.id });
+        showToast(`${type === 'before' ? 'Before' : 'After'} photo uploaded`);
+      } catch (err) { showToast(`Upload failed: ${err?.message || 'Try again.'}`); }
     }
     e.target.value = '';
   }, [allJobs, demoMode, selectedDate, profile, uploadPhoto, showToast]);
 
-  // ── Weekly hours summary ───────────────────────────────
+  // ── Computed data ─────────────────────────────────────
   const selectedDayEntry = allTimeEntries.find(entry => entry.work_date === selectedDate) || null;
-  useEffect(() => {
-    setBreakMinutes(selectedDayEntry?.break_minutes ?? DEFAULT_BREAK_MINUTES);
-  }, [selectedDayEntry?.id, selectedDayEntry?.break_minutes]);
+  useEffect(() => { setBreakMinutes(selectedDayEntry?.break_minutes ?? DEFAULT_BREAK_MINUTES); }, [selectedDayEntry?.id, selectedDayEntry?.break_minutes]);
 
-  const weeklyStats = (() => {
-    return weekDates.map((d, i) => {
-      const dJobs = allJobs.filter(j => j.date === d && !j.is_break && !j.isBreak);
-      const done  = dJobs.filter(j => (j.status || j.job_status || j.jobStatus) === 'completed');
-      const scheduledMins = dJobs.reduce((s, j) => s + (j.duration || 0), 0);
-      const completedMins = done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
-      const timeEntry = allTimeEntries.find(entry => entry.work_date === d);
-      const workedMins = timeEntry
-        ? calcWorkedMinutesFromEntry(timeEntry, d === TODAY)
-        : completedMins;
-      return {
-        label: DAY_LABELS[i],
-        date: d,
-        jobs: dJobs.length,
-        done: done.length,
-        scheduledMins,
-        workedMins,
-        timeEntry,
-        scheduledHours: Math.round((scheduledMins / 60) * 100) / 100,
-        actualHours: Math.round((workedMins / 60) * 100) / 100,
-      };
-    });
-  })();
+  const weeklyStats = weekDates_.map((d, i) => {
+    const dJobs = allJobs.filter(j => j.date === d && !j.is_break && !j.isBreak);
+    const done = dJobs.filter(j => (j.status || j.job_status || j.jobStatus) === 'completed');
+    const scheduledMins = dJobs.reduce((s, j) => s + (j.duration || 0), 0);
+    const completedMins = done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
+    const timeEntry = allTimeEntries.find(entry => entry.work_date === d);
+    const workedMins = timeEntry ? calcWorkedMinutesFromEntry(timeEntry, d === TODAY) : completedMins;
+    return {
+      label: DAY_LABELS[i], fullLabel: DAY_LABELS_FULL[i], date: d, jobs: dJobs.length, done: done.length, scheduledMins, workedMins, timeEntry,
+      scheduledHours: Math.round((scheduledMins / 60) * 100) / 100,
+      actualHours: Math.round((workedMins / 60) * 100) / 100,
+    };
+  });
 
   const teamRotaDays = (() => {
-    const weekSet = new Set(weekDates);
+    const weekSet = new Set(weekDates_);
     const sourceJobs = (demoMode ? DEMO_JOBS : teamRotaJobs)
       .filter(job => weekSet.has(job?.date))
       .filter(job => !job?.is_break && !job?.isBreak)
       .filter(job => Boolean(job?.is_published ?? job?.isPublished ?? true));
-
-    const dayMap = Object.fromEntries(weekDates.map((date, i) => [date, {
-      date,
-      label: DAY_LABELS[i],
-      shifts: [],
-      jobCount: 0,
-    }]));
-
-    weekDates.forEach((date) => {
+    const dayMap = Object.fromEntries(weekDates_.map((date, i) => [date, { date, label: DAY_LABELS[i], fullLabel: DAY_LABELS_FULL[i], shifts: [], jobCount: 0 }]));
+    weekDates_.forEach((date) => {
       const jobsForDate = sourceJobs.filter(job => job.date === date);
       const byStaff = {};
-
       jobsForDate.forEach((job) => {
-        const assigned = Array.isArray(job.assigned_staff) && job.assigned_staff.length > 0
-          ? job.assigned_staff.map(String)
-          : ['unassigned'];
-
+        const assigned = Array.isArray(job.assigned_staff) && job.assigned_staff.length > 0 ? job.assigned_staff.map(String) : ['unassigned'];
         assigned.forEach((entryStaffId) => {
           if (rotaViewMode === 'mine' && String(entryStaffId) !== String(staffId)) return;
           if (!byStaff[entryStaffId]) {
             const staffProfile = teamRotaStaffById?.[entryStaffId] || null;
-            byStaff[entryStaffId] = {
-              staffId: entryStaffId,
-              name: staffProfile?.full_name || (entryStaffId === 'unassigned' ? 'Unassigned' : 'Staff'),
-              role: staffProfile?.role || (entryStaffId === 'unassigned' ? 'scheduler' : 'staff'),
-              startMin: null,
-              endMin: null,
-              totalJobMinutes: 0,
-              jobs: [],
-            };
+            byStaff[entryStaffId] = { staffId: entryStaffId, name: staffProfile?.full_name || (entryStaffId === 'unassigned' ? 'Unassigned' : 'Staff'), role: staffProfile?.role || 'staff', startMin: null, endMin: null, totalJobMinutes: 0, jobs: [] };
           }
-
           const row = byStaff[entryStaffId];
           const startText = job.start_time || job.startTime || '';
           const endText = job.end_time || job.endTime || '';
           const startMin = timeToMinutes(startText);
           const endMin = timeToMinutes(endText);
-          const clientProfile = job.client_profile || null;
           if (startMin !== null) row.startMin = row.startMin === null ? startMin : Math.min(row.startMin, startMin);
           if (endMin !== null) row.endMin = row.endMin === null ? endMin : Math.max(row.endMin, endMin);
           row.totalJobMinutes += Number(job.duration || 0);
-          row.jobs.push({
-            id: job.id,
-            clientName: clientProfile?.name || job.client_name || job.clientName || 'Client',
-            start: startText,
-            end: endText,
-            startMin,
-            endMin,
-            suburb: job.suburb || '',
-            address: clientProfile?.address || '',
-            notes: clientProfile?.notes || job?.notes || '',
-            accessNotes: clientProfile?.access_notes || '',
-            bedrooms: clientProfile?.bedrooms,
-            bathrooms: clientProfile?.bathrooms,
-            living: clientProfile?.living,
-            kitchen: clientProfile?.kitchen,
-            frequency: clientProfile?.frequency || '',
-          });
+          row.jobs.push({ id: job.id, clientName: job.client_name || job.clientName || 'Client', start: startText, end: endText, startMin, endMin, suburb: job.suburb || '', address: job?.address || '', notes: job?.notes || '', accessNotes: job?.access_notes || '', bedrooms: job?.bedrooms, bathrooms: job?.bathrooms, living: job?.living, kitchen: job?.kitchen, frequency: job?.frequency || '' });
         });
       });
-
       const shifts = Object.values(byStaff).map((row) => {
-        const sortedJobs = [...row.jobs].sort((a, b) => {
-          const aStart = Number.isFinite(a.startMin) ? a.startMin : 9999;
-          const bStart = Number.isFinite(b.startMin) ? b.startMin : 9999;
-          if (aStart !== bStart) return aStart - bStart;
-          return String(a.clientName).localeCompare(String(b.clientName));
-        });
+        const sortedJobs = [...row.jobs].sort((a, b) => (Number.isFinite(a.startMin) ? a.startMin : 9999) - (Number.isFinite(b.startMin) ? b.startMin : 9999));
         const hasRange = row.startMin !== null && row.endMin !== null && row.endMin > row.startMin;
         const shiftMinutes = hasRange ? Math.max(row.endMin - row.startMin, row.totalJobMinutes) : row.totalJobMinutes;
-        const shiftLabel = hasRange ? `${minsToClock(row.startMin)} - ${minsToClock(row.endMin)}` : 'Unscheduled time';
-        const jobsPreviewBits = sortedJobs.slice(0, 2).map(j => `${j.clientName} ${j.start || ''}`.trim());
-        const jobsPreview = jobsPreviewBits.join(' · ') + (sortedJobs.length > 2 ? ` +${sortedJobs.length - 2} more` : '');
-        return {
-          ...row,
-          shiftMinutes,
-          shiftLabel,
-          jobsPreview,
-          isYou: String(row.staffId) === String(staffId),
-          jobs: sortedJobs,
-        };
-      }).sort((a, b) => {
-        const aStart = a.startMin === null ? 9999 : a.startMin;
-        const bStart = b.startMin === null ? 9999 : b.startMin;
-        if (aStart !== bStart) return aStart - bStart;
-        return String(a.name).localeCompare(String(b.name));
-      });
-
+        const shiftLabel = hasRange ? `${minsToClock(row.startMin)} – ${minsToClock(row.endMin)}` : 'TBD';
+        return { ...row, shiftMinutes, shiftLabel, isYou: String(row.staffId) === String(staffId), jobs: sortedJobs };
+      }).sort((a, b) => (a.startMin ?? 9999) - (b.startMin ?? 9999));
       dayMap[date].shifts = shifts;
       dayMap[date].jobCount = jobsForDate.length;
     });
-
-    return weekDates.map(date => dayMap[date]);
+    return weekDates_.map(date => dayMap[date]);
   })();
-
-  const selectedTeamRotaDay = teamRotaDays.find(day => day.date === selectedDate) || teamRotaDays[0] || null;
 
   const todayStats = (() => {
     const done = dayJobs.filter(j => (j.status || j.job_status || j.jobStatus) === 'completed');
     const scheduledMins = dayJobs.reduce((s, j) => s + (j.duration || 0), 0);
-    const workedMins = selectedDayEntry
-      ? calcWorkedMinutesFromEntry(selectedDayEntry, selectedDate === TODAY)
-      : done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
+    const workedMins = selectedDayEntry ? calcWorkedMinutesFromEntry(selectedDayEntry, selectedDate === TODAY) : done.reduce((s, j) => s + (j.actual_duration || j.actualDuration || j.duration || 0), 0);
     return { done: done.length, total: dayJobs.length, scheduledMins, workedMins };
   })();
 
@@ -1014,34 +726,29 @@ export default function CleanerPortal() {
   const weeklyScheduledHours = Math.round((weeklyScheduledMinutes / 60) * 100) / 100;
   const weeklyWorkedHours = Math.round((weeklyWorkedMinutes / 60) * 100) / 100;
   const hourlyRate = Number(profile?.hourly_rate || 0);
-  const payrollEstimate = calcPayrollBreakdown({
-    hoursWorked: weeklyWorkedHours || weeklyScheduledHours,
-    hourlyRate,
-    employmentType: profile?.employment_type || 'casual',
-  });
+  const payrollEstimate = calcPayrollBreakdown({ hoursWorked: weeklyWorkedHours || weeklyScheduledHours, hourlyRate, employmentType: profile?.employment_type || 'casual' });
 
-  // ── Sign out ───────────────────────────────────────────
   const handleSignOut = async () => {
     if (!demoMode && supabaseReady) await supabase.auth.signOut();
-    setProfile(null);
-    setDemoMode(false);
-    setActiveTimers({});
-    setLocalPhotos({});
-    setDemoTimeEntries([]);
-    setBreakMinutes(DEFAULT_BREAK_MINUTES);
+    setProfile(null); setDemoMode(false); setActiveTimers({}); setLocalPhotos({}); setDemoTimeEntries([]); setBreakMinutes(DEFAULT_BREAK_MINUTES);
   };
 
-  const teamColor = T.primary;
   const displayName = demoMode ? 'Demo Staff' : (profile?.full_name || 'Staff');
+  const firstName = displayName.split(' ')[0];
   const staffNotificationsNeedsEnable = notificationSupported && (notificationPermission !== 'granted' || !notificationsEnabled);
+
+  // Clock state
+  const clockedIn = Boolean(selectedDayEntry?.clock_in_at || selectedDayEntry?.clockInAt);
+  const clockedOut = Boolean(selectedDayEntry?.clock_out_at || selectedDayEntry?.clockOutAt);
+  const isActiveShift = clockedIn && !clockedOut;
 
   // ══════════════════════════════════════════════════════
   // ── AUTH SCREEN ────────────────────────────────────────
   // ══════════════════════════════════════════════════════
   if (authHydrating && !demoMode) {
     return (
-      <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.textMuted }}>
-        Restoring session...
+      <div style={{ minHeight: '100vh', background: S.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: S.textTertiary, fontSize: 14, fontWeight: 500 }}>Loading...</div>
       </div>
     );
   }
@@ -1049,11 +756,8 @@ export default function CleanerPortal() {
   if (!profile && !demoMode) {
     return (
       <StaffLogin
-        onAuthenticated={(prof) => { setProfile(prof); }}
-        onDemoMode={() => {
-          setDemoMode(true);
-          setProfile({ id: 'demo', full_name: 'Demo Staff', role: 'staff' });
-        }}
+        onAuthenticated={(prof) => setProfile(prof)}
+        onDemoMode={() => { setDemoMode(true); setProfile({ id: 'demo', full_name: 'Demo Staff', role: 'staff' }); }}
       />
     );
   }
@@ -1062,116 +766,60 @@ export default function CleanerPortal() {
   // ── MAIN PORTAL ────────────────────────────────────────
   // ══════════════════════════════════════════════════════
   return (
-    <div style={{ minHeight: '100vh', background: T.bg, paddingBottom: 'calc(112px + env(safe-area-inset-bottom))' }}>
+    <div style={{ minHeight: '100vh', background: S.bg, fontFamily: "'Nunito', -apple-system, BlinkMacSystemFont, sans-serif", paddingBottom: 'calc(80px + env(safe-area-inset-bottom))' }}>
 
-      {/* ── Header ─────────────────────────────────────── */}
-      <div style={{ background: teamColor, padding: '16px 20px', color: '#fff', position: 'sticky', top: 0, zIndex: 30 }}>
-        {demoMode && (
-          <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: '4px 12px', fontSize: 11, fontWeight: 700, textAlign: 'center', marginBottom: 10 }}>
-            Demo Mode
-          </div>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+      {/* ── Minimal Header ─────────────────────────────── */}
+      <div style={{ padding: '16px 20px 12px', background: S.bg, position: 'sticky', top: 0, zIndex: 30, borderBottom: `1px solid ${S.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>{displayName}</div>
-            {activeTab !== 'payslips' && (
-              <div style={{ fontSize: 12, opacity: 0.9 }}>
-                {todayStats.done}/{todayStats.total} jobs · {fmtMins(todayStats.scheduledMins)} scheduled · {fmtMins(todayStats.workedMins)} worked
+            <div style={{ fontSize: 22, fontWeight: 800, color: S.text, letterSpacing: -0.5 }}>
+              {activeTab === 'today' ? `Hey, ${firstName}` : activeTab === 'rota' ? 'Group Rota' : 'Hours'}
+            </div>
+            {activeTab === 'today' && (
+              <div style={{ fontSize: 13, color: S.textSecondary, marginTop: 2 }}>
+                {dayJobs.length === 0 ? 'No jobs today' : `${todayStats.total} job${todayStats.total !== 1 ? 's' : ''} today${todayStats.done > 0 ? ` · ${todayStats.done} done` : ''}`}
               </div>
             )}
           </div>
-          <button
-            onClick={handleSignOut}
-            style={{ padding: '8px 14px', borderRadius: 20, border: '2px solid rgba(255,255,255,0.4)', background: 'transparent', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-          >
-            Sign out
-          </button>
-        </div>
-
-        {/* Week strip */}
-        {activeTab !== 'payslips' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 2 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <button
-                onClick={() => setSelectedDate(d => shiftDays(d, -7))}
-                style={{ padding: '5px 10px', borderRadius: 8, border: 'none', background: 'rgba(255,255,255,0.18)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
-              >
-                ← Prev Week
-              </button>
-              <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.95 }}>{fmtWeekRange(weekStart)}</div>
-              <button
-                onClick={() => setSelectedDate(d => shiftDays(d, 7))}
-                style={{ padding: '5px 10px', borderRadius: 8, border: 'none', background: 'rgba(255,255,255,0.18)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
-              >
-                Next Week →
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: 4, overflowX: 'auto', scrollbarWidth: 'none' }}>
-              {weekDates.map((d, i) => {
-                const isToday = d === TODAY;
-                const isSel   = d === selectedDate;
-                const stat    = weeklyStats[i];
-                const allDone = stat.done === stat.jobs && stat.jobs > 0;
-                return (
-                  <button
-                    key={d}
-                    onClick={() => setSelectedDate(d)}
-                    style={{
-                      flex: '0 0 auto', minWidth: 46,
-                      padding: '6px 4px',
-                      borderRadius: 10,
-                      border: isSel ? '2px solid #fff' : '2px solid transparent',
-                      background: isSel ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)',
-                      color: '#fff', cursor: 'pointer', textAlign: 'center',
-                    }}
-                    >
-                    <div style={{ fontSize: 9, fontWeight: 700, opacity: 0.8 }}>{DAY_LABELS[i]}</div>
-                    <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1.3 }}>
-                      {dayOrdinalLabel(d)}
-                    </div>
-                    <div style={{ fontSize: 8, opacity: 0.9 }}>{allDone ? 'done' : (isToday ? 'today' : '')}</div>
-                  </button>
-                );
-              })}
-              {selectedDate !== TODAY && (
-                <button
-                  onClick={() => setSelectedDate(TODAY)}
-                  style={{ flex: '0 0 auto', padding: '6px 10px', borderRadius: 10, border: 'none', background: '#fff', color: teamColor, fontSize: 11, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                >
-                  Today
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {staffNotificationsNeedsEnable && (
-        <div style={{ padding: '10px 16px 0' }}>
-          <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 10, padding: '10px 12px', boxShadow: T.shadow }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: T.text, marginBottom: 4 }}>Enable Alerts</div>
-            <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 8 }}>
-              Get browser notifications for new broadcasts and assigned jobs.
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {demoMode && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: S.warm, background: S.warmLight, padding: '4px 10px', borderRadius: S.rPill }}>Demo</span>
+            )}
             <button
-              onClick={enableStaffNotifications}
-              style={{ border: 'none', background: teamColor, color: '#fff', borderRadius: 8, padding: '8px 10px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}
+              onClick={handleSignOut}
+              style={{ width: 36, height: 36, borderRadius: S.rPill, border: `1.5px solid ${S.border}`, background: S.card, color: S.textSecondary, fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              title="Sign out"
             >
-              Enable Notifications
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Notification banner */}
+      {staffNotificationsNeedsEnable && (
+        <div style={{ padding: '0 16px', marginTop: 12 }}>
+          <button
+            onClick={enableStaffNotifications}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: S.rSm, border: `1px solid ${S.border}`, background: S.card, cursor: 'pointer', textAlign: 'left' }}
+          >
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: S.blueLight, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={S.blue} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: S.text }}>Enable notifications</div>
+              <div style={{ fontSize: 12, color: S.textTertiary }}>Get alerts for new jobs and broadcasts</div>
+            </div>
+          </button>
+        </div>
       )}
 
+      {/* Broadcast banner */}
       {activeBroadcast?.message && (
-        <div style={{ padding: '10px 16px 0' }}>
-          <div style={{ background: '#FFF8E7', border: `1px solid ${T.border}`, borderRadius: 10, padding: '10px 12px', boxShadow: T.shadow }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: '#8B6914', marginBottom: 3 }}>Owner Broadcast</div>
-            <div style={{ fontSize: 13, color: T.text, fontWeight: 600 }}>{activeBroadcast.message}</div>
-            <div style={{ marginTop: 4, fontSize: 11, color: T.textMuted }}>
-              {activeBroadcast.created_at ? `Sent ${new Date(activeBroadcast.created_at).toLocaleString('en-AU')}` : ''}
-            </div>
+        <div style={{ padding: '0 16px', marginTop: 12 }}>
+          <div style={{ padding: '12px 14px', borderRadius: S.rSm, background: S.warmLight, border: `1px solid #E8DFC0` }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: S.warm, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>Broadcast</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: S.text, lineHeight: 1.5 }}>{activeBroadcast.message}</div>
           </div>
         </div>
       )}
@@ -1181,71 +829,82 @@ export default function CleanerPortal() {
       ══════════════════════════════════════════════════ */}
       {activeTab === 'today' && (
         <div style={{ padding: '16px 16px 0' }}>
-          {/* Daily clock in/out */}
-          <div style={{ background: '#fff', borderRadius: T.radius, padding: '14px 14px', marginBottom: 16, boxShadow: T.shadow }}>
-            {timeEntriesError && !isMissingClockTableMessage(timeEntriesError?.message || '') && (
-              <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: '#FCEAEA', color: T.danger, fontSize: 12, fontWeight: 600 }}>
-                Clock sync warning: {normalizeClockError(timeEntriesError?.message || 'Failed to load time entries')}
-              </div>
-            )}
-            {clockOfflineFallback && (
-              <div style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: T.blueLight, color: T.blue, fontSize: 12, fontWeight: 700 }}>
-                Clock sync is in local fallback mode. Entries are saved on this device until server sync is available.
-              </div>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted }}>TODAY'S WORKDAY</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>{new Date(selectedDate).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}</div>
-              </div>
-              <div style={{ fontSize: 11, color: T.textMuted, textAlign: 'right' }}>
-                <div>Break: {breakMinutes} min/day</div>
-                <div>Worked: {fmtMins(calcWorkedMinutesFromEntry(selectedDayEntry, selectedDate === TODAY))}</div>
-              </div>
+
+          {/* Date strip */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+            <button onClick={() => setSelectedDate(d => shiftDays(d, -7))} style={{ ...pillBtn, padding: '6px 8px' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <div style={{ display: 'flex', gap: 4, flex: 1, overflow: 'auto', scrollbarWidth: 'none' }}>
+              {weekDates_.map((d, i) => {
+                const isToday = d === TODAY;
+                const isSel = d === selectedDate;
+                const stat = weeklyStats[i];
+                const allDone = stat.done === stat.jobs && stat.jobs > 0;
+                return (
+                  <button
+                    key={d}
+                    onClick={() => setSelectedDate(d)}
+                    style={{
+                      flex: '1 0 0', minWidth: 40, padding: '8px 2px', borderRadius: S.rSm, cursor: 'pointer', textAlign: 'center',
+                      border: isSel ? `2px solid ${S.accent}` : '2px solid transparent',
+                      background: isSel ? S.accentPale : 'transparent',
+                      transition: S.transition,
+                    }}
+                  >
+                    <div style={{ fontSize: 10, fontWeight: 700, color: isSel ? S.accent : S.textTertiary, letterSpacing: 0.3 }}>{DAY_LABELS[i]}</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: isSel ? S.accent : S.text, lineHeight: 1.4 }}>{new Date(d).getDate()}</div>
+                    {isToday && <div style={{ width: 4, height: 4, borderRadius: 4, background: S.accent, margin: '2px auto 0' }} />}
+                    {allDone && !isToday && <div style={{ width: 4, height: 4, borderRadius: 4, background: S.success, margin: '2px auto 0' }} />}
+                  </button>
+                );
+              })}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
-              <div style={{ background: T.bg, borderRadius: T.radiusSm, padding: '8px 10px' }}>
-                <div style={{ fontSize: 10, color: T.textMuted, marginBottom: 2 }}>Clock In</div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: T.text }}>{fmtTime(selectedDayEntry?.clock_in_at || selectedDayEntry?.clockInAt)}</div>
+            <button onClick={() => setSelectedDate(d => shiftDays(d, 7))} style={{ ...pillBtn, padding: '6px 8px' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+
+          {/* Clock In / Out Card */}
+          <div style={{ background: S.card, borderRadius: S.r, padding: '16px', marginBottom: 16, boxShadow: S.shadow, border: `1px solid ${S.borderLight}` }}>
+            {clockOfflineFallback && (
+              <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: S.rXs, background: S.blueLight, color: S.blue, fontSize: 12, fontWeight: 600 }}>
+                Local sync mode — entries saved on device
               </div>
-              <div style={{ background: T.bg, borderRadius: T.radiusSm, padding: '8px 10px' }}>
-                <div style={{ fontSize: 10, color: T.textMuted, marginBottom: 2 }}>Clock Out</div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: T.text }}>{fmtTime(selectedDayEntry?.clock_out_at || selectedDayEntry?.clockOutAt)}</div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: S.textTertiary, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                  {new Date(selectedDate).toLocaleDateString('en-AU', { weekday: 'long' })}
+                </div>
+                <div style={{ fontSize: 13, color: S.textSecondary, marginTop: 2 }}>
+                  {clockedIn ? `In at ${fmtTime(selectedDayEntry?.clock_in_at || selectedDayEntry?.clockInAt)}` : 'Not clocked in'}
+                  {clockedOut ? ` · Out at ${fmtTime(selectedDayEntry?.clock_out_at || selectedDayEntry?.clockOutAt)}` : ''}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: S.textTertiary }}>
+                Break: {breakMinutes}m
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 onClick={handleClockIn}
-                disabled={clockActionLoading || Boolean((selectedDayEntry?.clock_in_at || selectedDayEntry?.clockInAt) && !(selectedDayEntry?.clock_out_at || selectedDayEntry?.clockOutAt))}
+                disabled={clockActionLoading || isActiveShift || clockedOut}
                 style={{
-                  flex: 1,
-                  padding: '12px',
-                  borderRadius: T.radiusSm,
-                  border: 'none',
-                  background: T.accent,
-                  color: '#fff',
-                  fontSize: 13,
-                  fontWeight: 800,
-                  cursor: clockActionLoading ? 'not-allowed' : 'pointer',
-                  opacity: clockActionLoading ? 0.7 : 1,
+                  flex: 1, padding: '12px', borderRadius: S.rSm, border: 'none', fontSize: 14, fontWeight: 700, cursor: (clockActionLoading || isActiveShift || clockedOut) ? 'not-allowed' : 'pointer',
+                  background: (isActiveShift || clockedOut) ? S.borderLight : S.accent, color: (isActiveShift || clockedOut) ? S.textTertiary : '#fff',
+                  opacity: clockActionLoading ? 0.7 : 1, transition: S.transition,
                 }}
               >
-                {clockActionLoading ? '...' : 'Clock In'}
+                {clockActionLoading ? '...' : isActiveShift ? 'Clocked In' : clockedOut ? 'Done' : 'Clock In'}
               </button>
               <button
                 onClick={handleClockOut}
-                disabled={clockActionLoading || !(selectedDayEntry?.clock_in_at || selectedDayEntry?.clockInAt) || Boolean(selectedDayEntry?.clock_out_at || selectedDayEntry?.clockOutAt)}
+                disabled={clockActionLoading || !isActiveShift}
                 style={{
-                  flex: 1,
-                  padding: '12px',
-                  borderRadius: T.radiusSm,
-                  border: 'none',
-                  background: teamColor,
-                  color: '#fff',
-                  fontSize: 13,
-                  fontWeight: 800,
-                  cursor: clockActionLoading ? 'not-allowed' : 'pointer',
-                  opacity: clockActionLoading ? 0.7 : 1,
+                  flex: 1, padding: '12px', borderRadius: S.rSm, border: 'none', fontSize: 14, fontWeight: 700, cursor: (clockActionLoading || !isActiveShift) ? 'not-allowed' : 'pointer',
+                  background: isActiveShift ? S.primary : S.borderLight, color: isActiveShift ? '#fff' : S.textTertiary,
+                  opacity: clockActionLoading ? 0.7 : 1, transition: S.transition,
                 }}
               >
                 {clockActionLoading ? '...' : 'Clock Out'}
@@ -1253,251 +912,157 @@ export default function CleanerPortal() {
             </div>
           </div>
 
-          {/* Weekly hours bar */}
-          <div style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', marginBottom: 16, boxShadow: T.shadow }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: T.textMuted, marginBottom: 8 }}>THIS WEEK</div>
-            <div style={{ display: 'flex', gap: 4 }}>
-              {weeklyStats.map(s => (
-                <div
-                  key={s.date}
-                  onClick={() => setSelectedDate(s.date)}
-                  style={{
-                    flex: 1, textAlign: 'center', padding: '6px 2px',
-                    borderRadius: 8, cursor: 'pointer',
-                    background: s.date === selectedDate ? `${teamColor}20` : T.bg,
-                  }}
-                >
-                  <div style={{ fontSize: 9, color: T.textMuted }}>{s.label}</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: s.done === s.jobs && s.jobs > 0 ? teamColor : T.text }}>
-                    {s.actualHours > 0 ? `${s.actualHours}h` : dayOrdinalLabel(s.date)}
-                  </div>
-                  <div style={{ fontSize: 9, color: T.textLight }}>{fmtHours(s.scheduledHours)} sch</div>
-                </div>
-              ))}
-            </div>
+          {/* Scheduled hours mini bar */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            <MiniStat label="Scheduled" value={fmtMins(todayStats.scheduledMins)} />
+            <MiniStat label="Worked" value={fmtMins(todayStats.workedMins)} accent />
+            <MiniStat label="Break" value={`${breakMinutes}m`} />
           </div>
 
-          {/* Job list */}
+          {/* Job Cards */}
           {dayJobs.length === 0 ? (
-            <div style={{ background: '#fff', borderRadius: T.radius, padding: 48, textAlign: 'center', boxShadow: T.shadow }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
-              <div style={{ fontWeight: 700, color: T.text, marginBottom: 4 }}>No jobs scheduled</div>
-              <div style={{ fontSize: 13, color: T.textMuted }}>{selectedDate === TODAY ? 'Enjoy your day off!' : 'Pick a different day above'}</div>
+            <div style={{ background: S.card, borderRadius: S.r, padding: '48px 24px', textAlign: 'center', boxShadow: S.shadow, border: `1px solid ${S.borderLight}` }}>
+              <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.6 }}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={S.textTertiary} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+              </div>
+              <div style={{ fontWeight: 700, color: S.text, fontSize: 15, marginBottom: 4 }}>No jobs scheduled</div>
+              <div style={{ fontSize: 13, color: S.textTertiary }}>{selectedDate === TODAY ? 'Enjoy your day off' : 'Nothing on this day'}</div>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {dayJobs.map((job, idx) => {
                 const clientFromLocal = resolveClientProfile(job, allClients);
                 const clientFromApi = jobClientProfiles[String(job.id)] || null;
                 const clientFromSnapshot = buildJobSnapshotProfile(job);
                 const client = clientFromLocal || clientFromApi || clientFromSnapshot;
-                const photos     = localPhotos[job.id] || { before: [], after: [] };
-                const isExp      = expandedJob === job.id;
-                const status     = job.status || job.job_status || job.jobStatus || 'scheduled';
-                const isRunning  = status === 'in_progress';
-                const isDone     = status === 'completed';
-                const timer      = activeTimers[job.id];
-                const startT     = job.start_time || job.startTime || '';
-                const actualDur  = job.actual_duration || job.actualDuration || job.duration;
-                const extras     = job.extras || [];
+                const photos = localPhotos[job.id] || { before: [], after: [] };
+                const isExp = expandedJob === job.id;
+                const status = job.status || job.job_status || job.jobStatus || 'scheduled';
+                const isRunning = status === 'in_progress';
+                const isDone = status === 'completed';
+                const timer = activeTimers[job.id];
+                const startT = job.start_time || job.startTime || '';
+                const endT = job.end_time || job.endTime || '';
+                const actualDur = job.actual_duration || job.actualDuration || job.duration;
+                const extras = job.extras || [];
                 const clientNameDisplay = client?.name || job?.client_name || job?.clientName || 'Client';
-                const address    = client?.address || job?.address || '';
+                const address = client?.address || job?.address || '';
                 const suburbLabel = job?.suburb || client?.suburb || '';
-                const addressLabel = address || (suburbLabel ? `${suburbLabel}, QLD` : 'Address not provided');
+                const addressLabel = address || (suburbLabel ? `${suburbLabel}, QLD` : '');
                 const accessNote = client?.access_notes || client?.accessNotes || job?.access_notes || job?.accessNotes;
                 const clientNote = client?.notes || job?.notes;
-                const freq       = client?.frequency || job?.frequency;
-                const email      = client?.email || job?.email;
-                const phone      = client?.phone || job?.phone;
-                const preferredDay = client?.preferred_day || client?.preferredDay;
-                const preferredTime = client?.preferred_time || client?.preferredTime;
-                const bedrooms   = job?.bedrooms ?? client?.bedrooms;
-                const bathrooms  = job?.bathrooms ?? client?.bathrooms;
-                const living     = job?.living ?? client?.living;
-                const kitchen    = job?.kitchen ?? client?.kitchen;
-                const hasJobSnapshot = Boolean(clientFromSnapshot);
-                const mapsDestination = client?.lat && client?.lng
-                  ? `${client.lat},${client.lng}`
-                  : (addressLabel || suburbLabel || '');
+                const bedrooms = job?.bedrooms ?? client?.bedrooms;
+                const bathrooms = job?.bathrooms ?? client?.bathrooms;
+                const living = job?.living ?? client?.living;
+                const kitchen = job?.kitchen ?? client?.kitchen;
+                const mapsDestination = client?.lat && client?.lng ? `${client.lat},${client.lng}` : (addressLabel || suburbLabel || '');
                 const floorPlanClientId = demoMode ? null : (client?.id || job?.client_id || job?.clientId || null);
 
                 return (
-                  <div key={job.id} style={{ background: '#fff', borderRadius: T.radius, overflow: 'hidden', boxShadow: T.shadow }}>
-                    {/* Card header */}
-                    <div style={{ padding: '14px 16px', background: isDone ? T.primaryLight : isRunning ? T.accentLight : '#fff', borderBottom: `1px solid ${T.border}` }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                        <div>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 3 }}>
-                            <span style={{ fontSize: 10, fontWeight: 700, color: T.textMuted }}>JOB {idx + 1}</span>
-                            {freq && (
-                              <span style={{ padding: '1px 7px', borderRadius: 10, fontSize: 10, fontWeight: 700, background: freq === 'weekly' ? T.blueLight : T.primaryLight, color: freq === 'weekly' ? T.blue : T.primaryDark }}>
-                                {freq}
-                              </span>
-                            )}
-                            {isDone   && <span>✓ Done</span>}
-                            {isRunning && <span>In Progress</span>}
-                          </div>
-                          <div style={{ fontSize: 18, fontWeight: 800, color: T.text }}>{clientNameDisplay}</div>
+                  <div key={job.id} style={{ background: S.card, borderRadius: S.r, overflow: 'hidden', boxShadow: S.shadow, border: `1px solid ${isDone ? S.accentLight : isRunning ? '#F0E8D0' : S.borderLight}`, transition: S.transition }}>
+
+                    {/* Timer banner */}
+                    {isRunning && timer !== undefined && (
+                      <div style={{ background: S.primary, padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.7)', letterSpacing: 0.5, textTransform: 'uppercase' }}>In Progress</span>
+                        <span style={{ fontSize: 18, fontWeight: 800, color: '#fff', fontFamily: "'JetBrains Mono', monospace" }}>{fmtSecs(timer)}</span>
+                      </div>
+                    )}
+
+                    {/* Completed banner */}
+                    {isDone && (
+                      <div style={{ background: S.accentLight, padding: '8px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: S.accent }}>Complete</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: S.accent }}>
+                          {fmtMins(actualDur)}
+                          {actualDur < job.duration && ` · ${job.duration - actualDur}m early`}
+                          {actualDur > job.duration && ` · ${actualDur - job.duration}m over`}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Card body */}
+                    <div style={{ padding: '16px' }}>
+                      {/* Top: Name + Time */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: S.text, letterSpacing: -0.3, lineHeight: 1.2 }}>{clientNameDisplay}</div>
+                          <div style={{ fontSize: 13, color: S.textSecondary, marginTop: 4 }}>{addressLabel}</div>
                         </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: 16, fontWeight: 700, color: teamColor }}>{startT}</div>
-                          <div style={{ fontSize: 12, color: T.textMuted }}>{fmtMins(job.duration)}</div>
+                        <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 12 }}>
+                          <div style={{ fontSize: 20, fontWeight: 800, color: S.text, letterSpacing: -0.5 }}>{startT}</div>
+                          <div style={{ fontSize: 12, color: S.textTertiary, marginTop: 1 }}>{endT && `to ${endT}`} · {fmtMins(job.duration)}</div>
                         </div>
                       </div>
 
-                      {/* Timer */}
-                      {isRunning && timer !== undefined && (
-                        <div style={{ background: T.accent, color: '#fff', borderRadius: T.radiusSm, padding: '8px 12px', textAlign: 'center', marginBottom: 10 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, opacity: 0.9 }}>TIME ELAPSED</div>
-                          <div style={{ fontSize: 22, fontWeight: 900, fontFamily: 'monospace' }}>{fmtSecs(timer)}</div>
-                        </div>
-                      )}
-
-                      {/* Completed banner */}
-                      {isDone && actualDur && (
-                        <div style={{ background: teamColor, color: '#fff', borderRadius: T.radiusSm, padding: '6px 12px', textAlign: 'center', marginBottom: 10, fontSize: 13, fontWeight: 600 }}>
-                          Done in {fmtMins(actualDur)}
-                          {actualDur < job.duration && <span> · {job.duration - actualDur}min early</span>}
-                          {actualDur > job.duration && <span> · {actualDur - job.duration}min over</span>}
-                        </div>
-                      )}
-
-                      {/* Address */}
-                      <div style={{ marginBottom: 10 }}>
-                        <div style={{ fontSize: 10, color: T.textLight, fontWeight: 800, letterSpacing: 0.5 }}>FULL ADDRESS</div>
-                        <div style={{ fontSize: 13, color: T.textMuted }}>{addressLabel}</div>
+                      {/* Property chips */}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                        {bedrooms != null && <Chip label={`${bedrooms} Bed`} />}
+                        {bathrooms != null && <Chip label={`${bathrooms} Bath`} />}
+                        {living != null && <Chip label={`${living} Living`} />}
+                        {kitchen != null && <Chip label={`${kitchen} Kitchen`} />}
+                        {extras.map(ex => <Chip key={ex} label={ex === 'oven' ? 'Oven' : ex === 'windows' ? 'Windows' : ex} accent />)}
                       </div>
 
-                      {/* Contact */}
-                      {(email || phone) && (
-                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-                          {phone && (
-                            <a
-                              href={`tel:${phone}`}
-                              style={{ fontSize: 12, color: T.blue, textDecoration: 'none', fontWeight: 700 }}
-                            >
-                              {phone}
-                            </a>
+                      {/* Notes section */}
+                      {(accessNote || clientNote) && (
+                        <div style={{ background: S.bg, borderRadius: S.rXs, padding: '10px 12px', marginBottom: 12 }}>
+                          {accessNote && (
+                            <div style={{ display: 'flex', gap: 8, marginBottom: clientNote ? 6 : 0 }}>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: S.textTertiary, letterSpacing: 0.3, flexShrink: 0 }}>ACCESS</span>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: S.text }}>{accessNote}</span>
+                            </div>
                           )}
-                          {email && (
-                            <a
-                              href={`mailto:${email}`}
-                              style={{ fontSize: 12, color: T.blue, textDecoration: 'none', fontWeight: 700 }}
-                            >
-                              {email}
-                            </a>
+                          {clientNote && (
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: S.textTertiary, letterSpacing: 0.3, flexShrink: 0 }}>NOTES</span>
+                              <span style={{ fontSize: 13, color: S.textSecondary }}>{clientNote}</span>
+                            </div>
                           )}
                         </div>
                       )}
 
-                      {/* Property details */}
-                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                        {bedrooms !== undefined && bedrooms !== null && <span style={{ fontSize: 13 }}>{bedrooms} bed</span>}
-                        {bathrooms !== undefined && bathrooms !== null && <span style={{ fontSize: 13 }}>{bathrooms} bath</span>}
-                        {living !== undefined && living !== null && <span style={{ fontSize: 13 }}>{living} living</span>}
-                        {kitchen !== undefined && kitchen !== null && <span style={{ fontSize: 13 }}>{kitchen} kitchen</span>}
-                        {freq && <span style={{ fontSize: 13 }}>{freq}</span>}
-                        {preferredDay && <span style={{ fontSize: 13 }}>pref: {preferredDay}</span>}
-                        {preferredTime && <span style={{ fontSize: 13 }}>{preferredTime}</span>}
-                        {!client && !clientsLoading && !hasJobSnapshot && (
-                          <span style={{ fontSize: 12, color: T.danger }}>
-                            Using scheduled job details only (full client profile unavailable)
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Extras */}
-                      {extras.length > 0 && (
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {extras.map(ex => (
-                            <span key={ex} style={{ padding: '3px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: T.accentLight, color: '#8B6914' }}>
-                              {ex === 'oven' ? 'Oven Clean' : ex === 'windows' ? 'Windows' : ex}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Access & notes */}
-                    <div style={{ padding: '10px 16px', background: '#FFFDF5', borderBottom: `1px solid ${T.border}` }}>
-                      <div style={{ fontSize: 10, color: T.textLight, fontWeight: 800, letterSpacing: 0.5, marginBottom: 6 }}>
-                        JOB NOTES
-                      </div>
-                      {accessNote && (
-                        <div style={{ display: 'flex', gap: 8, marginBottom: clientNote ? 6 : 0 }}>
-                          <span style={{ fontSize: 11, fontWeight: 800, color: T.textLight, letterSpacing: 0.4 }}>ACCESS</span>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{accessNote}</span>
-                        </div>
-                      )}
-                      {clientNote && (
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <span style={{ fontSize: 11, fontWeight: 800, color: T.textLight, letterSpacing: 0.4 }}>SPECIAL NOTES</span>
-                          <span style={{ fontSize: 13, color: T.textMuted }}>{clientNote}</span>
-                        </div>
-                      )}
-                      {!accessNote && !clientNote && (
-                        <div style={{ fontSize: 12, color: T.textLight }}>
-                          No special notes for this job.
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Action buttons */}
-                    <div style={{ padding: '14px 16px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
-                        <button
+                      {/* Action row: Navigation + Floor Plan + Photos */}
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        <NavButton
+                          label="Maps"
+                          icon={<img src="/google-maps-mark.svg" alt="" style={{ width: 18, height: 18 }} />}
                           onClick={() => {
                             const dest = encodeURIComponent(mapsDestination);
-                            const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
-                            const opened = window.open(mapsUrl, '_blank', 'noopener,noreferrer');
-                            if (!opened) window.location.href = mapsUrl;
+                            const url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+                            const opened = window.open(url, '_blank', 'noopener,noreferrer');
+                            if (!opened) window.location.href = url;
                           }}
-                          style={{ padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                          aria-label="Navigate with Google Maps"
-                          title="Google Maps"
-                        >
-                          <img src="/google-maps-mark.svg" alt="Google Maps" style={{ width: 24, height: 24, display: 'block' }} />
-                        </button>
-                        <button
+                        />
+                        <NavButton
+                          label="Waze"
+                          icon={<img src="/waze-mark.svg" alt="" style={{ width: 18, height: 18 }} />}
                           onClick={() => {
                             const dest = encodeURIComponent(mapsDestination);
-                            const wazeUrl = client?.lat && client?.lng
-                              ? `https://waze.com/ul?ll=${client.lat},${client.lng}&navigate=yes`
-                              : `https://waze.com/ul?q=${dest}&navigate=yes`;
-                            const opened = window.open(wazeUrl, '_blank', 'noopener,noreferrer');
-                            if (!opened) window.location.href = wazeUrl;
+                            const url = client?.lat && client?.lng ? `https://waze.com/ul?ll=${client.lat},${client.lng}&navigate=yes` : `https://waze.com/ul?q=${dest}&navigate=yes`;
+                            const opened = window.open(url, '_blank', 'noopener,noreferrer');
+                            if (!opened) window.location.href = url;
                           }}
-                          style={{ padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                          aria-label="Navigate with Waze"
-                          title="Waze"
-                        >
-                          <img src="/waze-mark.svg" alt="Waze" style={{ width: 24, height: 24, display: 'block' }} />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (!floorPlanClientId) return;
-                            window.location.href = `/cleaner/floorplan/${floorPlanClientId}`;
-                          }}
+                        />
+                        <NavButton
+                          label="Plan"
+                          icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>}
+                          onClick={() => { if (floorPlanClientId) window.location.href = `/cleaner/floorplan/${floorPlanClientId}`; }}
                           disabled={!floorPlanClientId}
-                          style={{ padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', color: T.text, fontSize: 11, fontWeight: 800, cursor: floorPlanClientId ? 'pointer' : 'not-allowed', opacity: floorPlanClientId ? 1 : 0.45 }}
-                          aria-label="View floor plan"
-                          title="View Floor Plan"
-                        >
-                          Plan
-                        </button>
-                        <button
+                        />
+                        <NavButton
+                          label={`Photos${(photos.before.length + photos.after.length) > 0 ? ` (${photos.before.length + photos.after.length})` : ''}`}
+                          icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>}
                           onClick={() => setExpandedJob(isExp ? null : job.id)}
-                          style={{ padding: '12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: isExp ? T.primaryLight : '#fff', color: T.text, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-                        >
-                          Photos ({photos.before.length + photos.after.length})
-                        </button>
+                          active={isExp}
+                        />
                       </div>
 
-                      {/* Status button */}
+                      {/* Status action button */}
                       {!isRunning && !isDone && (
                         <button
                           onClick={() => updateJobStatus(job.id, 'in_progress')}
-                          style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, border: 'none', background: T.accent, color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer' }}
+                          style={{ width: '100%', padding: '14px', borderRadius: S.rSm, border: 'none', background: S.accent, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', transition: S.transition }}
                         >
                           Arrived — Start Timer
                         </button>
@@ -1505,59 +1070,51 @@ export default function CleanerPortal() {
                       {isRunning && (
                         <button
                           onClick={() => updateJobStatus(job.id, 'completed')}
-                          style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, border: 'none', background: teamColor, color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer' }}
+                          style={{ width: '100%', padding: '14px', borderRadius: S.rSm, border: 'none', background: S.primary, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', transition: S.transition }}
                         >
-                          Finished — Stop Timer
+                          Finished — Complete Job
                         </button>
-                      )}
-                      {isDone && (
-                        <div style={{ width: '100%', padding: '14px', borderRadius: T.radiusSm, background: T.primaryLight, color: T.primaryDark, fontSize: 14, fontWeight: 700, textAlign: 'center' }}>
-                          Job Complete
-                        </div>
                       )}
                     </div>
 
                     {/* Photos panel */}
                     {isExp && (
-                      <div style={{ padding: '0 16px 16px', borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
+                      <div style={{ padding: '0 16px 16px', borderTop: `1px solid ${S.border}`, paddingTop: 12 }}>
                         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                           {['before', 'after'].map(t => (
                             <button
                               key={t}
                               onClick={() => setPhotoType(t)}
                               style={{
-                                flex: 1, padding: '9px', borderRadius: T.radiusSm,
-                                border: photoType === t ? `2px solid ${teamColor}` : `1.5px solid ${T.border}`,
-                                background: photoType === t ? `${teamColor}15` : '#fff',
-                                color: photoType === t ? T.primaryDark : T.textMuted,
-                                fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                                flex: 1, padding: '8px', borderRadius: S.rXs, fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: S.transition,
+                                border: photoType === t ? `2px solid ${S.accent}` : `1.5px solid ${S.border}`,
+                                background: photoType === t ? S.accentPale : S.card,
+                                color: photoType === t ? S.accent : S.textSecondary,
                               }}
                             >
                               {t === 'before' ? 'Before' : 'After'} ({photos[t].length})
                             </button>
                           ))}
                         </div>
-
                         {photos[photoType].length > 0 && (
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
                             {photos[photoType].map((p, i) => (
-                              <div key={i} style={{ aspectRatio: '1', borderRadius: T.radiusSm, overflow: 'hidden', background: T.bg }}>
-                                <img src={p.url || p.data} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#111' }} />
+                              <div key={i} style={{ aspectRatio: '1', borderRadius: S.rXs, overflow: 'hidden', background: '#111' }}>
+                                <img src={p.url || p.data} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                               </div>
                             ))}
                           </div>
                         )}
-
-                        <div style={{ display: 'flex', gap: 10 }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
                           <button
                             onClick={() => { uploadJobRef.current = { jobId: job.id, type: photoType }; cameraRef.current?.click(); }}
-                            style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: 'none', background: teamColor, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                            style={{ flex: 1, padding: '10px', borderRadius: S.rXs, border: 'none', background: S.accent, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                           >
                             Camera
                           </button>
                           <button
                             onClick={() => { uploadJobRef.current = { jobId: job.id, type: photoType }; fileRef.current?.click(); }}
-                            style={{ flex: 1, padding: '12px', borderRadius: T.radiusSm, border: `1.5px solid ${T.border}`, background: '#fff', color: T.text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                            style={{ flex: 1, padding: '10px', borderRadius: S.rXs, border: `1.5px solid ${S.border}`, background: S.card, color: S.text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                           >
                             Upload
                           </button>
@@ -1573,174 +1130,151 @@ export default function CleanerPortal() {
       )}
 
       {/* ══════════════════════════════════════════════════
-          ROTA TAB
+          GROUP ROTA TAB
       ══════════════════════════════════════════════════ */}
       {activeTab === 'rota' && (
-        <div style={{ padding: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, marginBottom: 12 }}>
-            <div style={{ background: '#fff', border: `1.5px solid ${T.border}`, borderRadius: 14, padding: '7px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button
-                onClick={() => setSelectedDate(d => shiftDays(d, -7))}
-                style={{ border: 'none', background: 'none', color: T.textMuted, fontSize: 20, fontWeight: 700, cursor: 'pointer', padding: '0 4px' }}
-              >
-                ‹
-              </button>
-              <div style={{ flex: 1, textAlign: 'center', fontSize: 13, fontWeight: 800, color: T.text }}>{fmtWeekRange(weekStart)}</div>
-              <button
-                onClick={() => setSelectedDate(d => shiftDays(d, 7))}
-                style={{ border: 'none', background: 'none', color: T.textMuted, fontSize: 20, fontWeight: 700, cursor: 'pointer', padding: '0 4px' }}
-              >
-                ›
-              </button>
-            </div>
-
-            <button
-              onClick={() => setRotaViewMode('all')}
-              style={{
-                border: `1.5px solid ${rotaViewMode === 'all' ? teamColor : T.border}`,
-                background: rotaViewMode === 'all' ? `${teamColor}12` : '#fff',
-                color: rotaViewMode === 'all' ? teamColor : T.text,
-                borderRadius: 14,
-                padding: '0 14px',
-                fontSize: 12,
-                fontWeight: 800,
-                cursor: 'pointer',
-              }}
-            >
-              All
+        <div style={{ padding: '16px 16px 0' }}>
+          {/* Week navigator + filter */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <button onClick={() => setSelectedDate(d => shiftDays(d, -7))} style={pillBtn}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
-            <button
-              onClick={() => setRotaViewMode('mine')}
-              style={{
-                border: `1.5px solid ${rotaViewMode === 'mine' ? teamColor : T.border}`,
-                background: rotaViewMode === 'mine' ? `${teamColor}12` : '#fff',
-                color: rotaViewMode === 'mine' ? teamColor : T.text,
-                borderRadius: 14,
-                padding: '0 14px',
-                fontSize: 12,
-                fontWeight: 800,
-                cursor: 'pointer',
-              }}
-            >
-              Me
+            <div style={{ flex: 1, textAlign: 'center', fontSize: 14, fontWeight: 700, color: S.text }}>{fmtWeekRange(weekStart)}</div>
+            <button onClick={() => setSelectedDate(d => shiftDays(d, 7))} style={pillBtn}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
           </div>
 
+          {/* View toggle */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 16, background: S.bg, borderRadius: S.rSm, padding: 3 }}>
+            {[{ id: 'all', label: 'Everyone' }, { id: 'mine', label: 'My Schedule' }].map(v => (
+              <button
+                key={v.id}
+                onClick={() => setRotaViewMode(v.id)}
+                style={{
+                  flex: 1, padding: '8px', borderRadius: S.rXs, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: S.transition,
+                  background: rotaViewMode === v.id ? S.card : 'transparent',
+                  color: rotaViewMode === v.id ? S.text : S.textTertiary,
+                  boxShadow: rotaViewMode === v.id ? S.shadow : 'none',
+                }}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+
           {teamRotaLoading && (
-            <div style={{ background: '#fff', borderRadius: T.radius, padding: 24, textAlign: 'center', color: T.textMuted, boxShadow: T.shadow }}>
-              Loading rota...
+            <div style={{ background: S.card, borderRadius: S.r, padding: 40, textAlign: 'center', color: S.textTertiary, boxShadow: S.shadow, border: `1px solid ${S.borderLight}` }}>
+              Loading schedule...
             </div>
           )}
           {!teamRotaLoading && teamRotaError && (
-            <div style={{ background: '#fff', borderRadius: T.radius, padding: 20, color: T.danger, boxShadow: T.shadow }}>
-              Failed to load team rota: {teamRotaError}
+            <div style={{ background: S.dangerLight, borderRadius: S.r, padding: 16, color: S.danger, fontSize: 13 }}>
+              {teamRotaError}
             </div>
           )}
 
           {!teamRotaLoading && !teamRotaError && (
-            <div style={{ background: '#fff', borderRadius: T.radius, boxShadow: T.shadow, overflow: 'hidden' }}>
-              {teamRotaDays.map((day, index) => {
-                const dateLabel = new Date(day.date).toLocaleDateString('en-AU', { weekday: 'short', day: '2-digit', month: '2-digit' });
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {teamRotaDays.map((day) => {
+                const isExpanded = rotaSelectedDay === day.date;
+                const isToday = day.date === TODAY;
                 return (
-                  <div key={day.date} style={{ borderTop: index === 0 ? 'none' : `1px solid ${T.border}`, padding: '14px 12px' }}>
+                  <div key={day.date} style={{ background: S.card, borderRadius: S.r, overflow: 'hidden', boxShadow: S.shadow, border: `1px solid ${isToday ? S.accentLight : S.borderLight}`, transition: S.transition }}>
+                    {/* Day header */}
                     <button
-                      onClick={() => setSelectedDate(day.date)}
-                      style={{ border: 'none', background: 'none', padding: 0, margin: 0, cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                      onClick={() => setRotaSelectedDay(isExpanded ? null : day.date)}
+                      style={{ width: '100%', border: 'none', background: 'none', cursor: 'pointer', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left' }}
                     >
-                      <div style={{ fontSize: 14, fontWeight: 900, color: day.date === selectedDate ? teamColor : T.text, marginBottom: 2 }}>{dateLabel}</div>
-                      <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 10 }}>
-                        {day.shifts.length} shift{day.shifts.length === 1 ? '' : 's'} · {day.jobCount} job{day.jobCount === 1 ? '' : 's'}
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 15, fontWeight: 800, color: isToday ? S.accent : S.text }}>{day.fullLabel}</span>
+                          {isToday && <span style={{ fontSize: 10, fontWeight: 700, color: S.accent, background: S.accentPale, padding: '2px 8px', borderRadius: S.rPill }}>Today</span>}
+                        </div>
+                        <div style={{ fontSize: 12, color: S.textTertiary, marginTop: 2 }}>
+                          {day.shifts.length} staff · {day.jobCount} job{day.jobCount !== 1 ? 's' : ''}
+                        </div>
                       </div>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={S.textTertiary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)', transition: S.transition }}>
+                        <polyline points="6 9 12 15 18 9"/>
+                      </svg>
                     </button>
 
-                    {day.shifts.length === 0 ? (
-                      <div style={{ fontSize: 12, color: T.textMuted, padding: '2px 0 4px' }}>No shifts scheduled</div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {day.shifts.map((shift) => {
-                          const rowKey = `${day.date}_${shift.staffId}`;
-                          const isExpanded = expandedRotaRows.has(rowKey);
-                          return (
-                            <div key={rowKey} style={{ borderRadius: 10, border: `1px solid ${isExpanded ? teamColor : T.border}`, background: isExpanded ? `${teamColor}08` : '#fff', overflow: 'hidden' }}>
-                              <button
-                                onClick={() => toggleExpandedRotaRow(rowKey)}
-                                style={{ width: '100%', border: 'none', background: 'none', cursor: 'pointer', display: 'grid', gridTemplateColumns: '44px 1fr auto', gap: 10, alignItems: 'start', padding: '9px 8px', textAlign: 'left' }}
-                              >
-                                <div style={{ width: 44, height: 44, borderRadius: 10, background: shift.isYou ? `${teamColor}22` : T.bg, color: shift.isYou ? teamColor : T.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 900 }}>
-                                  {initialsFromName(shift.name)}
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 0.2, color: T.text }}>
-                                    {shift.shiftLabel} ({formatShiftMins(shift.shiftMinutes)})
-                                  </div>
-                                  <div style={{ fontSize: 14, color: T.textMuted, marginTop: 1 }}>
-                                    {shift.name}{shift.isYou ? ' · You' : ''} · {String(shift.role || 'staff').replace('_', ' ')}
-                                  </div>
-                                  <div style={{ fontSize: 14, color: T.textLight, marginTop: 2 }}>{shift.jobsPreview || 'No assigned jobs'}</div>
-                                </div>
-                                <div style={{ fontSize: 20, color: T.textLight, paddingTop: 6 }}>{isExpanded ? '⌃' : '⌄'}</div>
-                              </button>
+                    {/* Expanded day content */}
+                    {isExpanded && (
+                      <div style={{ borderTop: `1px solid ${S.border}`, padding: '12px 16px' }}>
+                        {day.shifts.length === 0 ? (
+                          <div style={{ fontSize: 13, color: S.textTertiary, padding: '8px 0' }}>No shifts scheduled</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {day.shifts.map((shift) => {
+                              const rowKey = `${day.date}_${shift.staffId}`;
+                              const isRowExp = expandedRotaRows.has(rowKey);
+                              return (
+                                <div key={rowKey} style={{ borderRadius: S.rSm, border: `1px solid ${isRowExp ? S.accent : S.border}`, overflow: 'hidden', transition: S.transition }}>
+                                  <button
+                                    onClick={() => toggleExpandedRotaRow(rowKey)}
+                                    style={{ width: '100%', border: 'none', background: isRowExp ? S.accentPale : S.bg, cursor: 'pointer', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left' }}
+                                  >
+                                    <div style={{ width: 36, height: 36, borderRadius: S.rXs, background: shift.isYou ? S.accentLight : S.card, color: shift.isYou ? S.accent : S.textTertiary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, flexShrink: 0, border: `1px solid ${S.border}` }}>
+                                      {initialsFromName(shift.name)}
+                                    </div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={{ fontSize: 14, fontWeight: 700, color: S.text }}>{shift.name}</span>
+                                        {shift.isYou && <span style={{ fontSize: 10, fontWeight: 700, color: S.accent, background: S.accentPale, padding: '1px 6px', borderRadius: S.rPill }}>You</span>}
+                                      </div>
+                                      <div style={{ fontSize: 12, color: S.textTertiary, marginTop: 1 }}>
+                                        {shift.shiftLabel} · {shift.jobs.length} job{shift.jobs.length !== 1 ? 's' : ''} · {formatShiftMins(shift.shiftMinutes)}
+                                      </div>
+                                    </div>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={S.textTertiary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isRowExp ? 'rotate(180deg)' : 'rotate(0)', transition: S.transition, flexShrink: 0 }}>
+                                      <polyline points="6 9 12 15 18 9"/>
+                                    </svg>
+                                  </button>
 
-                              {isExpanded && (
-                                <div style={{ borderTop: `1px solid ${T.border}`, padding: '8px 10px 10px 62px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                  {shift.jobs.length === 0 ? (
-                                    <div style={{ fontSize: 12, color: T.textMuted }}>No jobs assigned.</div>
-                                  ) : (
-                                    shift.jobs.map((job, idx) => {
-                                      const nextJob = shift.jobs[idx + 1] || null;
-                                      const canGap = Number.isFinite(job.endMin) && Number.isFinite(nextJob?.startMin);
-                                      const gapMins = canGap ? (nextJob.startMin - job.endMin) : null;
-                                      const addressLabel = job.address || (job.suburb ? `${job.suburb}, QLD` : '');
-                                      return (
-                                        <div key={job.id}>
-                                          <div style={{ fontSize: 13, fontWeight: 800, color: T.text }}>
-                                            {(job.start || '—')} - {(job.end || '—')} · {job.clientName}
-                                          </div>
-                                          <div style={{ fontSize: 12, color: T.textMuted, marginTop: 1 }}>
-                                            {addressLabel || 'Address pending'}{job.frequency ? ` · ${job.frequency}` : ''}
-                                          </div>
-                                          {(job.bedrooms !== undefined && job.bedrooms !== null) && (
-                                            <div style={{ fontSize: 11, color: T.textLight, marginTop: 1 }}>
-                                              {job.bedrooms} bed · {job.bathrooms ?? 0} bath · {job.living ?? 0} living · {job.kitchen ?? 0} kitchen
+                                  {isRowExp && (
+                                    <div style={{ borderTop: `1px solid ${S.border}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                      {shift.jobs.length === 0 ? (
+                                        <div style={{ fontSize: 12, color: S.textTertiary }}>No jobs assigned</div>
+                                      ) : (
+                                        shift.jobs.map((job, jIdx) => {
+                                          const nextJob = shift.jobs[jIdx + 1] || null;
+                                          const canGap = Number.isFinite(job.endMin) && Number.isFinite(nextJob?.startMin);
+                                          const gapMins = canGap ? (nextJob.startMin - job.endMin) : null;
+                                          return (
+                                            <div key={job.id}>
+                                              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                                                <span style={{ fontSize: 12, fontWeight: 700, color: S.accent, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
+                                                  {job.start || '—'}
+                                                </span>
+                                                <span style={{ fontSize: 13, fontWeight: 700, color: S.text }}>{job.clientName}</span>
+                                              </div>
+                                              <div style={{ fontSize: 12, color: S.textTertiary, marginTop: 2, paddingLeft: 50 }}>
+                                                {job.suburb || 'Address pending'}
+                                                {job.bedrooms != null && ` · ${job.bedrooms}b${job.bathrooms ?? 0}b`}
+                                              </div>
+                                              {gapMins !== null && (
+                                                <div style={{ marginTop: 6, marginLeft: 50, padding: '3px 8px', borderRadius: S.rPill, background: gapMins < 0 ? S.dangerLight : S.bg, color: gapMins < 0 ? S.danger : S.textTertiary, fontSize: 11, fontWeight: 600, display: 'inline-block' }}>
+                                                  {gapMins < 0 ? `${Math.abs(gapMins)}m overlap` : `${gapMins}m travel`}
+                                                </div>
+                                              )}
                                             </div>
-                                          )}
-                                          {(job.accessNotes || job.notes) && (
-                                            <div style={{ fontSize: 11, color: T.textLight, marginTop: 1 }}>
-                                              {job.accessNotes ? `Access: ${job.accessNotes}` : ''}
-                                              {job.accessNotes && job.notes ? ' · ' : ''}
-                                              {job.notes ? `Notes: ${job.notes}` : ''}
-                                            </div>
-                                          )}
-                                          {gapMins !== null && (
-                                            <div style={{ marginTop: 6, padding: '4px 8px', borderRadius: 8, background: gapMins < 0 ? '#FCEAEA' : T.bg, color: gapMins < 0 ? T.danger : T.textMuted, fontSize: 11, fontWeight: 700, display: 'inline-block' }}>
-                                              {gapMins < 0 ? `Overlap ${Math.abs(gapMins)}m` : `Travel gap ${gapMins}m`}
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })
+                                          );
+                                        })
+                                      )}
+                                    </div>
                                   )}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 );
               })}
-            </div>
-          )}
-
-          {selectedTeamRotaDay && (
-            <div style={{ marginTop: 12, background: T.blueLight, borderRadius: T.radius, padding: '10px 12px' }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: T.blue, marginBottom: 2 }}>
-                Selected Day: {new Date(selectedTeamRotaDay.date).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}
-              </div>
-              <div style={{ fontSize: 12, color: T.textMuted }}>
-                {selectedTeamRotaDay.shifts.length} team shift{selectedTeamRotaDay.shifts.length === 1 ? '' : 's'} · {selectedTeamRotaDay.jobCount} published job{selectedTeamRotaDay.jobCount === 1 ? '' : 's'}
-              </div>
             </div>
           )}
         </div>
@@ -1750,99 +1284,146 @@ export default function CleanerPortal() {
           HOURS TAB
       ══════════════════════════════════════════════════ */}
       {activeTab === 'hours' && (
-        <div style={{ padding: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-            <Stat label="Scheduled Hours" value={fmtHours(weeklyScheduledHours)} />
-            <Stat label="Worked Hours" value={fmtHours(weeklyWorkedHours)} highlight={teamColor} />
-            <Stat label="Est. Gross" value={fmtCurrency(payrollEstimate.grossPay)} />
-            <Stat label="Est. Net" value={fmtCurrency(payrollEstimate.netPay)} highlight={teamColor} />
+        <div style={{ padding: '16px 16px 0' }}>
+
+          {/* Week navigator */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <button onClick={() => setSelectedDate(d => shiftDays(d, -7))} style={pillBtn}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <div style={{ flex: 1, textAlign: 'center', fontSize: 14, fontWeight: 700, color: S.text }}>{fmtWeekRange(weekStart)}</div>
+            <button onClick={() => setSelectedDate(d => shiftDays(d, 7))} style={pillBtn}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
           </div>
 
-          <div style={{ background: '#fff', borderRadius: T.radius, padding: '12px 14px', marginBottom: 12, boxShadow: T.shadow }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: T.textMuted, marginBottom: 10 }}>WEEK DETAIL · {fmtWeekRange(weekStart)}</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Summary cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 16 }}>
+            <SummaryCard label="Scheduled" value={fmtHours(weeklyScheduledHours)} />
+            <SummaryCard label="Actual" value={fmtHours(weeklyWorkedHours)} accent />
+            <SummaryCard label="Est. Gross" value={fmtCurrency(payrollEstimate.grossPay)} />
+          </div>
+
+          {/* Week visual bar */}
+          <div style={{ background: S.card, borderRadius: S.r, padding: '16px', marginBottom: 16, boxShadow: S.shadow, border: `1px solid ${S.borderLight}` }}>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
               {weeklyStats.map(s => {
-                const clockIn = s.timeEntry?.clock_in_at || s.timeEntry?.clockInAt;
-                const clockOut = s.timeEntry?.clock_out_at || s.timeEntry?.clockOutAt;
-                const breakMins = Number(s.timeEntry?.break_minutes ?? DEFAULT_BREAK_MINUTES) || DEFAULT_BREAK_MINUTES;
+                const maxHours = Math.max(...weeklyStats.map(ws => ws.scheduledHours), 1);
+                const barHeight = Math.max(4, (s.actualHours / maxHours) * 48);
+                const schedBarHeight = Math.max(4, (s.scheduledHours / maxHours) * 48);
                 return (
-                  <button
-                    key={s.date}
-                    onClick={() => setSelectedDate(s.date)}
-                    style={{
-                      border: s.date === selectedDate ? `1.5px solid ${teamColor}` : `1px solid ${T.border}`,
-                      background: s.date === selectedDate ? `${teamColor}10` : '#fff',
-                      borderRadius: 10,
-                      padding: '10px 12px',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: T.text }}>{s.label} {new Date(s.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: T.text }}>{fmtHours(s.actualHours)} worked</div>
+                  <div key={s.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    <div style={{ height: 52, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', width: '100%', position: 'relative' }}>
+                      <div style={{ position: 'absolute', bottom: 0, width: '60%', height: schedBarHeight, borderRadius: 4, background: S.borderLight }} />
+                      <div style={{ position: 'relative', width: '60%', height: barHeight, borderRadius: 4, background: s.actualHours > 0 ? S.accent : 'transparent' }} />
                     </div>
-                    <div style={{ fontSize: 11, color: T.textMuted }}>
-                      Scheduled {fmtHours(s.scheduledHours)} · Clock {fmtTime(clockIn)} - {fmtTime(clockOut)} · Break {breakMins}m
-                    </div>
-                  </button>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: s.date === selectedDate ? S.accent : S.textTertiary }}>{s.label}</div>
+                  </div>
                 );
               })}
             </div>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: S.accent }} />
+                <span style={{ fontSize: 11, color: S.textTertiary }}>Actual</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: S.borderLight }} />
+                <span style={{ fontSize: 11, color: S.textTertiary }}>Scheduled</span>
+              </div>
+            </div>
           </div>
 
-          <div style={{ background: T.blueLight, borderRadius: T.radius, padding: '12px 14px' }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: T.blue, marginBottom: 4 }}>Payroll Sync</div>
-            <div style={{ fontSize: 12, color: T.textMuted }}>
-              Clocked hours sync to admin payroll automatically. Owners can still adjust before processing payslips.
+          {/* Day-by-day breakdown */}
+          <div style={{ background: S.card, borderRadius: S.r, overflow: 'hidden', boxShadow: S.shadow, border: `1px solid ${S.borderLight}`, marginBottom: 16 }}>
+            {weeklyStats.map((s, idx) => {
+              const clockIn = s.timeEntry?.clock_in_at || s.timeEntry?.clockInAt;
+              const clockOut = s.timeEntry?.clock_out_at || s.timeEntry?.clockOutAt;
+              const breakMins = Number(s.timeEntry?.break_minutes ?? DEFAULT_BREAK_MINUTES);
+              const isToday = s.date === TODAY;
+              return (
+                <button
+                  key={s.date}
+                  onClick={() => setSelectedDate(s.date)}
+                  style={{
+                    width: '100%', border: 'none', cursor: 'pointer', padding: '12px 16px', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    background: s.date === selectedDate ? S.accentPale : S.card,
+                    borderTop: idx > 0 ? `1px solid ${S.borderLight}` : 'none',
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: isToday ? S.accent : S.text }}>{s.label}</span>
+                      <span style={{ fontSize: 12, color: S.textTertiary }}>{new Date(s.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: S.textTertiary, marginTop: 2 }}>
+                      {clockIn ? `${fmtTime(clockIn)} – ${clockOut ? fmtTime(clockOut) : 'Active'}` : 'No clock data'}
+                      {clockIn && ` · ${breakMins}m break`}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: s.actualHours > 0 ? S.accent : S.textTertiary }}>{fmtHours(s.actualHours)}</div>
+                    <div style={{ fontSize: 11, color: S.textTertiary }}>{fmtHours(s.scheduledHours)} sched</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Pay estimate */}
+          <div style={{ background: S.card, borderRadius: S.r, padding: '16px', boxShadow: S.shadow, border: `1px solid ${S.borderLight}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: S.textTertiary, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 12 }}>Estimated Pay</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <PayRow label="Gross pay" value={fmtCurrency(payrollEstimate.grossPay)} bold />
+              <PayRow label="Tax withheld" value={`-${fmtCurrency(payrollEstimate.taxWithheld)}`} muted />
+              <div style={{ borderTop: `1px solid ${S.border}`, marginTop: 4, paddingTop: 8 }}>
+                <PayRow label="Estimated net" value={fmtCurrency(payrollEstimate.netPay)} accent />
+              </div>
+            </div>
+            <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: S.rXs, background: S.bg, fontSize: 12, color: S.textTertiary }}>
+              Hours sync to admin payroll automatically. Final amounts may differ.
             </div>
           </div>
         </div>
       )}
 
-      {/* ══════════════════════════════════════════════════
-          PAYSLIPS TAB
-      ══════════════════════════════════════════════════ */}
-      {activeTab === 'payslips' && (
-        <div style={{ padding: 16 }}>
-          <PayslipsView payslips={payslips} demoMode={demoMode} teamColor={teamColor} />
-        </div>
-      )}
-
-      {/* Bottom navigation */}
-      <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, background: '#fff', borderTop: `1px solid ${T.border}`, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', zIndex: 120, paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      {/* ── Bottom Navigation ─────────────────────────── */}
+      <div style={{
+        position: 'fixed', left: 0, right: 0, bottom: 0, background: S.card, borderTop: `1px solid ${S.border}`,
+        display: 'flex', zIndex: 120, paddingBottom: 'env(safe-area-inset-bottom)',
+      }}>
         {[
-          { id: 'today', label: 'Today', icon: '🧼' },
-          { id: 'rota', label: 'Rota', icon: '📅' },
-          { id: 'hours', label: 'Hours', icon: '⏱️' },
-          { id: 'payslips', label: 'Pay', icon: '💵' },
+          { id: 'today', label: 'Today', icon: (active) => <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? S.accent : 'none'} stroke={active ? S.accent : S.textTertiary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> },
+          { id: 'rota', label: 'Rota', icon: (active) => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? S.accent : S.textTertiary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
+          { id: 'hours', label: 'Hours', icon: (active) => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={active ? S.accent : S.textTertiary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
         ].map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             style={{
-              border: 'none',
-              background: 'none',
-              padding: '10px 4px 12px',
-              color: activeTab === tab.id ? teamColor : T.textMuted,
-              fontSize: 11,
-              fontWeight: activeTab === tab.id ? 800 : 600,
-              cursor: 'pointer',
+              flex: 1, border: 'none', background: 'none', padding: '10px 4px 8px', cursor: 'pointer',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+              opacity: activeTab === tab.id ? 1 : 0.6,
+              transition: S.transition,
             }}
           >
-            <div style={{ fontSize: 16, marginBottom: 3 }}>{tab.icon}</div>
-            <div>{tab.label}</div>
+            {tab.icon(activeTab === tab.id)}
+            <span style={{ fontSize: 10, fontWeight: activeTab === tab.id ? 800 : 600, color: activeTab === tab.id ? S.accent : S.textTertiary }}>{tab.label}</span>
           </button>
         ))}
       </div>
 
       {/* Hidden file inputs */}
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoFile} style={{ display: 'none' }} />
-      <input ref={fileRef}   type="file" accept="image/*" multiple            onChange={handlePhotoFile} style={{ display: 'none' }} />
+      <input ref={fileRef} type="file" accept="image/*" multiple onChange={handlePhotoFile} style={{ display: 'none' }} />
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 74, left: '50%', transform: 'translateX(-50%)', background: '#1B3A2D', color: '#fff', padding: '13px 22px', borderRadius: 30, fontSize: 14, fontWeight: 600, boxShadow: T.shadowLg, zIndex: 200, whiteSpace: 'nowrap' }}>
+        <div style={{
+          position: 'fixed', bottom: 96, left: '50%', transform: 'translateX(-50%)',
+          background: S.primary, color: '#fff', padding: '12px 24px', borderRadius: S.rPill,
+          fontSize: 14, fontWeight: 600, boxShadow: S.shadowLg, zIndex: 200, whiteSpace: 'nowrap',
+        }}>
           {toast}
         </div>
       )}
@@ -1851,82 +1432,70 @@ export default function CleanerPortal() {
 }
 
 // ══════════════════════════════════════════════════════════
-// PAYSLIPS VIEW COMPONENT
+// SUB-COMPONENTS
 // ══════════════════════════════════════════════════════════
-function PayslipsView({ payslips, demoMode, teamColor }) {
-  const fmt = (n) => `$${(n || 0).toFixed(2)}`;
 
-  if (demoMode) {
-    return (
-      <div style={{ background: '#fff', borderRadius: T.radius, padding: 40, textAlign: 'center', boxShadow: T.shadow }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>💵</div>
-        <div style={{ fontWeight: 700, color: T.text, marginBottom: 6 }}>Payslips not available in demo</div>
-        <div style={{ fontSize: 13, color: T.textMuted }}>Sign in with your email and password to view your payslips.</div>
-      </div>
-    );
-  }
+const pillBtn = {
+  width: 36, height: 36, borderRadius: 100, border: `1.5px solid ${S.border}`,
+  background: S.card, color: S.textSecondary, cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+};
 
-  if (payslips.length === 0) {
-    return (
-      <div style={{ background: '#fff', borderRadius: T.radius, padding: 40, textAlign: 'center', boxShadow: T.shadow }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>💵</div>
-        <div style={{ fontWeight: 700, color: T.text, marginBottom: 6 }}>No payslips yet</div>
-        <div style={{ fontSize: 13, color: T.textMuted }}>Your payslips will appear here once payroll is processed.</div>
-      </div>
-    );
-  }
-
+function Chip({ label, accent }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {payslips.map(slip => {
-        const rec = slip.payroll_records;
-        const weekStr = slip.week_start ? new Date(slip.week_start).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '–';
-        return (
-          <div key={slip.id} style={{ background: '#fff', borderRadius: T.radius, overflow: 'hidden', boxShadow: T.shadow }}>
-            <div style={{ padding: '14px 16px', background: `${teamColor}10`, borderBottom: `1px solid ${T.border}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: T.text }}>Week of {weekStr}</div>
-                  <div style={{ fontSize: 11, color: T.textMuted }}>{rec?.hours_worked || 0}h worked</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 16, fontWeight: 900, color: teamColor }}>{fmt(rec?.net_pay)}</div>
-                  <div style={{ fontSize: 11, color: T.textMuted }}>net pay</div>
-                </div>
-              </div>
-            </div>
-            <div style={{ padding: '12px 16px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <Stat label="Gross Pay"    value={fmt(rec?.gross_pay)} />
-                <Stat label="Tax"          value={fmt(rec?.tax_withheld)} />
-                <Stat label="Superannuation" value={fmt(rec?.super_amount)} />
-                <Stat label="Net Pay"      value={fmt(rec?.net_pay)} highlight={teamColor} />
-              </div>
-              {slip.storage_path && (
-                <button
-                  onClick={async () => {
-                    if (!supabaseReady) return;
-                    const { data } = await supabase.storage.from('payslips').createSignedUrl(slip.storage_path, 300);
-                    if (data?.signedUrl) window.open(data.signedUrl, '_blank');
-                  }}
-                  style={{ width: '100%', marginTop: 12, padding: '10px', borderRadius: T.radiusSm, border: `1.5px solid ${teamColor}`, background: '#fff', color: teamColor, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                >
-                  View Payslip PDF
-                </button>
-              )}
-            </div>
-          </div>
-        );
-      })}
+    <span style={{
+      padding: '3px 10px', borderRadius: S.rPill, fontSize: 11, fontWeight: 700, letterSpacing: 0.2,
+      background: accent ? S.warmLight : S.bg,
+      color: accent ? '#8B6914' : S.textSecondary,
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function MiniStat({ label, value, accent }) {
+  return (
+    <div style={{ flex: 1, background: S.card, borderRadius: S.rSm, padding: '10px 12px', boxShadow: S.shadow, border: `1px solid ${S.borderLight}` }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: S.textTertiary, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 800, color: accent ? S.accent : S.text }}>{value}</div>
     </div>
   );
 }
 
-function Stat({ label, value, highlight }) {
+function NavButton({ label, icon, onClick, disabled, active }) {
   return (
-    <div style={{ background: T.bg, borderRadius: 8, padding: '10px 12px' }}>
-      <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 800, color: highlight || T.text }}>{value}</div>
+    <button
+      onClick={disabled ? undefined : onClick}
+      style={{
+        flex: 1, padding: '10px 4px', borderRadius: S.rXs, cursor: disabled ? 'not-allowed' : 'pointer',
+        border: active ? `1.5px solid ${S.accent}` : `1.5px solid ${S.border}`,
+        background: active ? S.accentPale : S.card,
+        color: active ? S.accent : (disabled ? S.textTertiary : S.textSecondary),
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+        opacity: disabled ? 0.4 : 1,
+        transition: S.transition,
+      }}
+    >
+      {icon}
+      <span style={{ fontSize: 10, fontWeight: 700 }}>{label}</span>
+    </button>
+  );
+}
+
+function SummaryCard({ label, value, accent }) {
+  return (
+    <div style={{ background: S.card, borderRadius: S.rSm, padding: '14px 12px', boxShadow: S.shadow, border: `1px solid ${S.borderLight}` }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: S.textTertiary, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 800, color: accent ? S.accent : S.text, letterSpacing: -0.5 }}>{value}</div>
+    </div>
+  );
+}
+
+function PayRow({ label, value, bold, muted, accent }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span style={{ fontSize: 13, color: muted ? S.textTertiary : S.textSecondary, fontWeight: bold ? 600 : 400 }}>{label}</span>
+      <span style={{ fontSize: bold ? 16 : accent ? 18 : 14, fontWeight: bold ? 700 : accent ? 800 : 600, color: accent ? S.accent : (muted ? S.textTertiary : S.text) }}>{value}</span>
     </div>
   );
 }

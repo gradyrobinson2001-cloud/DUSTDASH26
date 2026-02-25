@@ -68,7 +68,10 @@ export default async function handler(req, res) {
     if (action === "list") {
       const weekStart = toIsoDate(String(body?.weekStart || "").trim());
       const requestedStaffId = body?.staffId == null ? null : String(body.staffId).trim();
-      const targetStaffId = profile.role === "admin" && requestedStaffId ? requestedStaffId : profile.id;
+      // Admin with no staffId → return ALL staff entries; staff → only own entries
+      const targetStaffId = profile.role === "admin"
+        ? (requestedStaffId || null)
+        : profile.id;
 
       let query = admin
         .from("staff_time_entries")
