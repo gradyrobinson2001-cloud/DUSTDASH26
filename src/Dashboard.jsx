@@ -37,7 +37,7 @@ import QuotesTab       from "./quotes/QuotesTab";
 import EmailCenterTab  from "./emails/EmailCenterTab";
 import AIMarketingStudioTab from "./marketing/AIMarketingStudioTab";
 import PaymentsTab     from "./finance/PaymentsTab";
-import PayrollTab      from "./finance/PayrollTab";
+import StaffHoursTab   from "./finance/StaffHoursTab";
 import ExpensesTab     from "./finance/ExpensesTab";
 import PhotosTab       from "./photos/PhotosTab";
 import ToolsTab        from "./tools/ToolsTab";
@@ -156,7 +156,7 @@ const PAGE_TITLES = {
   tools: "Maps & Routing",
   photos: "Job History",
   payments: "Invoices",
-  payroll: "Payroll",
+  payroll: "Staff Hours",
   staff: "Staff Accounts",
   form: "Client Quote Form",
   templates: "Templates",
@@ -1254,7 +1254,7 @@ export default function Dashboard() {
       items: [
         { id: "quotes", label: "Quotes", icon: "💰", badge: quotes.filter(q => q.status === "pending_approval").length, roles: ["admin", "finance"] },
         { id: "payments", label: "Invoices", icon: "🧾", badge: unpaidJobsCount, roles: ["admin", "finance"] },
-        { id: "payroll", label: "Payroll", icon: "💵", badge: 0, roles: ["admin", "finance"] },
+        { id: "payroll", label: "Staff Hours", icon: "⏱️", badge: 0, roles: ["admin", "finance"] },
         { id: "expenses", label: "Expenses", icon: "📚", badge: expenseNeedsReview, roles: ["admin", "finance"] },
         { id: "profit_reports", label: "Profit Reports", icon: "📉", badge: 0, roles: ["admin", "finance"] },
       ],
@@ -1482,7 +1482,7 @@ export default function Dashboard() {
         {page === "quotes"   && <QuotesTab quotes={quotes} pricing={pricing} isMobile={isMobile} setEditQuoteModal={setEditQuoteModal} setPreviewQuote={setPreviewQuote} approveQuote={approveQuote} markAccepted={markAccepted} />}
         {page === "emails"   && <EmailCenterTab emailHistory={emailHistory} quotesNeedingFollowUp={quotesNeedingFollowUp} selectedEmailTemplate={selectedEmailTemplate} setSelectedEmailTemplate={setSelectedEmailTemplate} selectedRecipients={selectedRecipients} setSelectedRecipients={setSelectedRecipients} recipientFilter={recipientFilter} setRecipientFilter={setRecipientFilter} customEmailStyle={customEmailStyle} setCustomEmailStyle={setCustomEmailStyle} customEmailContent={customEmailContent} setCustomEmailContent={setCustomEmailContent} showEmailPreview={showEmailPreview} setShowEmailPreview={setShowEmailPreview} sendingBulkEmail={sendingBulkEmail} handleBulkEmailSend={handleBulkEmailSend} getFilteredEmailRecipients={getFilteredEmailRecipients} EmailPreviewComponent={EmailPreviewComponent} isMobile={isMobile} />}
         {page === "ai_marketing_studio" && <AIMarketingStudioTab clients={clients} enquiries={enquiries} addEmailHistory={addEmailHistory} showToast={showToast} isMobile={isMobile} />}
-        {page === "payroll"  && <PayrollTab showToast={showToast} isMobile={isMobile} />}
+        {page === "payroll"  && <StaffHoursTab showToast={showToast} isMobile={isMobile} />}
         {page === "payments" && <PaymentsTab scheduledJobs={scheduledJobs} setScheduledJobs={setScheduledJobs} scheduleClients={scheduleClients} invoices={invoices} setInvoices={setInvoices} paymentFilter={paymentFilter} setPaymentFilter={setPaymentFilter} setShowInvoiceModal={setShowInvoiceModal} showToast={showToast} isMobile={isMobile} />}
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} showToast={showToast} isMobile={isMobile} refreshPhotos={refreshPhotos} getSignedUrl={getSignedUrl} />}
         {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} allClients={clients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapsApiKey={mapsApiKey} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} toolsMapMode={toolsMapMode} setToolsMapMode={setToolsMapMode} isMobile={isMobile} />}
