@@ -4,6 +4,8 @@ import { ApiError, parseJsonBody, sendJson } from "../_lib/http.js";
 import { runApiSecurity } from "../_lib/security.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const isUuid = (value) => UUID_RE.test(String(value || "").trim());
 
 function toIsoDate(value) {
   if (typeof value !== "string" || !DATE_RE.test(value)) return null;
@@ -67,6 +69,7 @@ export default async function handler(req, res) {
     const clientIds = Array.from(new Set(
       rows.map((job) => String(job?.client_id || "").trim()).filter(Boolean)
     ));
+    const validClientIds = clientIds.filter(isUuid);
 
     let staffById = {};
     if (staffIds.length > 0) {
@@ -87,11 +90,11 @@ export default async function handler(req, res) {
     }
 
     let clientsById = {};
-    if (clientIds.length > 0) {
+    if (validClientIds.length > 0) {
       const { data: clientRows, error: clientError } = await admin
         .from("clients")
         .select("id, name, email, phone, address, suburb, notes, access_notes, frequency, preferred_day, preferred_time, bedrooms, bathrooms, living, kitchen")
-        .in("id", clientIds);
+        .in("id", validClientIds);
 
       if (clientError) {
         console.error("[api/staff/rota-overview] clients query failed", clientError);

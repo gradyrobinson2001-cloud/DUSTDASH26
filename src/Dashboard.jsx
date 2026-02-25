@@ -754,6 +754,194 @@ export default function Dashboard() {
     setCalendarWeekStart(d.toISOString().split("T")[0]);
   };
 
+  const weekdayOrder = { monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 0 };
+  const isoToday = () => new Date().toISOString().split("T")[0];
+  const addDaysIso = (dateStr, days) => {
+    const d = new Date(`${dateStr}T00:00:00`);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split("T")[0];
+  };
+  const addMonthsIso = (dateStr, months) => {
+    const d = new Date(`${dateStr}T00:00:00`);
+    d.setMonth(d.getMonth() + months);
+    return d.toISOString().split("T")[0];
+  };
+  const normalizeDay = (value) => {
+    const v = String(value || "").trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(weekdayOrder, v) ? v : "monday";
+  };
+  const nextDayOnOrAfter = (startDate, preferredDay) => {
+    const target = weekdayOrder[normalizeDay(preferredDay)];
+    const d = new Date(`${startDate}T00:00:00`);
+    for (let i = 0; i < 7; i++) {
+      if (d.getDay() === target) return d.toISOString().split("T")[0];
+      d.setDate(d.getDate() + 1);
+    }
+    return startDate;
+  };
+  const minsToTime = (mins) => `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+  const endTimeFrom = (startTime, durationMins) => {
+    const [h, m] = String(startTime || "08:00").split(":").map(Number);
+    const startMins = (Number.isFinite(h) ? h : 8) * 60 + (Number.isFinite(m) ? m : 0);
+    const safeDuration = Math.max(15, Number(durationMins) || 120);
+    return minsToTime(startMins + safeDuration);
+  };
+  const startTimeFromPreference = (preferredTime) => {
+    const key = String(preferredTime || "").toLowerCase();
+    if (key === "morning") return "08:00";
+    if (key === "afternoon") return "13:00";
+    if (key === "midday" || key === "noon") return "11:00";
+    return "08:00";
+  };
+  const inferPreferredDay = (client) => {
+    const explicit = client?.preferred_day || client?.preferredDay;
+    if (explicit) return normalizeDay(explicit);
+    const suburb = String(client?.suburb || "").toLowerCase();
+    const fromArea = Object.entries(scheduleSettings?.areaSchedule || {}).find(([, suburbs]) =>
+      Array.isArray(suburbs) && suburbs.some((s) => String(s || "").toLowerCase() === suburb)
+    );
+    return normalizeDay(fromArea?.[0] || "monday");
+  };
+  const buildRecurringDates = ({ startDate, preferredDay, frequency, horizonWeeks = 12 }) => {
+    const out = [];
+    const first = nextDayOnOrAfter(startDate, preferredDay);
+    const last = addDaysIso(startDate, Math.max(1, horizonWeeks) * 7);
+    const freq = String(frequency || "fortnightly").toLowerCase();
+    let cursor = first;
+    while (cursor <= last) {
+      out.push(cursor);
+      if (freq === "weekly") cursor = addDaysIso(cursor, 7);
+      else if (freq === "monthly") cursor = addMonthsIso(cursor, 1);
+      else cursor = addDaysIso(cursor, 14); // fortnightly default
+    }
+    return out;
+  };
+
+  const syncRecurringJobsForClient = useCallback(async (clientInput, options = {}) => {
+    const client = clientInput || null;
+    if (!client?.id) return { created: 0, updated: 0, removed: 0 };
+
+    const startDate = options.startDate || isoToday();
+    const horizonWeeks = Number(options.horizonWeeks) || 12;
+    const clientId = String(client.id);
+    const clientName = client.name || "Client";
+    const preferredDay = inferPreferredDay(client);
+    const preferredTime = client.preferred_time || client.preferredTime || "anytime";
+    const duration = Math.max(
+      15,
+      Number(
+        client.custom_duration ??
+        client.customDuration ??
+        client.estimated_duration ??
+        client.estimatedDuration ??
+        calculateDuration(client, scheduleSettings)
+      ) || 120
+    );
+    const targetDates = new Set(
+      String(client.status || "active").toLowerCase() === "active"
+        ? buildRecurringDates({
+            startDate,
+            preferredDay,
+            frequency: client.frequency || "fortnightly",
+            horizonWeeks,
+          })
+        : []
+    );
+
+    const existingJobs = (scheduledJobs || [])
+      .filter((j) => !j.isBreak && !j.is_break)
+      .filter((j) => String(j.clientId || j.client_id || "") === clientId)
+      .filter((j) => String(j.date || "") >= startDate)
+      .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+
+    const existingByDate = new Map();
+    existingJobs.forEach((job) => {
+      const date = String(job.date || "");
+      if (!date || existingByDate.has(date)) return;
+      existingByDate.set(date, job);
+    });
+
+    let created = 0;
+    let updated = 0;
+    let removed = 0;
+    const isLockedStatus = (status) => ["completed", "in_progress"].includes(String(status || "").toLowerCase());
+
+    for (const job of existingJobs) {
+      const status = job.status || job.job_status || job.jobStatus || "scheduled";
+      if (isLockedStatus(status)) continue;
+      if (!targetDates.has(String(job.date || ""))) {
+        await removeJob(job.id);
+        removed += 1;
+      }
+    }
+
+    if (targetDates.size === 0) {
+      return { created, updated, removed };
+    }
+
+    for (const date of Array.from(targetDates).sort()) {
+      const existing = existingByDate.get(date) || null;
+      const startTime = existing?.start_time || existing?.startTime || startTimeFromPreference(preferredTime);
+      const endTime = endTimeFrom(startTime, duration);
+      const basePayload = {
+        date,
+        clientId: client.id,
+        clientName,
+        suburb: client.suburb || "",
+        address: client.address || "",
+        email: client.email || "",
+        phone: client.phone || "",
+        bedrooms: client.bedrooms ?? null,
+        bathrooms: client.bathrooms ?? null,
+        living: client.living ?? null,
+        kitchen: client.kitchen ?? null,
+        frequency: client.frequency || null,
+        preferred_day: client.preferred_day || client.preferredDay || null,
+        preferred_time: client.preferred_time || client.preferredTime || null,
+        access_notes: client.access_notes || client.accessNotes || null,
+        notes: client.notes || null,
+        startTime,
+        endTime,
+        duration,
+        isDemo: client.isDemo || client.is_demo || false,
+      };
+
+      if (existing && !isLockedStatus(existing.status || existing.job_status || existing.jobStatus)) {
+        await updateJobDB(existing.id, {
+          ...basePayload,
+          status: existing.status || existing.job_status || existing.jobStatus || "scheduled",
+        });
+        updated += 1;
+      } else if (!existing) {
+        await addJob({
+          ...basePayload,
+          status: "scheduled",
+        });
+        created += 1;
+      }
+    }
+
+    return { created, updated, removed };
+  }, [addJob, calculateDuration, removeJob, scheduleSettings, scheduledJobs, updateJobDB]);
+
+  const syncRecurringSchedule = useCallback(async () => {
+    const active = scheduleClients.filter((client) => String(client.status || "").toLowerCase() === "active");
+    if (active.length === 0) {
+      showToast("⚠️ No active clients to sync");
+      return;
+    }
+    let created = 0;
+    let updated = 0;
+    let removed = 0;
+    for (const client of active) {
+      const result = await syncRecurringJobsForClient(client);
+      created += result.created;
+      updated += result.updated;
+      removed += result.removed;
+    }
+    showToast(`✅ Recurring schedule synced (${created} added, ${updated} updated, ${removed} removed)`);
+  }, [scheduleClients, showToast, syncRecurringJobsForClient]);
+
   const regenerateSchedule = async (settingsToUse = scheduleSettings) => {
     const active = scheduleClients.filter(c => c.status === "active");
     if (active.length === 0) { showToast("⚠️ No active clients to schedule"); return; }

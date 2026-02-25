@@ -29,6 +29,8 @@ export default function EditScheduleClientModal({ client, settings, onSave, onDe
 
   const [touched, setTouched] = useState({});
   const touch = (k) => setTouched(prev => ({ ...prev, [k]: true }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const errors = {
     name: touched.name && !local.name.trim() ? "Name is required" : "",
@@ -36,6 +38,21 @@ export default function EditScheduleClientModal({ client, settings, onSave, onDe
     phone: touched.phone && local.phone && !isPhone(local.phone) ? "Please enter a valid phone number" : "",
   };
   const canSave = local.name.trim() && (!local.email || isEmail(local.email)) && (!local.phone || isPhone(local.phone));
+
+  const handleSave = async () => {
+    setTouched({ name: true, email: true, phone: true });
+    if (!canSave || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await Promise.resolve(onSave(local));
+      onClose();
+    } catch (err) {
+      setError(err?.message || "Failed to save client");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Modal title={isNew ? "Add Client" : `Edit: ${client.name}`} onClose={onClose} wide>
@@ -152,7 +169,7 @@ export default function EditScheduleClientModal({ client, settings, onSave, onDe
               style={{ width: "100%", padding: "12px 14px", borderRadius: 8, border: `1.5px solid ${T.border}`, fontSize: 14 }}>
               <option value="active">Active</option>
               <option value="paused">Paused</option>
-              <option value="cancelled">Cancelled</option>
+              <option value="inactive">Inactive</option>
             </select>
           </div>
         )}
@@ -163,11 +180,12 @@ export default function EditScheduleClientModal({ client, settings, onSave, onDe
               🗑️ Delete
             </button>
           )}
-          <button onClick={() => { setTouched({ name: true, email: true, phone: true }); if (canSave) { onSave(local); onClose(); } }} disabled={!canSave}
-            style={{ flex: 1, padding: "12px", borderRadius: T.radiusSm, border: "none", background: canSave ? T.primary : T.border, color: "#fff", fontWeight: 700, fontSize: 14, cursor: canSave ? "pointer" : "not-allowed" }}>
-            {isNew ? "Add Client" : "Save Changes"}
+          <button onClick={handleSave} disabled={!canSave || saving}
+            style={{ flex: 1, padding: "12px", borderRadius: T.radiusSm, border: "none", background: canSave ? T.primary : T.border, color: "#fff", fontWeight: 700, fontSize: 14, cursor: canSave ? "pointer" : "not-allowed", opacity: saving ? 0.8 : 1 }}>
+            {saving ? "Saving…" : (isNew ? "Add Client" : "Save Changes")}
           </button>
         </div>
+        {error && <p style={{ margin: 0, fontSize: 12, color: T.danger }}>{error}</p>}
       </div>
     </Modal>
   );

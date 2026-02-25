@@ -54,9 +54,20 @@ const localKey = (staffId) => `${CLOCK_LOCAL_PREFIX}${String(staffId || 'all')}`
 
 const readLocalEntries = (staffId, weekStart) => {
   try {
-    const raw = localStorage.getItem(localKey(staffId));
-    const parsed = raw ? JSON.parse(raw) : [];
-    const rows = Array.isArray(parsed) ? parsed : [];
+    let rows = [];
+    if (staffId) {
+      const raw = localStorage.getItem(localKey(staffId));
+      const parsed = raw ? JSON.parse(raw) : [];
+      rows = Array.isArray(parsed) ? parsed : [];
+    } else {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith(CLOCK_LOCAL_PREFIX)) continue;
+        const raw = localStorage.getItem(key);
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(parsed)) rows.push(...parsed);
+      }
+    }
     const weekStartIso = toIsoDate(weekStart);
     if (!weekStartIso) return rows;
     const weekEndIso = addDays(weekStartIso, 6);
@@ -188,7 +199,6 @@ export function useStaffTimeEntries({ staffId = null, weekStart = null } = {}) {
   }, [staffId, weekStart, refreshTimeEntries]);
 
   useEffect(() => {
-    if (!staffId) return;
     saveLocalEntries(staffId, timeEntries);
   }, [staffId, timeEntries]);
 

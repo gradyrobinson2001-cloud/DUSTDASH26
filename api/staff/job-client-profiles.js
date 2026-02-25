@@ -11,6 +11,8 @@ const asStringArray = (value) => {
 };
 
 const normalize = (value) => String(value || "").trim().toLowerCase();
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const isUuid = (value) => UUID_RE.test(String(value || "").trim());
 
 const isMissingColumnError = (error) => {
   const code = String(error?.code || "");
@@ -95,14 +97,16 @@ export default async function handler(req, res) {
           .filter(Boolean)
       )
     );
+    const validClientIds = clientIds.filter(isUuid);
+    const invalidClientIds = new Set(clientIds.filter((id) => !isUuid(id)));
 
     let clientsById = {};
     let fallbackClients = [];
-    if (clientIds.length > 0) {
+    if (validClientIds.length > 0) {
       const { data: clients, error: clientsError } = await admin
         .from("clients")
         .select("id, name, email, phone, address, suburb, notes, access_notes, frequency, preferred_day, preferred_time, bedrooms, bathrooms, living, kitchen")
-        .in("id", clientIds);
+        .in("id", validClientIds);
 
       if (clientsError) {
         console.error("[api/staff/job-client-profiles] clients query failed", { userId: user.id, clientsError });
@@ -116,7 +120,10 @@ export default async function handler(req, res) {
       fallbackClients = [...(clients || [])];
     }
 
-    const jobsMissingClientId = jobRows.filter((job) => !String(job?.client_id || "").trim() && normalize(job?.client_name));
+    const jobsMissingClientId = jobRows.filter((job) => {
+      const jobClientId = String(job?.client_id || "").trim();
+      return (!jobClientId || invalidClientIds.has(jobClientId)) && normalize(job?.client_name);
+    });
     if (jobsMissingClientId.length > 0) {
       const uniqueSuburbs = Array.from(
         new Set(

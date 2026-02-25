@@ -388,6 +388,12 @@ export default function CleanerPortal() {
     return rawMessage || 'Unknown error';
   }, []);
 
+  useEffect(() => {
+    if (clockOfflineFallback && !isMissingClockTableMessage(timeEntriesError?.message)) {
+      setClockOfflineFallback(false);
+    }
+  }, [clockOfflineFallback, timeEntriesError]);
+
   const upsertLiveTimeEntry = useCallback((entry) => {
     if (!entry?.work_date) return;
     setTimeEntries((prev) => {
@@ -934,7 +940,7 @@ export default function CleanerPortal() {
                 const clientFromLocal = resolveClientProfile(job, allClients);
                 const clientFromApi = jobClientProfiles[String(job.id)] || null;
                 const clientFromSnapshot = buildJobSnapshotProfile(job);
-                const client = clientFromLocal || clientFromApi || clientFromSnapshot;
+                const client = clientFromApi || clientFromLocal || clientFromSnapshot;
                 const photos = localPhotos[job.id] || { before: [], after: [] };
                 const isExp = expandedJob === job.id;
                 const status = job.status || job.job_status || job.jobStatus || 'scheduled';

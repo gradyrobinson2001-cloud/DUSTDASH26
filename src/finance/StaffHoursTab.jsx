@@ -70,11 +70,6 @@ export default function StaffHoursTab({ showToast, isMobile }) {
     [staffMembers]
   );
 
-  const staffById = useMemo(
-    () => Object.fromEntries(activeStaff.map(s => [String(s.id), s])),
-    [activeStaff]
-  );
-
   const filteredStaff = useMemo(() => {
     if (staffFilter === 'all') return activeStaff;
     return activeStaff.filter(s => String(s.id) === staffFilter);
@@ -148,20 +143,26 @@ export default function StaffHoursTab({ showToast, isMobile }) {
     return result;
   }, [activeStaff, staffDayData, week]);
 
-  // Grand totals
-  const grandTotals = useMemo(() => {
+  const filteredTotals = useMemo(() => {
     let scheduled = 0, worked = 0, jobs = 0, completed = 0;
-    Object.values(staffWeeklyTotals).forEach(t => {
-      scheduled += t.totalScheduled;
-      worked += t.totalWorked;
-      jobs += t.totalJobs;
-      completed += t.totalCompleted;
+    filteredStaff.forEach((staff) => {
+      const totals = staffWeeklyTotals[String(staff.id)] || {};
+      scheduled += totals.totalScheduled || 0;
+      worked += totals.totalWorked || 0;
+      jobs += totals.totalJobs || 0;
+      completed += totals.totalCompleted || 0;
     });
     return { scheduled, worked, jobs, completed };
-  }, [staffWeeklyTotals]);
+  }, [filteredStaff, staffWeeklyTotals]);
+
+  const activeDay = useMemo(() => {
+    if (week.includes(selectedDay)) return selectedDay;
+    return week[0] || selectedDay;
+  }, [week, selectedDay]);
 
   const navigateWeek = useCallback((dir) => {
     setWeekStart(prev => shiftDays(prev, dir * 7));
+    setSelectedDay(prev => shiftDays(prev, dir * 7));
     setExpandedStaff(null);
   }, []);
 
@@ -267,25 +268,25 @@ export default function StaffHoursTab({ showToast, isMobile }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 14 }}>
         <SummaryCard
           title="Scheduled"
-          value={hoursLabel(viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[selectedDay]?.scheduledMins) || 0), 0) : grandTotals.scheduled)}
-          sub={viewMode === 'daily' ? new Date(selectedDay).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }) : 'This week'}
+          value={hoursLabel(viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[activeDay]?.scheduledMins) || 0), 0) : filteredTotals.scheduled)}
+          sub={viewMode === 'daily' ? new Date(activeDay).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }) : 'This week'}
         />
         <SummaryCard
           title="Actual"
-          value={hoursLabel(viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[selectedDay]?.workedMins) || 0), 0) : grandTotals.worked)}
+          value={hoursLabel(viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[activeDay]?.workedMins) || 0), 0) : filteredTotals.worked)}
           sub="Clocked hours"
           accent
         />
         <SummaryCard
           title="Jobs"
-          value={viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[selectedDay]?.completedCount) || 0), 0) + '/' + filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[selectedDay]?.jobCount) || 0), 0) : `${grandTotals.completed}/${grandTotals.jobs}`}
+          value={viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[activeDay]?.completedCount) || 0), 0) + '/' + filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[activeDay]?.jobCount) || 0), 0) : `${filteredTotals.completed}/${filteredTotals.jobs}`}
           sub="Completed / Total"
         />
         <SummaryCard
           title="Variance"
           value={(() => {
-            const sched = viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[selectedDay]?.scheduledMins) || 0), 0) : grandTotals.scheduled;
-            const actual = viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[selectedDay]?.workedMins) || 0), 0) : grandTotals.worked;
+            const sched = viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[activeDay]?.scheduledMins) || 0), 0) : filteredTotals.scheduled;
+            const actual = viewMode === 'daily' ? filteredStaff.reduce((s, st) => s + ((staffDayData[st.id]?.[activeDay]?.workedMins) || 0), 0) : filteredTotals.worked;
             const v = variance(sched, actual);
             return v ? v.label : '0m';
           })()}
@@ -314,7 +315,7 @@ export default function StaffHoursTab({ showToast, isMobile }) {
 
             if (viewMode === 'daily') {
               // ── Daily view: one card per staff for selected day ──
-              const dayData = staffDayData[sid]?.[selectedDay] || {};
+              const dayData = staffDayData[sid]?.[activeDay] || {};
               const v = variance(dayData.scheduledMins || 0, dayData.workedMins || 0);
               const hasActivity = dayData.clockIn || dayData.scheduledMins > 0;
 
