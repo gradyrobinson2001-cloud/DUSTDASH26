@@ -39,9 +39,24 @@ export default async function handler(req, res) {
     const clientId = String(body?.clientId || "").trim();
     const fileName = String(body?.fileName || "").trim();
     const contentType = String(body?.contentType || "").trim() || "image/png";
+    const fileSize = Number(body?.fileSize);
+    const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+    const ALLOWED_IMAGE_TYPES = new Set([
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/avif",
+      "image/heic",
+      "image/heif",
+    ]);
 
     if (!clientId) throw new ApiError(400, "clientId is required.");
-    if (!contentType.startsWith("image/")) throw new ApiError(400, "contentType must be an image type.");
+    if (!ALLOWED_IMAGE_TYPES.has(contentType.toLowerCase())) {
+      throw new ApiError(400, "Unsupported floor plan image format.");
+    }
+    if (Number.isFinite(fileSize) && fileSize > MAX_UPLOAD_BYTES) {
+      throw new ApiError(413, "Image is too large. Max size is 25MB.");
+    }
 
     const ext = extFromName(fileName) || extFromType(contentType) || "png";
     const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;

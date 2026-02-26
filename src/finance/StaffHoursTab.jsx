@@ -244,7 +244,7 @@ export default function StaffHoursTab({ showToast, isMobile }) {
       {viewMode === 'daily' && (
         <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
           {week.map((date, i) => {
-            const isSel = date === selectedDay;
+            const isSel = date === activeDay;
             const isToday = date === TODAY;
             return (
               <button

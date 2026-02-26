@@ -1351,6 +1351,7 @@ export default function FloorPlanPage() {
           clientId,
           fileName: preparedFile.name || file.name || "plan.png",
           contentType: preparedFile.type || file.type || "image/png",
+          fileSize: preparedFile.size || file.size || null,
         }),
       });
 

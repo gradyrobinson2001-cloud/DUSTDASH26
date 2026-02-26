@@ -16,11 +16,11 @@ export default function EditScheduleClientModal({ client, settings, onSave, onDe
     living: client.living || 1,
     kitchen: client.kitchen || 1,
     frequency: client.frequency || "fortnightly",
-    preferredDay: client.preferredDay || "monday",
-    preferredTime: client.preferredTime || "anytime",
-    customDuration: client.customDuration || null,
+    preferredDay: client.preferredDay || client.preferred_day || "monday",
+    preferredTime: client.preferredTime || client.preferred_time || "anytime",
+    customDuration: client.customDuration || client.custom_duration || null,
     notes: client.notes || "",
-    accessNotes: client.accessNotes || "",
+    accessNotes: client.accessNotes || client.access_notes || "",
     status: client.status || "active",
   });
 

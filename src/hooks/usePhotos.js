@@ -229,6 +229,7 @@ export function usePhotos() {
           type: safeType,
           fileName: preparedFile?.name || file?.name || '',
           contentType,
+          fileSize: preparedFile?.size || file?.size || null,
         }),
       });
       const createBody = await parseJsonSafe(createRes);
@@ -239,6 +240,7 @@ export function usePhotos() {
 
       const uploadPath = createBody?.upload?.path;
       const uploadToken = createBody?.upload?.token;
+      const uploadDate = String(createBody?.photo?.date || safeDate);
       if (!uploadPath || !uploadToken) {
         throw new Error('Upload URL response missing token/path.');
       }
@@ -256,7 +258,7 @@ export function usePhotos() {
         accessToken,
         jobId,
         clientId,
-        date: safeDate,
+        date: uploadDate,
         type: safeType,
         storagePath: uploadPath,
         uploadedBy,

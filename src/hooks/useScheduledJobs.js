@@ -3,14 +3,56 @@ import { supabase, supabaseReady } from '../lib/supabase';
 import { loadScheduledJobs, saveScheduledJobs } from '../shared';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SNAPSHOT_COLUMNS = [
+  'address',
+  'email',
+  'phone',
+  'bedrooms',
+  'bathrooms',
+  'living',
+  'kitchen',
+  'frequency',
+  'preferred_day',
+  'preferred_time',
+  'access_notes',
+];
 
 const isUuid = (value) => typeof value === 'string' && UUID_RE.test(value);
+const isMissingColumnError = (error) => {
+  const msg = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  const hint = String(error?.hint || '').toLowerCase();
+  return String(error?.code || '') === '42703'
+    || msg.includes('column')
+    || msg.includes('does not exist')
+    || details.includes('column')
+    || hint.includes('column');
+};
+const hasSnapshotColumns = (payload = {}) => SNAPSHOT_COLUMNS.some((column) => Object.prototype.hasOwnProperty.call(payload, column));
+const stripSnapshotColumns = (payload = {}) => {
+  const next = { ...payload };
+  SNAPSHOT_COLUMNS.forEach((column) => {
+    delete next[column];
+  });
+  return next;
+};
 
 const mapDbToJob = (row) => {
   const clientId = row.client_id ?? row.clientId ?? null;
   const clientName = row.client_name ?? row.clientName ?? '';
   const startTime = row.start_time ?? row.startTime ?? '';
   const endTime = row.end_time ?? row.endTime ?? '';
+  const address = row.address ?? '';
+  const email = row.email ?? '';
+  const phone = row.phone ?? '';
+  const bedrooms = row.bedrooms ?? null;
+  const bathrooms = row.bathrooms ?? null;
+  const living = row.living ?? null;
+  const kitchen = row.kitchen ?? null;
+  const frequency = row.frequency ?? null;
+  const preferredDay = row.preferred_day ?? row.preferredDay ?? null;
+  const preferredTime = row.preferred_time ?? row.preferredTime ?? null;
+  const accessNotes = row.access_notes ?? row.accessNotes ?? null;
   const actualStartAt = row.actual_start_at ?? row.actualStartAt ?? row.arrived_at ?? row.arrivedAt ?? null;
   const actualEndAt = row.actual_end_at ?? row.actualEndAt ?? null;
   const actualDuration = row.actual_duration ?? row.actualDuration ?? null;
@@ -30,6 +72,20 @@ const mapDbToJob = (row) => {
     startTime,
     end_time: endTime,
     endTime,
+    address,
+    email,
+    phone,
+    bedrooms,
+    bathrooms,
+    living,
+    kitchen,
+    frequency,
+    preferred_day: preferredDay,
+    preferredDay,
+    preferred_time: preferredTime,
+    preferredTime,
+    access_notes: accessNotes,
+    accessNotes,
     actual_start_at: actualStartAt,
     actualStartAt,
     arrived_at: actualStartAt,
@@ -64,6 +120,23 @@ const toDbJob = (job) => {
   if (clientName !== undefined) out.client_name = clientName;
 
   if (job?.suburb !== undefined) out.suburb = job.suburb;
+  if (job?.address !== undefined) out.address = job.address;
+  if (job?.email !== undefined) out.email = job.email;
+  if (job?.phone !== undefined) out.phone = job.phone;
+  if (job?.bedrooms !== undefined) out.bedrooms = job.bedrooms;
+  if (job?.bathrooms !== undefined) out.bathrooms = job.bathrooms;
+  if (job?.living !== undefined) out.living = job.living;
+  if (job?.kitchen !== undefined) out.kitchen = job.kitchen;
+  if (job?.frequency !== undefined) out.frequency = job.frequency;
+  if (job?.preferred_day !== undefined || job?.preferredDay !== undefined) {
+    out.preferred_day = job.preferred_day ?? job.preferredDay ?? null;
+  }
+  if (job?.preferred_time !== undefined || job?.preferredTime !== undefined) {
+    out.preferred_time = job.preferred_time ?? job.preferredTime ?? null;
+  }
+  if (job?.access_notes !== undefined || job?.accessNotes !== undefined) {
+    out.access_notes = job.access_notes ?? job.accessNotes ?? null;
+  }
 
   const startTime = job?.start_time ?? job?.startTime ?? null;
   if (startTime !== undefined) out.start_time = startTime;
@@ -174,7 +247,12 @@ export function useScheduledJobs({ staffId } = {}) {
       return updated[updated.length - 1];
     }
     const payload = toDbJob(normalized);
-    const { data, error } = await supabase.from('scheduled_jobs').insert(payload).select().single();
+    const insertPayload = async (body) => supabase.from('scheduled_jobs').insert(body).select().single();
+    let { data, error } = await insertPayload(payload);
+    if (error && isMissingColumnError(error) && hasSnapshotColumns(payload)) {
+      const fallbackPayload = stripSnapshotColumns(payload);
+      ({ data, error } = await insertPayload(fallbackPayload));
+    }
     if (error) throw error;
     const inserted = mapDbToJob(data);
     setScheduledJobs(prev => [inserted, ...prev.filter(x => x.id !== inserted.id)]);
@@ -200,12 +278,21 @@ export function useScheduledJobs({ staffId } = {}) {
       ));
     });
 
-    const { data, error } = await supabase
+    const runUpdate = async (body) => supabase
       .from('scheduled_jobs')
-      .update(payload)
+      .update(body)
       .eq('id', id)
       .select('*')
       .single();
+    let { data, error } = await runUpdate(payload);
+    if (error && isMissingColumnError(error) && hasSnapshotColumns(payload)) {
+      const fallbackPayload = stripSnapshotColumns(payload);
+      if (Object.keys(fallbackPayload).length === 0) {
+        if (snapshot) setScheduledJobs(snapshot);
+        return;
+      }
+      ({ data, error } = await runUpdate(fallbackPayload));
+    }
 
     if (error) {
       if (snapshot) setScheduledJobs(snapshot);
@@ -233,7 +320,12 @@ export function useScheduledJobs({ staffId } = {}) {
       return;
     }
     const payload = normalized.map(toDbJob).filter(j => j.date && j.start_time);
-    const { error } = await supabase.from('scheduled_jobs').upsert(payload);
+    const runUpsert = async (rows) => supabase.from('scheduled_jobs').upsert(rows);
+    let { error } = await runUpsert(payload);
+    if (error && isMissingColumnError(error) && payload.some(hasSnapshotColumns)) {
+      const fallbackPayload = payload.map(stripSnapshotColumns);
+      ({ error } = await runUpsert(fallbackPayload));
+    }
     if (error) throw error;
   };
 

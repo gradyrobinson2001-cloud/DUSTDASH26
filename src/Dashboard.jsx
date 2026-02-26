@@ -816,6 +816,69 @@ export default function Dashboard() {
     }
     return out;
   };
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const normalizeText = (value) => String(value || "").trim().toLowerCase();
+  const hasValidClientId = (value) => uuidRe.test(String(value || "").trim());
+  const findBestClientForJob = (job) => {
+    const validClients = clients || [];
+    const rawId = String(job?.clientId || job?.client_id || "").trim();
+    if (rawId && hasValidClientId(rawId)) {
+      const byId = validClients.find((c) => String(c.id) === rawId);
+      if (byId) return byId;
+    }
+    const jobName = normalizeText(job?.clientName || job?.client_name);
+    const jobSuburb = normalizeText(job?.suburb);
+    const jobAddress = normalizeText(job?.address);
+    if (jobName) {
+      const byNameSuburb = validClients.find((c) =>
+        normalizeText(c?.name) === jobName &&
+        (!jobSuburb || normalizeText(c?.suburb) === jobSuburb)
+      );
+      if (byNameSuburb) return byNameSuburb;
+      const byNameOnly = validClients.find((c) => normalizeText(c?.name) === jobName);
+      if (byNameOnly) return byNameOnly;
+    }
+    if (jobAddress) {
+      const byAddress = validClients.find((c) => normalizeText(c?.address) === jobAddress);
+      if (byAddress) return byAddress;
+    }
+    return null;
+  };
+
+  const repairJobClientLinks = useCallback(async () => {
+    let repaired = 0;
+    const today = isoToday();
+    const candidates = (scheduledJobs || [])
+      .filter((job) => !job?.isBreak && !job?.is_break)
+      .filter((job) => String(job?.date || "") >= today);
+
+    for (const job of candidates) {
+      const existingId = String(job?.clientId || job?.client_id || "").trim();
+      const alreadyLinked = existingId && hasValidClientId(existingId) && clients.some((c) => String(c.id) === existingId);
+      if (alreadyLinked) continue;
+      const match = findBestClientForJob(job);
+      if (!match?.id) continue;
+      await updateJobDB(job.id, {
+        clientId: match.id,
+        clientName: match.name || job.clientName || job.client_name || "Client",
+        suburb: match.suburb || job.suburb || "",
+        address: match.address || job.address || "",
+        email: match.email || job.email || "",
+        phone: match.phone || job.phone || "",
+        bedrooms: match.bedrooms ?? job.bedrooms ?? null,
+        bathrooms: match.bathrooms ?? job.bathrooms ?? null,
+        living: match.living ?? job.living ?? null,
+        kitchen: match.kitchen ?? job.kitchen ?? null,
+        frequency: match.frequency || job.frequency || null,
+        preferred_day: match.preferred_day || match.preferredDay || job.preferred_day || job.preferredDay || null,
+        preferred_time: match.preferred_time || match.preferredTime || job.preferred_time || job.preferredTime || null,
+        access_notes: match.access_notes || match.accessNotes || job.access_notes || job.accessNotes || null,
+        notes: match.notes || job.notes || null,
+      });
+      repaired += 1;
+    }
+    return repaired;
+  }, [clients, scheduledJobs, updateJobDB]);
 
   const syncRecurringJobsForClient = useCallback(async (clientInput, options = {}) => {
     const client = clientInput || null;
@@ -933,14 +996,33 @@ export default function Dashboard() {
     let created = 0;
     let updated = 0;
     let removed = 0;
+    const repaired = await repairJobClientLinks();
     for (const client of active) {
       const result = await syncRecurringJobsForClient(client);
       created += result.created;
       updated += result.updated;
       removed += result.removed;
     }
-    showToast(`✅ Recurring schedule synced (${created} added, ${updated} updated, ${removed} removed)`);
-  }, [scheduleClients, showToast, syncRecurringJobsForClient]);
+    showToast(`✅ Recurring schedule synced (${created} added, ${updated} updated, ${removed} removed${repaired > 0 ? `, ${repaired} relinked` : ""})`);
+  }, [repairJobClientLinks, scheduleClients, showToast, syncRecurringJobsForClient]);
+
+  const didAutoRepairLinksRef = useRef(false);
+  useEffect(() => {
+    if (didAutoRepairLinksRef.current) return;
+    if (!clients?.length || !scheduledJobs?.length) return;
+    const hasBrokenLinks = (scheduledJobs || []).some((job) => {
+      if (job?.isBreak || job?.is_break) return false;
+      const id = String(job?.clientId || job?.client_id || "").trim();
+      if (!id || !hasValidClientId(id)) return true;
+      return !clients.some((c) => String(c.id) === id);
+    });
+    didAutoRepairLinksRef.current = true;
+    if (!hasBrokenLinks) return;
+    repairJobClientLinks().catch((err) => {
+      console.error("[calendar:repair-links:auto] failed", err);
+      didAutoRepairLinksRef.current = false;
+    });
+  }, [clients, repairJobClientLinks, scheduledJobs]);
 
   const regenerateSchedule = async (settingsToUse = scheduleSettings) => {
     const active = scheduleClients.filter(c => c.status === "active");
@@ -1020,7 +1102,8 @@ export default function Dashboard() {
   };
 
   const updateScheduleClient = async (clientId, updates) => {
-    await updateClient(clientId, updates);
+    const updatedClient = await updateClient(clientId, updates);
+    await syncRecurringJobsForClient(updatedClient || { id: clientId, ...updates });
     setEditingScheduleClient(null);
     showToast("✅ Client updated");
   };
@@ -1674,7 +1757,7 @@ export default function Dashboard() {
         {page === "payments" && <PaymentsTab scheduledJobs={scheduledJobs} setScheduledJobs={setScheduledJobs} scheduleClients={scheduleClients} invoices={invoices} setInvoices={setInvoices} paymentFilter={paymentFilter} setPaymentFilter={setPaymentFilter} setShowInvoiceModal={setShowInvoiceModal} showToast={showToast} isMobile={isMobile} />}
         {page === "photos"   && <PhotosTab photos={photos} photoViewDate={photoViewDate} setPhotoViewDate={setPhotoViewDate} selectedPhoto={selectedPhoto} setSelectedPhoto={setSelectedPhoto} scheduledJobs={scheduledJobs} showToast={showToast} isMobile={isMobile} refreshPhotos={refreshPhotos} getSignedUrl={getSignedUrl} />}
         {page === "tools"    && <ToolsTab scheduleClients={scheduleClients} allClients={clients} scheduledJobs={scheduledJobs} scheduleSettings={scheduleSettings} mapsLoaded={mapsLoaded} mapsError={mapsError} mapsApiKey={mapsApiKey} mapRef={mapRef} distanceFrom={distanceFrom} setDistanceFrom={setDistanceFrom} distanceTo={distanceTo} setDistanceTo={setDistanceTo} distanceResult={distanceResult} calculatingDistance={calculatingDistance} handleDistanceCalculation={handleDistanceCalculation} selectedRouteDate={selectedRouteDate} setSelectedRouteDate={setSelectedRouteDate} calculateRouteForDate={calculateRouteForDate} routeData={routeData} toolsMapMode={toolsMapMode} setToolsMapMode={setToolsMapMode} isMobile={isMobile} />}
-        {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} photos={photos} />}
+        {page === "calendar" && <CalendarTab scheduledJobs={scheduledJobs} scheduleClients={scheduleClients} scheduleSettings={scheduleSettings} weekDates={weekDates} calendarWeekStart={calendarWeekStart} calendarTravelTimes={calendarTravelTimes} demoMode={demoMode} mapsLoaded={mapsLoaded} isMobile={isMobile} navigateWeek={navigateWeek} regenerateSchedule={regenerateSchedule} syncRecurringSchedule={syncRecurringSchedule} calculateCalendarTravelTimes={calculateCalendarTravelTimes} setShowScheduleSettings={setShowScheduleSettings} setEditingJob={setEditingJob} setEditingScheduleClient={setEditingScheduleClient} loadDemoData={loadDemoData} wipeDemo={wipeDemo} formatDate={formatDate} staffMembers={staffMembers} publishWeek={publishWeek} updateJob={updateJobDB} showToast={showToast} photos={photos} />}
         {page === "rota"     && <RotaTab
           scheduledJobs={scheduledJobs}
           staffMembers={staffMembers}
@@ -1692,10 +1775,15 @@ export default function Dashboard() {
           onAddClient={async (c) => {
             const newClient = { ...c, is_demo: false, status: c.status || "active" };
             newClient.estimated_duration = calculateDuration(newClient, scheduleSettings);
-            await addClient(newClient);
+            const insertedClient = await addClient(newClient);
+            await syncRecurringJobsForClient(insertedClient || newClient);
             showToast("✅ Client added — go to Calendar to regenerate schedule");
           }}
-          onUpdateClient={async (id, u) => { await updateClient(id, u); showToast("✅ Client updated"); }}
+          onUpdateClient={async (id, u) => {
+            const updatedClient = await updateClient(id, u);
+            await syncRecurringJobsForClient(updatedClient || { id, ...u });
+            showToast("✅ Client updated");
+          }}
           onDeleteClient={async (id) => {
             for (const j of scheduledJobs.filter(j => j.clientId === id || j.client_id === id)) {
               try { await removeJob(j.id); } catch {}
@@ -1799,7 +1887,8 @@ export default function Dashboard() {
           : async (newClient) => {
               const c = { ...newClient, is_demo: false, status: "active" };
               c.estimated_duration = calculateDuration(c, scheduleSettings);
-              await addClient(c);
+              const insertedClient = await addClient(c);
+              await syncRecurringJobsForClient(insertedClient || c);
               setEditingScheduleClient(null);
               showToast("✅ Client added");
             }}

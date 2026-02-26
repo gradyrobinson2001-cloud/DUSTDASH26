@@ -13,7 +13,10 @@ export function sendJson(res, status, payload) {
     .setHeader("Cache-Control", "no-store, max-age=0")
     .setHeader("Pragma", "no-cache")
     .setHeader("X-Content-Type-Options", "nosniff")
-    .setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    .setHeader("Referrer-Policy", "strict-origin-when-cross-origin")
+    .setHeader("X-Frame-Options", "DENY")
+    .setHeader("Cross-Origin-Resource-Policy", "same-origin")
+    .setHeader("Permissions-Policy", "geolocation=(), camera=(), microphone=()");
   res.end(JSON.stringify(payload));
 }
 

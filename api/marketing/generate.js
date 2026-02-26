@@ -102,7 +102,6 @@ function getOpenAiApiKey() {
     process.env.OPENAI_API_KEY
     || process.env.OPENAI_KEY
     || process.env.OPENAI_TOKEN
-    || process.env.VITE_OPENAI_API_KEY
     || ""
   ).trim();
 }

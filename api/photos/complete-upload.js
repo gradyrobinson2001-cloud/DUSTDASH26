@@ -17,7 +17,7 @@ export default async function handler(req, res) {
       throw new ApiError(500, envErr.message || "Server environment is misconfigured.");
     }
 
-    const { user } = await requireProfile(req, admin, { roles: ["admin", "staff"], requireActive: true });
+    const { user, profile } = await requireProfile(req, admin, { roles: ["admin", "staff"], requireActive: true });
     const body = await parseJsonBody(req);
 
     const jobId = String(body.jobId || "").trim();
@@ -30,7 +30,26 @@ export default async function handler(req, res) {
     if (!DATE_RE.test(date)) throw new ApiError(400, "date must be YYYY-MM-DD.");
     if (!storagePath) throw new ApiError(400, "storagePath is required.");
 
-    const expectedPrefix = `${jobId}/${date}/`;
+    let jobQuery = admin
+      .from("scheduled_jobs")
+      .select("id, client_id, date, assigned_staff")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (profile.role === "staff") {
+      jobQuery = jobQuery.contains("assigned_staff", [user.id]);
+    }
+    const { data: jobRow, error: jobErr } = await jobQuery;
+    if (jobErr) throw new ApiError(500, "Failed to verify job access.", jobErr.message);
+    if (!jobRow) throw new ApiError(403, "You are not allowed to complete uploads for this job.");
+
+    const expectedDate = DATE_RE.test(String(jobRow.date || "")) ? String(jobRow.date) : date;
+    if (date !== expectedDate) throw new ApiError(400, "date does not match scheduled job date.");
+    if (clientId && jobRow.client_id && String(jobRow.client_id) !== clientId) {
+      throw new ApiError(400, "clientId does not match job.");
+    }
+    const resolvedClientId = jobRow.client_id ? String(jobRow.client_id) : (clientId || null);
+
+    const expectedPrefix = `${jobId}/${expectedDate}/`;
     if (!storagePath.startsWith(expectedPrefix)) {
       throw new ApiError(400, "storagePath does not match job/date.");
     }
@@ -39,8 +58,8 @@ export default async function handler(req, res) {
       .from("photos")
       .insert({
         job_id: jobId,
-        client_id: clientId,
-        date,
+        client_id: resolvedClientId,
+        date: expectedDate,
         type,
         storage_path: storagePath,
         uploaded_by: user.id,

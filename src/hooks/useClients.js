@@ -151,6 +151,9 @@ export function useClients() {
       return nextClient;
     }
     const payload = toDbClient(normalized);
+    if (Object.keys(payload).length === 0) {
+      return clients.find((c) => c.id === id) || null;
+    }
     const { data, error } = await supabase.from('clients').update(payload).eq('id', id).select('*').single();
     if (error) throw error;
     const updatedClient = mapDbToClient(data);

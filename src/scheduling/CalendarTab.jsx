@@ -74,6 +74,7 @@ export default function CalendarTab({
   isMobile,
   navigateWeek,
   regenerateSchedule,
+  syncRecurringSchedule,
   calculateCalendarTravelTimes,
   setShowScheduleSettings,
   setEditingJob,
@@ -117,7 +118,7 @@ export default function CalendarTab({
   );
 
   const activeClients = useMemo(
-    () => (scheduleClients || []).filter((c) => c.status === "active"),
+    () => (scheduleClients || []).filter((c) => String(c?.status || "").toLowerCase() === "active"),
     [scheduleClients]
   );
 
@@ -237,6 +238,9 @@ export default function CalendarTab({
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {scheduleClients.length > 0 && (
             <button onClick={() => regenerateSchedule?.()} style={uiBtn.secondary}>Regenerate</button>
+          )}
+          {scheduleClients.length > 0 && (
+            <button onClick={() => syncRecurringSchedule?.()} style={uiBtn.secondary}>Sync Recurring</button>
           )}
           {mapsLoaded && scheduledJobs.length > 0 && (
             <button onClick={calculateCalendarTravelTimes} style={uiBtn.secondary}>Calc Travel</button>
@@ -519,7 +523,7 @@ export default function CalendarTab({
                     <div style={{ display: "flex", gap: 10, fontSize: 11, color: T.textMuted, flexWrap: "wrap" }}>
                       <span>{duration} mins</span>
                       <span>{client.frequency}</span>
-                      <span>{client.preferredDay}</span>
+                      <span>{client.preferredDay || client.preferred_day}</span>
                     </div>
                     {nextJob && (
                       <div style={{ marginTop: 8, fontSize: 11, color: T.primary, fontWeight: 700 }}>

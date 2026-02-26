@@ -11,6 +11,7 @@ const asStringArray = (value) => {
 };
 
 const normalize = (value) => String(value || "").trim().toLowerCase();
+const normalizePhone = (value) => String(value || "").replace(/\D/g, "");
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const isUuid = (value) => UUID_RE.test(String(value || "").trim());
 
@@ -38,6 +39,43 @@ const snapshotProfile = (job) => ({
   phone: job?.phone || "",
   source: "job_snapshot",
 });
+
+const chooseFallbackClientForJob = (job, candidates) => {
+  const rows = Array.isArray(candidates) ? candidates : [];
+  if (!rows.length) return null;
+  const jobName = normalize(job?.client_name);
+  const jobSuburb = normalize(job?.suburb);
+  const jobAddress = normalize(job?.address);
+  const jobEmail = normalize(job?.email);
+  const jobPhone = normalizePhone(job?.phone);
+
+  if (jobEmail) {
+    const byEmail = rows.find((row) => normalize(row?.email) === jobEmail);
+    if (byEmail) return byEmail;
+  }
+  if (jobPhone) {
+    const byPhone = rows.find((row) => normalizePhone(row?.phone) === jobPhone);
+    if (byPhone) return byPhone;
+  }
+  if (jobAddress) {
+    const byAddress = rows.find((row) => normalize(row?.address) === jobAddress);
+    if (byAddress) return byAddress;
+  }
+  if (jobName) {
+    const byNameSuburb = rows.find((row) => (
+      normalize(row?.name) === jobName &&
+      (!jobSuburb || normalize(row?.suburb) === jobSuburb)
+    ));
+    if (byNameSuburb) return byNameSuburb;
+    const byNameOnly = rows.find((row) => normalize(row?.name) === jobName);
+    if (byNameOnly) return byNameOnly;
+  }
+  if (jobSuburb) {
+    const suburbMatches = rows.filter((row) => normalize(row?.suburb) === jobSuburb);
+    if (suburbMatches.length === 1) return suburbMatches[0];
+  }
+  return null;
+};
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed." });
@@ -150,14 +188,7 @@ export default async function handler(req, res) {
     for (const job of jobRows) {
       let client = clientsById[String(job.client_id || "")];
       if (!client) {
-        const jobName = normalize(job?.client_name);
-        const jobSuburb = normalize(job?.suburb);
-        const byNameSuburb = fallbackClients.find((row) => (
-          normalize(row?.name) === jobName &&
-          (!jobSuburb || normalize(row?.suburb) === jobSuburb)
-        ));
-        const byNameOnly = fallbackClients.find((row) => normalize(row?.name) === jobName);
-        client = byNameSuburb || byNameOnly || null;
+        client = chooseFallbackClientForJob(job, fallbackClients);
       }
 
       profilesByJob[String(job.id)] = client

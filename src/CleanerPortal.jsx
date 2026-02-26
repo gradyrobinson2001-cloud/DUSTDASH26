@@ -151,12 +151,21 @@ function resolveClientProfile(job, clients) {
   }
   const jobName = normalizeText(job?.client_name || job?.clientName);
   const jobSuburb = normalizeText(job?.suburb);
+  const jobAddress = normalizeText(job?.address);
   if (jobName) {
     const byNameSuburb = list.find(c =>
       normalizeText(c?.name) === jobName &&
       (!jobSuburb || normalizeText(c?.suburb) === jobSuburb)
     );
     if (byNameSuburb) return byNameSuburb;
+  }
+  if (jobAddress) {
+    const byAddress = list.find(c => normalizeText(c?.address) === jobAddress);
+    if (byAddress) return byAddress;
+  }
+  if (jobSuburb) {
+    const suburbMatches = list.filter(c => normalizeText(c?.suburb) === jobSuburb);
+    if (suburbMatches.length === 1) return suburbMatches[0];
   }
   return null;
 }
@@ -185,6 +194,29 @@ function buildJobSnapshotProfile(job) {
     phone: job?.phone || "",
     source: "job_snapshot",
   };
+}
+
+function profileQualityScore(profile) {
+  if (!profile) return -1;
+  let score = 0;
+  const name = String(profile?.name || '').trim();
+  if (name && name.toLowerCase() !== 'client') score += 5;
+  if (String(profile?.address || '').trim()) score += 4;
+  if (String(profile?.email || '').trim()) score += 2;
+  if (String(profile?.phone || '').trim()) score += 2;
+  if (profile?.bedrooms != null) score += 1;
+  if (profile?.bathrooms != null) score += 1;
+  if (profile?.living != null) score += 1;
+  if (profile?.kitchen != null) score += 1;
+  if (String(profile?.notes || '').trim()) score += 1;
+  if (String(profile?.access_notes || profile?.accessNotes || '').trim()) score += 1;
+  return score;
+}
+
+function pickBestProfile(...profiles) {
+  return profiles
+    .filter(Boolean)
+    .sort((a, b) => profileQualityScore(b) - profileQualityScore(a))[0] || null;
 }
 
 function isMissingClockTableMessage(raw) {
@@ -940,7 +972,7 @@ export default function CleanerPortal() {
                 const clientFromLocal = resolveClientProfile(job, allClients);
                 const clientFromApi = jobClientProfiles[String(job.id)] || null;
                 const clientFromSnapshot = buildJobSnapshotProfile(job);
-                const client = clientFromApi || clientFromLocal || clientFromSnapshot;
+                const client = pickBestProfile(clientFromApi, clientFromLocal, clientFromSnapshot);
                 const photos = localPhotos[job.id] || { before: [], after: [] };
                 const isExp = expandedJob === job.id;
                 const status = job.status || job.job_status || job.jobStatus || 'scheduled';
