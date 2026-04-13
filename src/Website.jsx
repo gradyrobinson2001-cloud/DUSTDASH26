@@ -2,14 +2,18 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 const C = {
-  bg:     '#F8F5F0',
-  dark:   '#1A1714',
-  text:   '#2E2B28',
-  muted:  '#8C857D',
-  border: '#E6E0D8',
-  sand:   '#BFA882',
-  warm:   '#F2EDE5',
-  white:  '#FFFFFF',
+  bg:      '#F8F5F0',
+  dark:    '#1A1714',
+  text:    '#2E2B28',
+  muted:   '#8C857D',
+  border:  '#E6E0D8',
+  sand:    '#BFA882',
+  warm:    '#F2EDE5',
+  white:   '#FFFFFF',
+  // Dust Bunnies brand sage green
+  brand:   '#6B9E84',
+  brandDk: '#4A7A62',
+  brandLt: '#D4EAE0',
 }
 
 // Unsplash images — clean, warm, coastal Australian home interiors
@@ -60,6 +64,7 @@ const CSS = `
     .split-rev { grid-template-columns: 1fr; }
     .reviews-grid { grid-template-columns: 1fr; }
     .footer-cols  { grid-template-columns: 1fr; gap: 32px; }
+    .quote-grid { grid-template-columns: 1fr !important; gap: 40px !important; }
   }
 `
 
@@ -87,11 +92,29 @@ function Nav({ onQuote }) {
           maxWidth: 1240, margin: '0 auto', padding: '0 40px',
           height: 70, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
-          <a href="/" className="serif" style={{
-            fontSize: 18, fontWeight: 700,
-            color: scrolled ? C.dark : C.white,
-            letterSpacing: -0.3, transition: 'color 0.35s',
-          }}>Dust Bunnies</a>
+          <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: '50%',
+              background: C.brand,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 17, flexShrink: 0,
+              boxShadow: scrolled ? 'none' : '0 0 0 2px rgba(255,255,255,0.25)',
+              transition: 'box-shadow 0.35s',
+            }}>🐰</div>
+            <div>
+              <div className="serif" style={{
+                fontSize: 16, fontWeight: 700, lineHeight: 1.1,
+                color: scrolled ? C.dark : C.white,
+                letterSpacing: -0.3, transition: 'color 0.35s',
+              }}>Dust Bunnies</div>
+              <div style={{
+                fontSize: 9, fontWeight: 600, letterSpacing: 2,
+                textTransform: 'uppercase',
+                color: scrolled ? C.muted : 'rgba(255,255,255,0.6)',
+                transition: 'color 0.35s',
+              }}>Cleaning Co.</div>
+            </div>
+          </a>
 
           <div className="nav-links">
             {['Services', 'Reviews', 'Areas'].map(l => (
@@ -486,31 +509,142 @@ function Areas() {
   )
 }
 
-// ─── CTA — full-bleed dark ───────────────────────────────────────────────────
-function CTA({ onQuote }) {
+// ─── Quote section — prominent branded ───────────────────────────────────────
+function QuoteSection({ onQuote }) {
+  const [form, setForm] = useState({ name: '', contact: '', suburb: '', service: '' })
+  const [submitted, setSubmitted] = useState(false)
+
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
+
+  const handleSubmit = e => {
+    e.preventDefault()
+    // Pass whatever they've filled in as query params, then continue on /form
+    onQuote()
+  }
+
+  const inputStyle = {
+    width: '100%', padding: '13px 16px',
+    border: `1px solid rgba(255,255,255,0.2)`,
+    borderRadius: 8, background: 'rgba(255,255,255,0.10)',
+    color: C.white, fontSize: 14, outline: 'none',
+    backdropFilter: 'blur(4px)',
+    transition: 'border-color 0.2s, background 0.2s',
+    fontFamily: 'inherit',
+  }
+  const focusStyle = { borderColor: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.15)' }
+
   return (
     <section style={{
-      background: C.dark, padding: '120px 40px',
-      textAlign: 'center',
+      background: `linear-gradient(135deg, ${C.brandDk} 0%, ${C.brand} 60%, #7BB89A 100%)`,
+      padding: '100px 40px',
+      position: 'relative', overflow: 'hidden',
     }}>
-      <h2 className="serif" style={{
-        fontSize: 'clamp(36px, 6vw, 76px)',
-        fontWeight: 700, color: C.white,
-        letterSpacing: -2.5, lineHeight: 1.0, marginBottom: 32,
-      }}>
-        Ready for a home<br />that feels effortless?
-      </h2>
-      <button onClick={onQuote} style={{
-        background: C.sand, color: C.dark,
-        border: 'none', borderRadius: 6,
-        padding: '16px 40px', fontWeight: 600, fontSize: 16,
-        cursor: 'pointer', transition: 'opacity 0.2s',
-      }}
-        onMouseEnter={e => e.target.style.opacity = '0.85'}
-        onMouseLeave={e => e.target.style.opacity = '1'}
-      >Get a free quote</button>
-      <div style={{ marginTop: 16, fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>
-        Free · No commitment · Reply within a few hours
+      {/* Decorative circles */}
+      <div style={{ position: 'absolute', top: -120, right: -80, width: 400, height: 400, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', bottom: -80, left: -60, width: 280, height: 280, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }} />
+
+      <div style={{ maxWidth: 1100, margin: '0 auto', position: 'relative' }}>
+        {/* Brand mark */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 36 }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: '50%',
+            background: 'rgba(255,255,255,0.18)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 24, backdropFilter: 'blur(4px)',
+            border: '1px solid rgba(255,255,255,0.25)',
+          }}>🐰</div>
+          <div>
+            <div className="serif" style={{ color: C.white, fontWeight: 700, fontSize: 15, letterSpacing: -0.2 }}>Dust Bunnies Cleaning Co.</div>
+            <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, fontWeight: 500, letterSpacing: 1.5, textTransform: 'uppercase' }}>Sunshine Coast, QLD</div>
+          </div>
+        </div>
+
+        <div className="quote-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 80, alignItems: 'center' }}>
+          {/* Left — headline */}
+          <div>
+            <h2 className="serif" style={{
+              fontSize: 'clamp(36px, 4vw, 62px)',
+              fontWeight: 700, color: C.white,
+              letterSpacing: -2, lineHeight: 1.05, marginBottom: 20,
+            }}>
+              Get your free<br />quote today
+            </h2>
+            <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 15, lineHeight: 1.75, marginBottom: 32, maxWidth: 360 }}>
+              Tell us a little about your home and we'll send you a personalised quote — usually within a few hours.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {['No obligation, completely free', 'Same-day response on business days', '200+ happy Sunshine Coast families'].map(t => (
+                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 18, height: 18, borderRadius: '50%', background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span style={{ color: C.white, fontSize: 10, fontWeight: 700 }}>✓</span>
+                  </div>
+                  <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13 }}>{t}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right — mini form */}
+          <div style={{
+            background: 'rgba(255,255,255,0.12)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            borderRadius: 16, padding: '36px 32px',
+          }}>
+            <div className="serif" style={{ color: C.white, fontSize: 20, fontWeight: 700, marginBottom: 24, letterSpacing: -0.3 }}>
+              Start your quote
+            </div>
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <input
+                type="text" placeholder="Your name" value={form.name}
+                onChange={set('name')}
+                style={inputStyle}
+                onFocus={e => Object.assign(e.target.style, focusStyle)}
+                onBlur={e => Object.assign(e.target.style, { borderColor: 'rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.10)' })}
+              />
+              <input
+                type="text" placeholder="Phone or email" value={form.contact}
+                onChange={set('contact')}
+                style={inputStyle}
+                onFocus={e => Object.assign(e.target.style, focusStyle)}
+                onBlur={e => Object.assign(e.target.style, { borderColor: 'rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.10)' })}
+              />
+              <input
+                type="text" placeholder="Your suburb" value={form.suburb}
+                onChange={set('suburb')}
+                style={inputStyle}
+                onFocus={e => Object.assign(e.target.style, focusStyle)}
+                onBlur={e => Object.assign(e.target.style, { borderColor: 'rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.10)' })}
+              />
+              <select
+                value={form.service} onChange={set('service')}
+                style={{ ...inputStyle, color: form.service ? C.white : 'rgba(255,255,255,0.5)' }}
+                onFocus={e => Object.assign(e.target.style, focusStyle)}
+                onBlur={e => Object.assign(e.target.style, { borderColor: 'rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.10)' })}
+              >
+                <option value="" style={{ color: C.dark }}>Type of clean…</option>
+                <option value="regular" style={{ color: C.dark }}>Regular Clean</option>
+                <option value="deep" style={{ color: C.dark }}>Deep Clean</option>
+                <option value="spring" style={{ color: C.dark }}>Spring Clean</option>
+                <option value="move" style={{ color: C.dark }}>Move In / Out</option>
+              </select>
+              <button type="submit" style={{
+                background: C.white, color: C.brandDk,
+                border: 'none', borderRadius: 8, padding: '14px',
+                fontWeight: 700, fontSize: 15, cursor: 'pointer',
+                marginTop: 4, transition: 'opacity 0.2s',
+              }}
+                onMouseEnter={e => e.target.style.opacity = '0.9'}
+                onMouseLeave={e => e.target.style.opacity = '1'}
+              >
+                Get my free quote →
+              </button>
+            </form>
+            <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>
+              No commitment. We'll be in touch shortly.
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   )
@@ -603,7 +737,7 @@ export default function Website() {
       <CoastalBreak onQuote={goToQuote} />
       <Reviews />
       <Areas />
-      <CTA onQuote={goToQuote} />
+      <QuoteSection onQuote={goToQuote} />
       <Footer />
     </div>
   )
